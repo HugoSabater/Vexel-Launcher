@@ -26,10 +26,10 @@ interface SidebarProfilesProps {
 }
 
 const LOADER_BADGE_STYLES: Record<ModLoaderKind, string> = {
-  vanilla: "bg-slate-800 text-slate-300 border-slate-700",
-  fabric: "bg-sky-500/15 text-sky-300 border-sky-500/30",
-  forge: "bg-amber-500/15 text-amber-300 border-amber-500/30",
-  neo_forge: "bg-orange-500/15 text-orange-300 border-orange-500/30",
+  vanilla: "bg-emerald-500/10 text-emerald-300 border-emerald-500/25",
+  fabric: "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/25",
+  forge: "bg-amber-500/10 text-amber-300 border-amber-500/25",
+  neo_forge: "bg-orange-500/10 text-orange-300 border-orange-500/25",
 };
 
 const LOADER_LABELS: Record<ModLoaderKind, string> = {
@@ -109,39 +109,28 @@ export function SidebarProfiles({
   };
 
   return (
-    <aside className="w-72 shrink-0 border-r border-[#334155] bg-[#0f172a] flex flex-col">
-      <div className="p-4 border-b border-[#334155]">
-        <div className="flex items-center gap-2.5">
-          <div className="h-8 w-8 rounded-lg bg-[#10b981]/15 border border-[#10b981]/40 flex items-center justify-center text-[#10b981]">
-            <Cpu className="h-4 w-4" />
-          </div>
-          <div>
-            <h1 className="text-sm font-bold tracking-tight text-white">
-              MC Launcher Rust
-            </h1>
-            <p className="text-[11px] text-slate-400">
-              {Math.round(hardware.total_ram_mb / 1024)} GB RAM ·{" "}
-              {hardware.logical_cores} hilos
-            </p>
-          </div>
+    <aside className="w-[272px] shrink-0 bg-[#0e121a] border-r border-white/[0.07] flex flex-col select-none">
+      <div className="px-4 pt-4 pb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
+            Instancias
+          </span>
+          <span className="rounded-md bg-white/[0.05] border border-white/[0.07] px-1.5 py-0.5 text-[10px] font-mono text-slate-400">
+            {profiles.length}
+          </span>
         </div>
-      </div>
 
-      <div className="px-3 pt-3 pb-2 flex items-center justify-between">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-          Perfiles ({profiles.length})
-        </span>
         <button
           type="button"
           onClick={openModal}
-          className="inline-flex items-center gap-1 rounded-lg bg-[#38bdf8]/15 border border-[#38bdf8]/30 px-2.5 py-1 text-xs font-medium text-[#38bdf8] hover:bg-[#38bdf8]/25 transition-colors"
+          className="inline-flex items-center gap-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] px-2.5 py-1 text-[11px] font-medium text-slate-200 transition-colors"
         >
-          <Plus className="h-3.5 w-3.5" />
-          Nuevo Perfil
+          <Plus className="h-3.5 w-3.5 text-[#38bdf8]" />
+          Nuevo
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-2">
+      <div className="flex-1 overflow-y-auto px-2.5 pb-3 space-y-1.5">
         {profiles.map((profile) => {
           const isSelected = profile.id === selectedProfileId;
           return (
@@ -155,37 +144,46 @@ export function SidebarProfiles({
                   onSelectProfile(profile.id);
                 }
               }}
-              className={`group rounded-xl border p-3 cursor-pointer transition-all ${
+              className={`group relative rounded-xl p-3 cursor-pointer transition-all ${
                 isSelected
-                  ? "bg-[#1e293b] border-[#38bdf8]/70 shadow-lg shadow-sky-950/30"
-                  : "bg-[#0b1120]/60 border-[#334155]/70 hover:border-[#334155] hover:bg-[#1e293b]/50"
+                  ? "bg-[rgba(22,28,42,0.88)] border border-white/[0.11] obsidian-inset"
+                  : "bg-transparent border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]"
               }`}
             >
+              {isSelected && (
+                <span className="absolute left-0 top-3 bottom-3 w-[2.5px] rounded-r-full bg-[#38bdf8]" />
+              )}
+
               <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
+                <div className="min-w-0 pl-1">
                   <div className="flex items-center gap-1.5">
-                    <span className="truncate text-sm font-semibold text-slate-100">
+                    <span
+                      className={`truncate text-[13px] font-semibold tracking-tight ${
+                        isSelected ? "text-white" : "text-slate-300"
+                      }`}
+                    >
                       {profile.name}
                     </span>
                   </div>
+
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    <span className="rounded bg-[#0b1120] px-1.5 py-0.5 text-[11px] font-mono text-slate-300 border border-[#334155]">
+                    <span className="rounded bg-[#090b10] border border-white/[0.07] px-1.5 py-0.5 text-[10px] font-mono text-slate-300">
                       {profile.mc_version}
                     </span>
                     <span
-                      className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${LOADER_BADGE_STYLES[profile.loader]}`}
+                      className={`rounded border px-1.5 py-0.5 text-[10px] font-mono font-medium ${LOADER_BADGE_STYLES[profile.loader]}`}
                     >
                       {LOADER_LABELS[profile.loader]}
                     </span>
                     {profile.is_default && (
-                      <span className="rounded bg-[#10b981]/15 border border-[#10b981]/30 px-1.5 py-0.5 text-[10px] font-semibold text-[#10b981]">
-                        Por defecto
+                      <span className="text-[10px] font-mono text-[#10b981]">
+                        ● default
                       </span>
                     )}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-0.5 shrink-0">
                   <button
                     type="button"
                     title="Marcar como perfil por defecto"
@@ -193,10 +191,10 @@ export function SidebarProfiles({
                       e.stopPropagation();
                       void onSetDefault(profile.id);
                     }}
-                    className={`p-1 rounded hover:bg-[#0b1120] transition-colors ${
+                    className={`p-1 rounded-md hover:bg-white/[0.06] transition-colors ${
                       profile.is_default
                         ? "text-[#10b981]"
-                        : "text-slate-500 hover:text-slate-200"
+                        : "text-slate-600 hover:text-slate-300"
                     }`}
                   >
                     <Star
@@ -207,12 +205,12 @@ export function SidebarProfiles({
                   {profiles.length > 1 && (
                     <button
                       type="button"
-                      title="Quitar perfil de la lista"
+                      title="Quitar perfil"
                       onClick={(e) => {
                         e.stopPropagation();
                         void onDeleteProfile(profile.id);
                       }}
-                      className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-[#0b1120] opacity-0 group-hover:opacity-100 transition-all"
+                      className="p-1 rounded-md text-slate-600 hover:text-rose-400 hover:bg-white/[0.06] opacity-0 group-hover:opacity-100 transition-all"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -220,33 +218,56 @@ export function SidebarProfiles({
                 </div>
               </div>
 
-              {profile.server_address && (
-                <div className="mt-2 flex items-center gap-1.5 text-[11px] text-[#38bdf8]">
-                  <Server className="h-3 w-3 shrink-0" />
-                  <span className="truncate font-mono">
-                    {profile.server_address}
+              <div className="mt-2 pl-1 flex items-center justify-between text-[10px] font-mono text-slate-500">
+                <span>{profile.ram_mb} MB</span>
+                {profile.server_address && (
+                  <span className="inline-flex items-center gap-1 text-[#38bdf8] truncate max-w-[140px]">
+                    <Server className="h-2.5 w-2.5 shrink-0" />
+                    <span className="truncate">{profile.server_address}</span>
                   </span>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           );
         })}
       </div>
 
+      <div className="p-3 border-t border-white/[0.07] bg-[#090b10]/60">
+        <div className="flex items-center gap-2.5">
+          <div className="h-7 w-7 rounded-lg bg-[#38bdf8]/10 border border-[#38bdf8]/20 flex items-center justify-center text-[#38bdf8] shrink-0">
+            <Cpu className="h-3.5 w-3.5" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-[11px] font-medium text-slate-300 truncate">
+              Host Telemetry
+            </div>
+            <div className="text-[10px] font-mono text-slate-500">
+              {Math.round(hardware.total_ram_mb / 1024)} GB RAM ·{" "}
+              {hardware.logical_cores} threads
+            </div>
+          </div>
+        </div>
+      </div>
+
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
           <form
             onSubmit={handleCreate}
-            className="w-full max-w-md rounded-2xl border border-[#334155] bg-[#0f172a] p-5 shadow-2xl space-y-4"
+            className="w-full max-w-md rounded-2xl obsidian-card p-5 space-y-4"
           >
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-white">
-                Crear Nuevo Perfil Aislado
-              </h2>
+            <div className="flex items-center justify-between border-b border-white/[0.07] pb-3">
+              <div>
+                <h2 className="text-sm font-semibold text-white">
+                  Nueva Instancia Aislada
+                </h2>
+                <p className="text-[11px] text-slate-400">
+                  Comparte assets/librerías · Aísla mods y configuración
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => setModalOpen(false)}
-                className="text-slate-400 hover:text-white"
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.06]"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -254,23 +275,23 @@ export function SidebarProfiles({
 
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Nombre del Perfil
+                <label className="block text-[11px] font-medium text-slate-300 mb-1">
+                  Nombre de la Instancia
                 </label>
                 <input
                   type="text"
                   required
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Ej. Survival Optimizado 1.21.4"
-                  className="w-full rounded-lg border border-[#334155] bg-[#0b1120] px-3 py-2 text-sm text-white focus:border-[#38bdf8] focus:outline-none"
+                  placeholder="Ej. Survival 1.21.4 Fabric"
+                  className="w-full rounded-lg border border-white/[0.08] bg-[#090b10] px-3 py-2 text-xs text-white placeholder:text-slate-600 focus:border-[#38bdf8] focus:outline-none"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Versión Minecraft
+                  <label className="block text-[11px] font-medium text-slate-300 mb-1">
+                    Versión MC
                   </label>
                   <input
                     type="text"
@@ -278,11 +299,11 @@ export function SidebarProfiles({
                     value={mcVersion}
                     onChange={(e) => setMcVersion(e.target.value)}
                     placeholder="1.21.4"
-                    className="w-full rounded-lg border border-[#334155] bg-[#0b1120] px-3 py-2 text-sm font-mono text-white focus:border-[#38bdf8] focus:outline-none"
+                    className="w-full rounded-lg border border-white/[0.08] bg-[#090b10] px-3 py-2 text-xs font-mono text-white focus:border-[#38bdf8] focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                  <label className="block text-[11px] font-medium text-slate-300 mb-1">
                     Mod Loader
                   </label>
                   <select
@@ -290,7 +311,7 @@ export function SidebarProfiles({
                     onChange={(e) =>
                       handleLoaderChange(e.target.value as ModLoaderKind)
                     }
-                    className="w-full rounded-lg border border-[#334155] bg-[#0b1120] px-3 py-2 text-sm text-white focus:border-[#38bdf8] focus:outline-none"
+                    className="w-full rounded-lg border border-white/[0.08] bg-[#090b10] px-3 py-2 text-xs text-white focus:border-[#38bdf8] focus:outline-none"
                   >
                     <option value="vanilla">Vanilla</option>
                     <option value="fabric">Fabric</option>
@@ -302,8 +323,11 @@ export function SidebarProfiles({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    RAM ({ramMb} MB)
+                  <label className="block text-[11px] font-medium text-slate-300 mb-1.5">
+                    Heap RAM{" "}
+                    <span className="font-mono text-[#38bdf8]">
+                      {ramMb} MB
+                    </span>
                   </label>
                   <input
                     type="range"
@@ -312,17 +336,17 @@ export function SidebarProfiles({
                     step={512}
                     value={ramMb}
                     onChange={(e) => setRamMb(Number(e.target.value))}
-                    className="w-full accent-[#38bdf8]"
+                    className="w-full obsidian-slider"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                  <label className="block text-[11px] font-medium text-slate-300 mb-1">
                     Garbage Collector
                   </label>
                   <select
                     value={gcPreset}
                     onChange={(e) => setGcPreset(e.target.value as GcPreset)}
-                    className="w-full rounded-lg border border-[#334155] bg-[#0b1120] px-3 py-2 text-sm text-white focus:border-[#38bdf8] focus:outline-none"
+                    className="w-full rounded-lg border border-white/[0.08] bg-[#090b10] px-3 py-2 text-xs text-white focus:border-[#38bdf8] focus:outline-none"
                   >
                     <option value="generational_zgc">Generational ZGC</option>
                     <option value="aikar_g1_gc">Aikar&apos;s G1GC</option>
@@ -331,34 +355,34 @@ export function SidebarProfiles({
               </div>
 
               <div>
-                <label className="flex items-center gap-1.5 text-xs font-medium text-slate-300 mb-1">
-                  <Globe className="h-3.5 w-3.5 text-[#38bdf8]" />
-                  Servidor Directo QuickPlay (Opcional)
+                <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-300 mb-1">
+                  <Globe className="h-3 w-3 text-[#38bdf8]" />
+                  QuickPlay Direct Server (Opcional)
                 </label>
                 <input
                   type="text"
                   value={serverAddress}
                   onChange={(e) => setServerAddress(e.target.value)}
-                  placeholder="play.tuservidor.net:25565"
-                  className="w-full rounded-lg border border-[#334155] bg-[#0b1120] px-3 py-2 text-sm font-mono text-white focus:border-[#38bdf8] focus:outline-none"
+                  placeholder="play.servidor.net:25565"
+                  className="w-full rounded-lg border border-white/[0.08] bg-[#090b10] px-3 py-2 text-xs font-mono text-white placeholder:text-slate-600 focus:border-[#38bdf8] focus:outline-none"
                 />
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex justify-end gap-2 pt-2 border-t border-white/[0.07]">
               <button
                 type="button"
                 onClick={() => setModalOpen(false)}
-                className="rounded-lg border border-[#334155] px-4 py-2 text-xs font-medium text-slate-300 hover:bg-[#1e293b]"
+                className="rounded-lg border border-white/[0.08] px-3.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-white/[0.05]"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
                 disabled={saving}
-                className="rounded-lg bg-[#10b981] px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-50"
+                className="rounded-lg bg-[#10b981] hover:bg-[#059669] px-4 py-1.5 text-xs font-semibold text-slate-950 disabled:opacity-50 transition-colors"
               >
-                {saving ? "Creando..." : "Crear Perfil"}
+                {saving ? "Creando..." : "Crear Instancia"}
               </button>
             </div>
           </form>

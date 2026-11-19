@@ -37,32 +37,38 @@ export function SettingsPerformancePanel({
     100,
     Math.max(
       0,
-      ((recommendedMb - 1024) / Math.max(1024, hardware.max_safe_ram_mb - 1024)) *
+      ((recommendedMb - 1024) /
+        Math.max(1024, hardware.max_safe_ram_mb - 1024)) *
         100,
     ),
   );
 
   return (
-    <div className="space-y-5">
-      <div className="rounded-2xl border border-[#334155] bg-[#0f172a] p-6 space-y-5">
-        <div className="flex items-center gap-2 border-b border-[#334155] pb-3">
-          <Gauge className="h-4 w-4 text-[#38bdf8]" />
-          <h3 className="text-sm font-semibold text-white">
-            Tuning JVM y Memoria del Perfil ({profile.name})
-          </h3>
+    <div className="space-y-4">
+      <div className="rounded-2xl obsidian-card p-5 space-y-5">
+        <div className="flex items-center justify-between border-b border-white/[0.07] pb-3">
+          <div className="flex items-center gap-2">
+            <Gauge className="h-4 w-4 text-[#38bdf8]" />
+            <h3 className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-200">
+              JVM & Memory Tuning · {profile.name}
+            </h3>
+          </div>
+          <span className="text-[11px] font-mono text-slate-500">
+            host max safe: {hardware.max_safe_ram_mb} MB
+          </span>
         </div>
 
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs">
-            <span className="font-medium text-slate-300">
-              RAM Asignada al Heap (-Xms / -Xmx)
+            <span className="text-slate-300">
+              Heap Allocation (<code className="text-slate-400">-Xms/-Xmx</code>)
             </span>
-            <span className="font-mono font-bold text-[#38bdf8]">
+            <span className="font-mono font-semibold text-[#38bdf8]">
               {profile.ram_mb} MB
             </span>
           </div>
 
-          <div className="relative pt-1 pb-5">
+          <div className="relative pt-1 pb-6">
             <input
               type="range"
               min={1024}
@@ -75,15 +81,15 @@ export function SettingsPerformancePanel({
                   ram_mb: Number(e.target.value),
                 })
               }
-              className="w-full accent-[#10b981]"
+              className="w-full obsidian-slider"
             />
             <div
               className="absolute top-6 -translate-x-1/2 flex flex-col items-center pointer-events-none"
               style={{ left: `${recommendedPct}%` }}
             >
-              <span className="h-2 w-0.5 bg-[#38bdf8]" />
+              <span className="h-1.5 w-px bg-[#38bdf8]" />
               <span className="text-[10px] font-mono text-[#38bdf8] whitespace-nowrap">
-                Óptimo: {recommendedMb} MB
+                auto: {recommendedMb} MB
               </span>
             </div>
           </div>
@@ -91,8 +97,8 @@ export function SettingsPerformancePanel({
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1.5">
-              Estrategia de Garbage Collector
+            <label className="block text-[11px] font-medium text-slate-400 mb-1.5">
+              Garbage Collector Strategy
             </label>
             <select
               value={profile.gc_preset}
@@ -102,20 +108,20 @@ export function SettingsPerformancePanel({
                   gc_preset: e.target.value as GcPreset,
                 })
               }
-              className="w-full rounded-xl border border-[#334155] bg-[#0b1120] px-3 py-2.5 text-sm text-white focus:border-[#38bdf8] focus:outline-none"
+              className="w-full rounded-xl border border-white/[0.08] bg-[#090b10] px-3 py-2 text-xs text-white focus:border-[#38bdf8] focus:outline-none"
             >
               <option value="generational_zgc">
-                Generational ZGC (Pausas &lt;1ms, Java 21+)
+                Generational ZGC (&lt;1ms pauses, Java 21+)
               </option>
               <option value="aikar_g1_gc">
-                Aikar&apos;s G1GC (Estable Java 8/17/21)
+                Aikar&apos;s G1GC (Java 8 / 17 / 21)
               </option>
             </select>
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1.5">
-              Servidor Directo QuickPlay (IP:Puerto)
+            <label className="block text-[11px] font-medium text-slate-400 mb-1.5">
+              Direct Server QuickPlay (IP:Port)
             </label>
             <input
               type="text"
@@ -128,26 +134,26 @@ export function SettingsPerformancePanel({
                     : null,
                 })
               }
-              placeholder="Ej. play.servidor.net:25565"
-              className="w-full rounded-xl border border-[#334155] bg-[#0b1120] px-3 py-2.5 text-sm font-mono text-white focus:border-[#38bdf8] focus:outline-none"
+              placeholder="play.servidor.net:25565"
+              className="w-full rounded-xl border border-white/[0.08] bg-[#090b10] px-3 py-2 text-xs font-mono text-white placeholder:text-slate-600 focus:border-[#38bdf8] focus:outline-none"
             />
           </div>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-[#334155] bg-[#0f172a] p-6 space-y-5">
-        <div className="flex items-center gap-2 border-b border-[#334155] pb-3">
+      <div className="rounded-2xl obsidian-card p-5 space-y-4">
+        <div className="flex items-center gap-2 border-b border-white/[0.07] pb-3">
           <Shield className="h-4 w-4 text-[#10b981]" />
-          <h3 className="text-sm font-semibold text-white">
-            Cuenta Offline y Optimización de Sistema Operativo
+          <h3 className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-200">
+            Offline Identity & OS Scheduling
           </h3>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="flex items-center gap-1.5 text-xs font-medium text-slate-300 mb-1.5">
+            <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400 mb-1.5">
               <User className="h-3.5 w-3.5 text-[#38bdf8]" />
-              Nombre de Jugador (Offline UUID v3)
+              Offline Username (Deterministic UUID v3)
             </label>
             <input
               type="text"
@@ -159,13 +165,13 @@ export function SettingsPerformancePanel({
                   config.close_on_launch,
                 )
               }
-              className="w-full rounded-xl border border-[#334155] bg-[#0b1120] px-3 py-2.5 text-sm text-white focus:border-[#38bdf8] focus:outline-none"
+              className="w-full rounded-xl border border-white/[0.08] bg-[#090b10] px-3 py-2 text-xs font-mono text-white focus:border-[#38bdf8] focus:outline-none"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1.5">
-              Prioridad de Proceso en Windows (Win32)
+            <label className="block text-[11px] font-medium text-slate-400 mb-1.5">
+              Windows Process Priority (Win32)
             </label>
             <select
               value={config.process_priority}
@@ -176,25 +182,23 @@ export function SettingsPerformancePanel({
                   config.close_on_launch,
                 )
               }
-              className="w-full rounded-xl border border-[#334155] bg-[#0b1120] px-3 py-2.5 text-sm text-white focus:border-[#38bdf8] focus:outline-none"
+              className="w-full rounded-xl border border-white/[0.08] bg-[#090b10] px-3 py-2 text-xs text-white focus:border-[#38bdf8] focus:outline-none"
             >
               <option value="normal">Normal</option>
-              <option value="above_normal">
-                Above Normal (Recomendado)
-              </option>
+              <option value="above_normal">Above Normal (Recommended)</option>
               <option value="high">High Priority</option>
             </select>
           </div>
         </div>
 
-        <label className="flex items-center justify-between rounded-xl border border-[#334155] bg-[#0b1120] p-4 cursor-pointer">
+        <label className="flex items-center justify-between rounded-xl border border-white/[0.07] bg-[#090b10]/80 px-4 py-3 cursor-pointer">
           <div>
-            <div className="text-sm font-medium text-white">
-              Modo Cero Overhead (Ocultar launcher al jugar)
+            <div className="text-xs font-medium text-white">
+              Zero-Overhead Mode (Hide launcher on game start)
             </div>
-            <div className="text-xs text-slate-400">
-              Oculta la ventana WebView2 al arrancar Minecraft para liberar el
-              100% de RAM y GPU del launcher.
+            <div className="text-[11px] text-slate-500">
+              Oculta WebView2 al confirmar el arranque de javaw.exe para liberar
+              RAM y GPU.
             </div>
           </div>
           <input
@@ -207,17 +211,17 @@ export function SettingsPerformancePanel({
                 e.target.checked,
               )
             }
-            className="h-5 w-5 accent-[#10b981]"
+            className="h-4 w-4 accent-[#10b981]"
           />
         </label>
 
-        <div className="rounded-xl border border-[#334155] bg-[#0b1120] p-3.5 flex items-start gap-2.5 text-xs text-slate-400">
-          <HardDrive className="h-4 w-4 text-[#38bdf8] shrink-0 mt-0.5" />
+        <div className="rounded-xl border border-white/[0.07] bg-[#06080d] px-3.5 py-2.5 flex items-start gap-2.5 text-[11px] text-slate-400">
+          <HardDrive className="h-3.5 w-3.5 text-[#38bdf8] shrink-0 mt-0.5" />
           <div className="min-w-0">
-            <span className="font-semibold text-slate-200">
-              Directorio de Datos Híbrido Portable:
+            <span className="font-medium text-slate-300">
+              Hybrid Data Root:
             </span>{" "}
-            <span className="font-mono break-all text-slate-400">
+            <span className="font-mono break-all text-slate-500">
               {dataRoot}
             </span>
           </div>

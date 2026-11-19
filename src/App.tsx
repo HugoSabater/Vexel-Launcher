@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
-import { Layers, LayoutDashboard, SlidersHorizontal } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  Cpu,
+  Layers,
+  LayoutDashboard,
+  Minus,
+  SlidersHorizontal,
+  Square,
+  X,
+} from "lucide-react";
 import { ContentManagerPanel } from "./components/ContentManagerPanel";
 import { ProfileDashboard } from "./components/ProfileDashboard";
 import { SettingsPerformancePanel } from "./components/SettingsPerformancePanel";
@@ -49,6 +58,30 @@ export function App() {
   const [logs, setLogs] = useState<LogLineEvent[]>([]);
   const [bannerError, setBannerError] = useState<string | null>(null);
 
+  const handleWindowMinimize = () => {
+    try {
+      void getCurrentWindow().minimize();
+    } catch {
+      // Running outside Tauri desktop runtime
+    }
+  };
+
+  const handleWindowToggleMaximize = () => {
+    try {
+      void getCurrentWindow().toggleMaximize();
+    } catch {
+      // Running outside Tauri desktop runtime
+    }
+  };
+
+  const handleWindowClose = () => {
+    try {
+      void getCurrentWindow().close();
+    } catch {
+      // Running outside Tauri desktop runtime
+    }
+  };
+
   const loadBootstrap = useCallback(async () => {
     try {
       const data = await invoke<BootstrapState>("get_bootstrap_state");
@@ -67,7 +100,7 @@ export function App() {
       const parsed = extractIpcError(err);
       setBannerError(
         parsed.message ??
-          "No se pudo conectar con el backend Tauri v2. Ejecuta dentro de `cargo tauri dev`.",
+          "No se pudo conectar con el backend Tauri v2. Ejecuta mediante `npm run tauri dev`.",
       );
     }
   }, []);
@@ -182,7 +215,7 @@ export function App() {
       setLogs((prev) => [
         ...prev,
         {
-          line: `[Launcher] Proceso activo PID ${result.pid} · Fast-Path hits: ${result.fast_path_hits} · Descargados: ${result.downloaded_files}`,
+          line: `[Launcher] Proceso activo PID ${result.pid} · Fast-Path O(1): ${result.fast_path_hits} · Descargados: ${result.downloaded_files}`,
           is_stderr: false,
           timestamp: "READY",
         },
@@ -270,138 +303,186 @@ export function App() {
     [],
   );
 
-  if (!bootstrap || !selectedProfile) {
-    return (
-      <main className="min-h-screen bg-[#0b1120] text-slate-100 flex items-center justify-center p-6">
-        <div className="max-w-md w-full rounded-2xl border border-[#334155] bg-[#0f172a] p-6 space-y-3">
-          <h1 className="text-lg font-bold text-white">MC Launcher Rust</h1>
-          <p className="text-xs text-slate-400">
-            {bannerError ?? "Inicializando detección de hardware y perfiles..."}
-          </p>
-        </div>
-      </main>
-    );
-  }
-
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[#0b1120] text-slate-100 flex">
-      <SidebarProfiles
-        profiles={bootstrap.config.profiles}
-        selectedProfileId={selectedProfile.id}
-        hardware={bootstrap.hardware}
-        onSelectProfile={setSelectedProfileId}
-        onSetDefault={handleSetDefault}
-        onSaveProfile={handleSaveProfile}
-        onDeleteProfile={handleDeleteProfile}
-      />
+    <div className="h-screen w-screen overflow-hidden bg-[#090b10] text-slate-100 flex flex-col border border-white/[0.07]">
+      {/* Custom Frameless Titlebar */}
+      <header
+        data-tauri-drag-region
+        className="h-11 shrink-0 bg-[#0e121a] border-b border-white/[0.07] px-3 flex items-center justify-between select-none"
+      >
+        <div
+          data-tauri-drag-region
+          className="flex items-center gap-2.5 pl-1"
+        >
+          <div className="h-6 w-6 rounded-md bg-[#10b981]/15 border border-[#10b981]/35 flex items-center justify-center text-[#10b981]">
+            <Cpu className="h-3.5 w-3.5" />
+          </div>
+          <span
+            data-tauri-drag-region
+            className="text-xs font-semibold tracking-tight text-slate-100"
+          >
+            MC Launcher
+          </span>
+          <span
+            data-tauri-drag-region
+            className="rounded bg-white/[0.05] border border-white/[0.07] px-1.5 py-0.5 text-[10px] font-mono text-[#38bdf8]"
+          >
+            RUST · v0.1
+          </span>
+        </div>
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-14 shrink-0 border-b border-[#334155] bg-[#0f172a]/90 px-6 flex items-center justify-between">
-          <nav className="flex items-center gap-2">
+        {bootstrap && (
+          <nav className="flex items-center gap-1 rounded-lg bg-[#090b10] border border-white/[0.07] p-0.5">
             <button
               type="button"
               onClick={() => setActiveTab("dashboard")}
-              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-[11px] font-medium transition-colors ${
                 activeTab === "dashboard"
-                  ? "bg-[#38bdf8]/15 text-[#38bdf8] border border-[#38bdf8]/35"
-                  : "text-slate-400 hover:text-white hover:bg-[#1e293b]"
+                  ? "bg-white/[0.08] text-white obsidian-inset"
+                  : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              <LayoutDashboard className="h-3.5 w-3.5" />
+              <LayoutDashboard className="h-3 w-3 text-[#38bdf8]" />
               Dashboard
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("content")}
-              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-[11px] font-medium transition-colors ${
                 activeTab === "content"
-                  ? "bg-[#38bdf8]/15 text-[#38bdf8] border border-[#38bdf8]/35"
-                  : "text-slate-400 hover:text-white hover:bg-[#1e293b]"
+                  ? "bg-white/[0.08] text-white obsidian-inset"
+                  : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              <Layers className="h-3.5 w-3.5" />
-              Mods y Paquetes
+              <Layers className="h-3 w-3 text-[#38bdf8]" />
+              Mods y Packs
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("settings")}
-              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-[11px] font-medium transition-colors ${
                 activeTab === "settings"
-                  ? "bg-[#38bdf8]/15 text-[#38bdf8] border border-[#38bdf8]/35"
-                  : "text-slate-400 hover:text-white hover:bg-[#1e293b]"
+                  ? "bg-white/[0.08] text-white obsidian-inset"
+                  : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              <SlidersHorizontal className="h-3.5 w-3.5" />
-              Ajustes y Rendimiento
+              <SlidersHorizontal className="h-3 w-3 text-[#38bdf8]" />
+              Rendimiento
             </button>
           </nav>
+        )}
 
-          <div className="text-[11px] font-mono text-slate-400">
-            Vanilla óptimo:{" "}
-            <span className="text-slate-200">
-              {bootstrap.hardware.recommended_vanilla_mb} MB
-            </span>{" "}
-            · Modpack óptimo:{" "}
-            <span className="text-[#10b981]">
-              {bootstrap.hardware.recommended_modded_mb} MB
-            </span>
-          </div>
-        </header>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={handleWindowMinimize}
+            title="Minimizar"
+            className="h-7 w-8 rounded-md flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/[0.07] transition-colors"
+          >
+            <Minus className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={handleWindowToggleMaximize}
+            title="Maximizar / Restaurar"
+            className="h-7 w-8 rounded-md flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/[0.07] transition-colors"
+          >
+            <Square className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            onClick={handleWindowClose}
+            title="Cerrar"
+            className="h-7 w-8 rounded-md flex items-center justify-center text-slate-400 hover:text-white hover:bg-rose-500/80 transition-colors"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </header>
 
-        <main className="flex-1 overflow-y-auto p-6 space-y-4">
-          {bannerError && (
-            <div className="rounded-xl border border-rose-500/40 bg-rose-950/30 px-4 py-3 text-xs text-rose-200 flex items-center justify-between">
-              <span>{bannerError}</span>
-              <button
-                type="button"
-                onClick={() => setBannerError(null)}
-                className="text-rose-300 hover:text-white font-semibold ml-4"
-              >
-                Cerrar
-              </button>
+      {/* Main Studio Workspace */}
+      {!bootstrap || !selectedProfile ? (
+        <main className="flex-1 flex items-center justify-center p-6">
+          <div className="max-w-md w-full rounded-2xl obsidian-card p-6 space-y-2.5">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-[#38bdf8] animate-pulse" />
+              <h1 className="text-sm font-semibold text-white">
+                Inicializando Motor Core
+              </h1>
             </div>
-          )}
-
-          {activeTab === "dashboard" && (
-            <ProfileDashboard
-              profile={selectedProfile}
-              config={bootstrap.config}
-              hardware={bootstrap.hardware}
-              javaStatus={javaStatus}
-              jvmTuning={jvmTuning}
-              launching={launching}
-              progress={progress}
-              logs={logs}
-              missingJavaMajor={missingJavaMajor}
-              installingJava={installingJava}
-              onPlay={handlePlay}
-              onConfirmInstallJava={handleConfirmInstallJava}
-              onDismissJavaModal={() => setMissingJavaMajor(null)}
-            />
-          )}
-
-          {activeTab === "content" && (
-            <ContentManagerPanel
-              profile={selectedProfile}
-              onListContent={handleListContent}
-              onToggleContent={handleToggleContent}
-              onImportContent={handleImportContent}
-              onInjectPerformanceStack={handleInjectPerformanceStack}
-            />
-          )}
-
-          {activeTab === "settings" && (
-            <SettingsPerformancePanel
-              profile={selectedProfile}
-              config={bootstrap.config}
-              hardware={bootstrap.hardware}
-              dataRoot={bootstrap.data_root}
-              onUpdateProfile={handleSaveProfile}
-              onSaveGlobalSettings={handleSaveGlobalSettings}
-            />
-          )}
+            <p className="text-xs font-mono text-slate-400">
+              {bannerError ?? "Leyendo hardware del sistema y perfiles..."}
+            </p>
+          </div>
         </main>
-      </div>
+      ) : (
+        <div className="flex-1 flex min-h-0">
+          <SidebarProfiles
+            profiles={bootstrap.config.profiles}
+            selectedProfileId={selectedProfile.id}
+            hardware={bootstrap.hardware}
+            onSelectProfile={setSelectedProfileId}
+            onSetDefault={handleSetDefault}
+            onSaveProfile={handleSaveProfile}
+            onDeleteProfile={handleDeleteProfile}
+          />
+
+          <main className="flex-1 overflow-y-auto p-5 space-y-4">
+            {bannerError && (
+              <div className="rounded-xl border border-rose-500/35 bg-rose-950/30 px-4 py-2.5 text-xs text-rose-200 flex items-center justify-between">
+                <span className="font-mono">{bannerError}</span>
+                <button
+                  type="button"
+                  onClick={() => setBannerError(null)}
+                  className="text-rose-300 hover:text-white font-semibold ml-4"
+                >
+                  Cerrar
+                </button>
+              </div>
+            )}
+
+            {activeTab === "dashboard" && (
+              <ProfileDashboard
+                profile={selectedProfile}
+                config={bootstrap.config}
+                hardware={bootstrap.hardware}
+                javaStatus={javaStatus}
+                jvmTuning={jvmTuning}
+                launching={launching}
+                progress={progress}
+                logs={logs}
+                missingJavaMajor={missingJavaMajor}
+                installingJava={installingJava}
+                onPlay={handlePlay}
+                onClearLogs={() => setLogs([])}
+                onConfirmInstallJava={handleConfirmInstallJava}
+                onDismissJavaModal={() => setMissingJavaMajor(null)}
+              />
+            )}
+
+            {activeTab === "content" && (
+              <ContentManagerPanel
+                profile={selectedProfile}
+                onListContent={handleListContent}
+                onToggleContent={handleToggleContent}
+                onImportContent={handleImportContent}
+                onInjectPerformanceStack={handleInjectPerformanceStack}
+              />
+            )}
+
+            {activeTab === "settings" && (
+              <SettingsPerformancePanel
+                profile={selectedProfile}
+                config={bootstrap.config}
+                hardware={bootstrap.hardware}
+                dataRoot={bootstrap.data_root}
+                onUpdateProfile={handleSaveProfile}
+                onSaveGlobalSettings={handleSaveGlobalSettings}
+              />
+            )}
+          </main>
+        </div>
+      )}
     </div>
   );
 }

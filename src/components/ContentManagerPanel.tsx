@@ -94,7 +94,7 @@ export function ContentManagerPanel({
         setInjectProgress(ev);
       });
       setStatusMessage(
-        `Stack de rendimiento instalado (${installed.length} mods): ${installed.join(", ")}`,
+        `Stack instalado (${installed.length}): ${installed.join(", ")}`,
       );
       if (activeTab === "mod") {
         await refreshItems();
@@ -122,42 +122,43 @@ export function ContentManagerPanel({
   };
 
   return (
-    <div className="space-y-5">
-      <div className="rounded-2xl border border-[#334155] bg-[#0f172a] p-6 space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex items-center gap-2">
+    <div className="space-y-4">
+      <div className="rounded-2xl obsidian-card p-5 space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => setActiveTab("mod")}
-              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold border transition-colors ${
+              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-medium border transition-colors ${
                 activeTab === "mod"
-                  ? "bg-[#38bdf8]/15 text-[#38bdf8] border-[#38bdf8]/40"
-                  : "bg-[#1e293b]/50 text-slate-400 border-[#334155] hover:text-slate-200"
+                  ? "bg-[#38bdf8]/12 text-[#38bdf8] border-[#38bdf8]/30"
+                  : "bg-white/[0.02] text-slate-400 border-white/[0.07] hover:text-slate-200"
               }`}
             >
-              <Package className="h-4 w-4" />
-              Mods (.jar)
+              <Package className="h-3.5 w-3.5" />
+              Mods <span className="font-mono text-[10px] opacity-75">.jar</span>
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("resource_pack")}
-              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold border transition-colors ${
+              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-medium border transition-colors ${
                 activeTab === "resource_pack"
-                  ? "bg-[#38bdf8]/15 text-[#38bdf8] border-[#38bdf8]/40"
-                  : "bg-[#1e293b]/50 text-slate-400 border-[#334155] hover:text-slate-200"
+                  ? "bg-[#38bdf8]/12 text-[#38bdf8] border-[#38bdf8]/30"
+                  : "bg-white/[0.02] text-slate-400 border-white/[0.07] hover:text-slate-200"
               }`}
             >
-              <FileArchive className="h-4 w-4" />
-              Paquetes de Recursos (.zip)
+              <FileArchive className="h-3.5 w-3.5" />
+              Resource Packs{" "}
+              <span className="font-mono text-[10px] opacity-75">.zip</span>
             </button>
             <button
               type="button"
               onClick={() => void refreshItems()}
-              className="p-2 rounded-xl border border-[#334155] text-slate-400 hover:text-white hover:bg-[#1e293b]"
-              title="Recargar carpeta del perfil"
+              className="p-2 rounded-lg border border-white/[0.07] bg-white/[0.02] text-slate-400 hover:text-white hover:bg-white/[0.06]"
+              title="Recargar carpeta"
             >
               <RefreshCw
-                className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+                className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
               />
             </button>
           </div>
@@ -167,42 +168,40 @@ export function ContentManagerPanel({
               type="button"
               disabled={injecting}
               onClick={() => void handleInjectStack()}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#10b981] hover:bg-emerald-400 disabled:opacity-50 px-4 py-2.5 text-xs font-bold text-slate-950 transition-colors"
+              className="inline-flex items-center gap-2 rounded-lg bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 px-4 py-2 text-xs font-semibold text-slate-950 transition-colors"
             >
-              <Rocket className="h-4 w-4" />
+              <Rocket className="h-3.5 w-3.5" />
               {injecting
-                ? "Descargando Stack Modrinth..."
+                ? "Descargando Modrinth..."
                 : "Inyectar Pack de Rendimiento"}
             </button>
           )}
         </div>
 
-        <p className="text-xs text-slate-400">
-          El Pack de Rendimiento para Fabric instala automáticamente desde
-          Modrinth: <strong className="text-slate-200">Sodium</strong>,{" "}
-          <strong className="text-slate-200">Lithium</strong>,{" "}
-          <strong className="text-slate-200">FerriteCore</strong>,{" "}
-          <strong className="text-slate-200">ImmediatelyFast</strong>,{" "}
-          <strong className="text-slate-200">C2ME</strong> y{" "}
-          <strong className="text-slate-200">Distant Horizons</strong>.
+        <p className="text-[11px] text-slate-400">
+          Stack Modrinth (Fabric):{" "}
+          <span className="font-mono text-slate-300">
+            Sodium · Lithium · FerriteCore · ImmediatelyFast · C2ME · Distant
+            Horizons
+          </span>
         </p>
 
         {injectProgress && injecting && (
-          <div className="rounded-xl border border-[#334155] bg-[#0b1120] p-3 text-xs space-y-1.5">
-            <div className="flex justify-between text-[#38bdf8] font-medium">
+          <div className="rounded-xl border border-white/[0.08] bg-[#06080d] px-3.5 py-2.5 text-xs space-y-1">
+            <div className="flex justify-between text-[#38bdf8] font-medium text-[11px]">
               <span>{injectProgress.phase}</span>
               <span className="font-mono">
                 {injectProgress.completed}/{injectProgress.total}
               </span>
             </div>
-            <div className="text-[11px] font-mono text-slate-400 truncate">
+            <div className="text-[10px] font-mono text-slate-500 truncate">
               {injectProgress.detail}
             </div>
           </div>
         )}
 
         {statusMessage && (
-          <div className="rounded-xl border border-[#334155] bg-[#1e293b]/70 px-4 py-2.5 text-xs text-slate-200">
+          <div className="rounded-xl border border-white/[0.08] bg-[#06080d] px-3.5 py-2.5 text-xs font-mono text-slate-300">
             {statusMessage}
           </div>
         )}
@@ -214,37 +213,37 @@ export function ContentManagerPanel({
           }}
           onDragLeave={() => setDragActive(false)}
           onDrop={(e) => void handleDrop(e)}
-          className={`rounded-xl border-2 border-dashed p-5 text-center transition-colors ${
+          className={`rounded-xl border border-dashed p-5 text-center transition-colors ${
             dragActive
               ? "border-[#38bdf8] bg-[#38bdf8]/10"
-              : "border-[#334155] bg-[#0b1120]/60"
+              : "border-white/[0.12] bg-[#090b10]/60"
           }`}
         >
-          <Upload className="h-5 w-5 mx-auto text-[#38bdf8] mb-1.5" />
-          <p className="text-xs text-slate-300">
+          <Upload className="h-4 w-4 mx-auto text-[#38bdf8] mb-1.5" />
+          <p className="text-xs text-slate-400">
             Arrastra archivos{" "}
             <code className="text-[#38bdf8]">
               {activeTab === "mod" ? ".jar" : ".zip"}
             </code>{" "}
-            aquí para copiarlos a{" "}
-            <code className="text-slate-400">instances/{profile.id}/</code>
+            aquí para copiarlos en{" "}
+            <code className="text-slate-300">instances/{profile.id}/</code>
           </p>
         </div>
 
-        <div className="divide-y divide-[#334155]/70 rounded-xl border border-[#334155] bg-[#0b1120] overflow-hidden">
+        <div className="divide-y divide-white/[0.06] rounded-xl border border-white/[0.07] bg-[#090b10]/80 overflow-hidden">
           {items.length === 0 ? (
-            <div className="p-6 text-center text-xs text-slate-500">
-              No hay elementos en esta carpeta todavía.
+            <div className="p-6 text-center text-xs font-mono text-slate-600">
+              empty directory
             </div>
           ) : (
             items.map((item) => (
               <div
                 key={item.file_name}
-                className="flex items-center justify-between px-4 py-3 hover:bg-[#1e293b]/40"
+                className="flex items-center justify-between px-4 py-2.5 hover:bg-white/[0.025] transition-colors"
               >
                 <div className="min-w-0 pr-4">
                   <div
-                    className={`text-sm font-medium truncate ${
+                    className={`text-xs font-medium truncate ${
                       item.enabled
                         ? "text-slate-100"
                         : "text-slate-500 line-through"
@@ -252,7 +251,7 @@ export function ContentManagerPanel({
                   >
                     {item.display_name}
                   </div>
-                  <div className="text-[11px] font-mono text-slate-500 truncate">
+                  <div className="text-[10px] font-mono text-slate-500 truncate">
                     {item.file_name} · {formatSize(item.size_bytes)}
                   </div>
                 </div>
@@ -260,13 +259,13 @@ export function ContentManagerPanel({
                 <button
                   type="button"
                   onClick={() => void handleToggle(item)}
-                  className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold border transition-colors ${
+                  className={`shrink-0 rounded-md px-2.5 py-1 text-[10px] font-mono font-semibold border transition-colors ${
                     item.enabled
-                      ? "bg-[#10b981]/15 text-[#10b981] border-[#10b981]/40 hover:bg-[#10b981]/25"
-                      : "bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200"
+                      ? "bg-[#10b981]/12 text-[#10b981] border-[#10b981]/30 hover:bg-[#10b981]/20"
+                      : "bg-white/[0.03] text-slate-500 border-white/[0.08] hover:text-slate-300"
                   }`}
                 >
-                  {item.enabled ? "Activo" : "Desactivado"}
+                  {item.enabled ? "ENABLED" : "DISABLED"}
                 </button>
               </div>
             ))
