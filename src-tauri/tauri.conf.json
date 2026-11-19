@@ -5,7 +5,7 @@
   "identifier": "com.mclauncher.rust",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
@@ -14,11 +14,12 @@
       {
         "label": "main",
         "title": "MC Launcher Rust",
-        "width": 1200,
-        "height": 780,
+        "width": 1240,
+        "height": 800,
         "minWidth": 980,
         "minHeight": 640,
-        "resizable": true
+        "resizable": true,
+        "decorations": false
       }
     ],
     "security": {

@@ -27,7 +27,7 @@ pub fn calculate_ram_presets(total_ram_mb: u64) -> (u64, u64, u64) {
 
 #[must_use]
 pub fn detect_hardware() -> HardwareInfo {
-    let mut sys = System::new_all();
+    let mut sys = System::new();
     sys.refresh_memory();
     sys.refresh_cpu_all();
 

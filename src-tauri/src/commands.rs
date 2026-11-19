@@ -233,14 +233,40 @@ pub async fn inject_performance_stack(
     .await
 }
 
+#[must_use]
+fn infer_java_major_for_mc_version(mc_version: &str) -> u32 {
+    let clean = mc_version.split('-').next().unwrap_or(mc_version);
+    let mut parts = clean.split('.');
+    let major = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+    let minor = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(21);
+    let patch = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+
+    if major > 1 || (major == 1 && (minor > 20 || (minor == 20 && patch >= 5))) {
+        21
+    } else if major == 1 && minor >= 18 {
+        17
+    } else if major == 1 && minor == 17 {
+        16
+    } else {
+        8
+    }
+}
+
 #[tauri::command]
 pub async fn check_profile_java(
     state: State<'_, AppState>,
     mc_version: String,
 ) -> AppResult<JavaRuntimeStatus> {
-    let manifest =
-        fetch_or_load_version_manifest(&state.client, &mc_version, &state.paths).await?;
-    let required_major = manifest.java_version.map_or(21, |j| j.major_version);
+    let cached_manifest = state.paths.version_json_path(&mc_version);
+    let required_major = if tokio::fs::try_exists(&cached_manifest).await? {
+        let raw = tokio::fs::read_to_string(&cached_manifest).await?;
+        serde_json::from_str::<crate::core::manifest::VersionManifest>(&raw)
+            .ok()
+            .and_then(|m| m.java_version.map(|j| j.major_version))
+            .unwrap_or_else(|| infer_java_major_for_mc_version(&mc_version))
+    } else {
+        infer_java_major_for_mc_version(&mc_version)
+    };
     check_java_runtime(required_major, &state.paths).await
 }
 
