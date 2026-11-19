@@ -13,10 +13,11 @@ use crate::core::content::{
 use crate::core::downloader::{verify_and_download_all, DownloadProgress};
 use crate::core::hardware::HardwareInfo;
 use crate::core::instance::{
-    delete_profile, save_config_atomic, upsert_profile, LauncherConfig, Profile,
+    delete_profile, save_config_atomic, upsert_profile, LauncherConfig, ModLoaderKind, Profile,
 };
 use crate::core::java::{check_java_runtime, install_java_runtime, JavaRuntimeStatus};
 use crate::core::jvm_optimizer::{generate_jvm_flags, GcPreset, JvmTuningInput, JvmTuningOutput};
+use crate::core::loaders::{merge_overlay_into_plan, resolve_fabric_overlay};
 use crate::core::manifest::{
     build_download_plan, extract_game_arguments, fetch_or_load_asset_index,
     fetch_or_load_version_manifest,
@@ -322,9 +323,42 @@ pub async fn launch_profile(
         .or_else(|| manifest.assets.clone())
         .unwrap_or_else(|| "legacy".to_string());
 
-    let plan = build_download_plan(&manifest, &asset_index, &state.paths)?;
-    let main_class = manifest.main_class.clone();
-    let extra_game_args = extract_game_arguments(&manifest);
+    let mut plan = build_download_plan(&manifest, &asset_index, &state.paths)?;
+    let mut main_class = manifest.main_class.clone();
+    let mut extra_jvm_args = Vec::new();
+    let mut extra_game_args = extract_game_arguments(&manifest);
+
+    match profile.loader {
+        ModLoaderKind::Vanilla => {}
+        ModLoaderKind::Fabric => {
+            let _ = on_progress.send(LaunchProgressEvent {
+                phase: "Resolviendo Fabric Meta API".to_string(),
+                completed: 1,
+                total: 4,
+                bytes_downloaded: 0,
+                detail: format!("Obteniendo perfil Fabric para MC {}...", profile.mc_version),
+                fast_path_hits: 0,
+            });
+            let overlay = resolve_fabric_overlay(
+                &state.client,
+                &profile.mc_version,
+                profile.loader_version.as_deref(),
+                &state.paths,
+            )
+            .await?;
+            let (loader_main, loader_jvm, mut loader_game) =
+                merge_overlay_into_plan(&mut plan, overlay);
+            main_class = loader_main;
+            extra_jvm_args.extend(loader_jvm);
+            extra_game_args.append(&mut loader_game);
+        }
+        ModLoaderKind::Forge | ModLoaderKind::NeoForge => {
+            return Err(AppError::LoaderError(format!(
+                "{:?} metadata pipeline initialized; use Vanilla or Fabric for direct launch in this release",
+                profile.loader
+            )));
+        }
+    }
 
     let progress_channel = on_progress.clone();
     let summary = verify_and_download_all(
@@ -365,7 +399,7 @@ pub async fn launch_profile(
             classpath_entries: plan.classpath_entries,
             native_archives: plan.native_archives,
             asset_index_id,
-            extra_jvm_args: Vec::new(),
+            extra_jvm_args,
             extra_game_args,
         },
         &state.paths,

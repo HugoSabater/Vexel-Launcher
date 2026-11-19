@@ -4,6 +4,7 @@ pub mod hardware;
 pub mod instance;
 pub mod java;
 pub mod jvm_optimizer;
+pub mod loaders;
 pub mod manifest;
 pub mod paths;
 pub mod runner;
