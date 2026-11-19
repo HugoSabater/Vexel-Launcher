@@ -1,5 +1,7 @@
+pub mod content;
 pub mod downloader;
 pub mod hardware;
+pub mod instance;
 pub mod java;
 pub mod jvm_optimizer;
 pub mod manifest;
