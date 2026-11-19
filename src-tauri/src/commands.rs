@@ -276,20 +276,34 @@ pub async fn install_adoptium_java(
     major: u32,
     on_progress: Channel<LaunchProgressEvent>,
 ) -> AppResult<JavaRuntimeStatus> {
-    let javaw_path =
-        install_java_runtime(&state.client, major, &state.paths, move |done, total, msg| {
-            let completed = (done / 1024) as usize;
-            let total_kb = total.map_or(0, |t| (t / 1024) as usize);
+    let javaw_path = install_java_runtime(
+        &state.client,
+        major,
+        &state.paths,
+        move |done, total, phase, detail| {
+            let (completed, total_units) = match phase {
+                "Extrayendo runtime..." => (95, 100),
+                "Runtime listo" => (100, 100),
+                _ => match total {
+                    Some(t) if t > 0 => {
+                        let pct = ((done.saturating_mul(90)) / t).min(90) as usize;
+                        (pct, 100)
+                    }
+                    _ => (0, 0),
+                },
+            };
+
             let _ = on_progress.send(LaunchProgressEvent {
-                phase: format!("Instalando Adoptium Java {major}"),
+                phase: phase.to_string(),
                 completed,
-                total: total_kb.max(1),
+                total: total_units,
                 bytes_downloaded: done,
-                detail: msg.to_string(),
-                fast_path_hits: 0,
+                detail: detail.to_string(),
+                fast_path_hits: total.map_or(0, |t| (t / 1024) as usize),
             });
-        })
-        .await?;
+        },
+    )
+    .await?;
 
     Ok(JavaRuntimeStatus::Installed {
         major,

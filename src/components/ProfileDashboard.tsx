@@ -35,6 +35,7 @@ interface ProfileDashboardProps {
   logs: LogLineEvent[];
   missingJavaMajor: number | null;
   installingJava: boolean;
+  javaInstallProgress: LaunchProgressEvent | null;
   onPlay: () => Promise<void>;
   onClearLogs: () => void;
   onConfirmInstallJava: (major: number) => Promise<void>;
@@ -126,6 +127,7 @@ export function ProfileDashboard({
   logs,
   missingJavaMajor,
   installingJava,
+  javaInstallProgress,
   onPlay,
   onClearLogs,
   onConfirmInstallJava,
@@ -466,13 +468,15 @@ export function ProfileDashboard({
         </div>
       </section>
 
-      {/* Adoptium JRE Confirmation Modal */}
+      {/* Adoptium JRE Confirmation & Progress Modal */}
       {missingJavaMajor !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
           <div className="w-full max-w-md rounded-2xl obsidian-card p-6 space-y-4">
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 rounded-xl bg-[#38bdf8]/12 border border-[#38bdf8]/25 flex items-center justify-center text-[#38bdf8]">
-                <Download className="h-5 w-5" />
+                <Download
+                  className={`h-5 w-5 ${installingJava ? "animate-bounce" : ""}`}
+                />
               </div>
               <div>
                 <h3 className="text-sm font-semibold text-white">
@@ -490,12 +494,53 @@ export function ProfileDashboard({
               <span className="font-mono text-[#38bdf8]">api.adoptium.net</span>{" "}
               y se extraerá automáticamente sin alterar tu sistema.
             </p>
+
+            {installingJava && javaInstallProgress && (
+              <div className="rounded-xl bg-[#06080d] border border-white/[0.08] p-3.5 space-y-2">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="font-medium text-[#38bdf8]">
+                    {javaInstallProgress.phase}
+                  </span>
+                  <span className="font-mono font-semibold text-white">
+                    {javaInstallProgress.total > 0
+                      ? `${Math.min(100, Math.round((javaInstallProgress.completed / javaInstallProgress.total) * 100))}%`
+                      : "..."}
+                  </span>
+                </div>
+
+                <div className="h-2 w-full overflow-hidden rounded-full bg-white/[0.07]">
+                  <div
+                    className={`h-full rounded-full bg-gradient-to-r from-[#38bdf8] to-[#10b981] transition-all duration-150 ${
+                      javaInstallProgress.total === 0 ? "w-1/2 animate-pulse" : ""
+                    }`}
+                    style={
+                      javaInstallProgress.total > 0
+                        ? {
+                            width: `${Math.min(100, Math.round((javaInstallProgress.completed / javaInstallProgress.total) * 100))}%`,
+                          }
+                        : undefined
+                    }
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 gap-2">
+                  <span className="truncate">{javaInstallProgress.detail}</span>
+                  <span className="shrink-0 text-slate-300">
+                    {formatBytes(javaInstallProgress.bytes_downloaded)}
+                    {javaInstallProgress.fast_path_hits > 0
+                      ? ` / ${formatBytes(javaInstallProgress.fast_path_hits * 1024)}`
+                      : ""}
+                  </span>
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-end gap-2 pt-2 border-t border-white/[0.07]">
               <button
                 type="button"
                 disabled={installingJava}
                 onClick={onDismissJavaModal}
-                className="rounded-lg border border-white/[0.08] px-3.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-white/[0.05]"
+                className="rounded-lg border border-white/[0.08] px-3.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-white/[0.05] disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Cancelar
               </button>
@@ -503,10 +548,10 @@ export function ProfileDashboard({
                 type="button"
                 disabled={installingJava}
                 onClick={() => void onConfirmInstallJava(missingJavaMajor)}
-                className="rounded-lg bg-[#10b981] hover:bg-[#059669] px-4 py-1.5 text-xs font-semibold text-slate-950 disabled:opacity-50 transition-colors"
+                className="rounded-lg bg-[#10b981] hover:bg-[#059669] px-4 py-1.5 text-xs font-semibold text-slate-950 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {installingJava
-                  ? "Instalando JRE..."
+                  ? javaInstallProgress?.phase ?? "Instalando JRE..."
                   : `Instalar Java ${missingJavaMajor}`}
               </button>
             </div>

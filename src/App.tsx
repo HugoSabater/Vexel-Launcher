@@ -54,6 +54,8 @@ export function App() {
   const [launching, setLaunching] = useState(false);
   const [installingJava, setInstallingJava] = useState(false);
   const [missingJavaMajor, setMissingJavaMajor] = useState<number | null>(null);
+  const [javaInstallProgress, setJavaInstallProgress] =
+    useState<LaunchProgressEvent | null>(null);
   const [progress, setProgress] = useState<LaunchProgressEvent | null>(null);
   const [logs, setLogs] = useState<LogLineEvent[]>([]);
   const [bannerError, setBannerError] = useState<string | null>(null);
@@ -235,8 +237,18 @@ export function App() {
   const handleConfirmInstallJava = async (major: number) => {
     setInstallingJava(true);
     setBannerError(null);
+    setJavaInstallProgress({
+      phase: "Descargando JRE...",
+      completed: 0,
+      total: 100,
+      bytes_downloaded: 0,
+      detail: `Conectando con Eclipse Adoptium (Java ${major})...`,
+      fast_path_hits: 0,
+    });
+
     const onProgress = new Channel<LaunchProgressEvent>();
     onProgress.onmessage = (ev) => {
+      setJavaInstallProgress(ev);
       setProgress(ev);
     };
 
@@ -247,6 +259,7 @@ export function App() {
       });
       setJavaStatus(status);
       setMissingJavaMajor(null);
+      setJavaInstallProgress(null);
       await handlePlay();
     } catch (err) {
       const parsed = extractIpcError(err);
@@ -453,10 +466,14 @@ export function App() {
                 logs={logs}
                 missingJavaMajor={missingJavaMajor}
                 installingJava={installingJava}
+                javaInstallProgress={javaInstallProgress}
                 onPlay={handlePlay}
                 onClearLogs={() => setLogs([])}
                 onConfirmInstallJava={handleConfirmInstallJava}
-                onDismissJavaModal={() => setMissingJavaMajor(null)}
+                onDismissJavaModal={() => {
+                  setMissingJavaMajor(null);
+                  setJavaInstallProgress(null);
+                }}
               />
             )}
 

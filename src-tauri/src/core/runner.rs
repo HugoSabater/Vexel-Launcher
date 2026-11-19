@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -181,6 +182,118 @@ pub fn apply_windows_process_priority(_pid: u32, _priority: ProcessPriority) -> 
     Ok(())
 }
 
+const SINGLE_VALUE_GAME_OPTIONS: &[&str] = &[
+    "--username",
+    "--version",
+    "--gameDir",
+    "--assetsDir",
+    "--assetIndex",
+    "--uuid",
+    "--accessToken",
+    "--userType",
+    "--versionType",
+    "--clientId",
+    "--xuid",
+    "--quickPlayMultiplayer",
+    "--server",
+    "--port",
+];
+
+fn is_single_value_game_option(flag: &str) -> bool {
+    SINGLE_VALUE_GAME_OPTIONS.contains(&flag)
+}
+
+fn substitute_game_arg_template(
+    raw: &str,
+    req: &LaunchRequest,
+    game_dir: &Path,
+    assets_dir: &Path,
+    offline_uuid_str: &str,
+) -> String {
+    let game_dir_str = game_dir.to_string_lossy();
+    let assets_dir_str = assets_dir.to_string_lossy();
+    raw.replace("${auth_player_name}", &req.username)
+        .replace("${version_name}", &req.mc_version)
+        .replace("${game_directory}", &game_dir_str)
+        .replace("${assets_root}", &assets_dir_str)
+        .replace("${game_assets}", &assets_dir_str)
+        .replace("${assets_index_name}", &req.asset_index_id)
+        .replace("${auth_uuid}", offline_uuid_str)
+        .replace("${auth_access_token}", "0")
+        .replace("${auth_session}", "0")
+        .replace("${clientid}", "0")
+        .replace("${auth_xuid}", "0")
+        .replace("${user_type}", "legacy")
+        .replace("${version_type}", "release")
+}
+
+#[must_use]
+pub fn build_game_args(req: &LaunchRequest, paths: &LauncherPaths) -> Vec<String> {
+    let game_dir = paths.instance_dir(&req.profile_id);
+    let assets_dir = paths.shared_assets_dir();
+    let offline_uuid_str = generate_offline_uuid(&req.username).simple().to_string();
+
+    let mut args = Vec::new();
+    let mut seen_single_options: HashSet<String> = HashSet::new();
+
+    let base_pairs = [
+        ("--username", req.username.clone()),
+        ("--version", req.mc_version.clone()),
+        ("--gameDir", game_dir.to_string_lossy().into_owned()),
+        ("--assetsDir", assets_dir.to_string_lossy().into_owned()),
+        ("--assetIndex", req.asset_index_id.clone()),
+        ("--uuid", offline_uuid_str.clone()),
+        ("--accessToken", "0".to_string()),
+        ("--userType", "legacy".to_string()),
+        ("--versionType", "release".to_string()),
+    ];
+
+    for (flag, value) in base_pairs {
+        seen_single_options.insert(flag.to_string());
+        args.push(flag.to_string());
+        args.push(value);
+    }
+
+    let quickplay_args = build_quickplay_args(&req.mc_version, req.server_address.as_deref());
+    let mut combined_extra: Vec<String> = req
+        .extra_game_args
+        .iter()
+        .map(|arg| {
+            substitute_game_arg_template(arg, req, &game_dir, &assets_dir, &offline_uuid_str)
+        })
+        .collect();
+    combined_extra.extend(quickplay_args);
+
+    let mut idx = 0;
+    while idx < combined_extra.len() {
+        let token = &combined_extra[idx];
+        if is_single_value_game_option(token) {
+            if seen_single_options.contains(token) {
+                // Skip duplicate single-value option and its associated value (if present)
+                if idx + 1 < combined_extra.len() && !combined_extra[idx + 1].starts_with("--") {
+                    idx += 2;
+                } else {
+                    idx += 1;
+                }
+                continue;
+            }
+            seen_single_options.insert(token.clone());
+            args.push(token.clone());
+            if idx + 1 < combined_extra.len() && !combined_extra[idx + 1].starts_with("--") {
+                args.push(combined_extra[idx + 1].clone());
+                idx += 2;
+            } else {
+                idx += 1;
+            }
+        } else {
+            args.push(token.clone());
+            idx += 1;
+        }
+    }
+
+    args
+}
+
 pub async fn spawn_minecraft<F>(
     req: LaunchRequest,
     paths: &LauncherPaths,
@@ -214,8 +327,7 @@ where
         .collect::<Vec<_>>()
         .join(separator);
 
-    let offline_uuid = generate_offline_uuid(&req.username);
-    let quickplay_args = build_quickplay_args(&req.mc_version, req.server_address.as_deref());
+    let game_args = build_game_args(&req, paths);
 
     let mut cmd = Command::new(&req.javaw_path);
     cmd.current_dir(&game_dir)
@@ -225,24 +337,7 @@ where
         .arg("-cp")
         .arg(&classpath)
         .arg(&req.main_class)
-        .arg("--username")
-        .arg(&req.username)
-        .arg("--version")
-        .arg(&req.mc_version)
-        .arg("--gameDir")
-        .arg(&game_dir)
-        .arg("--assetsDir")
-        .arg(paths.shared_assets_dir())
-        .arg("--assetIndex")
-        .arg(&req.asset_index_id)
-        .arg("--uuid")
-        .arg(offline_uuid.simple().to_string())
-        .arg("--accessToken")
-        .arg("0")
-        .arg("--userType")
-        .arg("legacy")
-        .args(&req.extra_game_args)
-        .args(&quickplay_args)
+        .args(&game_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -306,9 +401,16 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use uuid::Version;
 
-    use super::{build_quickplay_args, generate_offline_uuid};
+    use super::{
+        build_game_args, build_quickplay_args, generate_offline_uuid, LaunchRequest,
+        ProcessPriority,
+    };
+    use crate::core::jvm_optimizer::GcPreset;
+    use crate::core::paths::LauncherPaths;
 
     #[test]
     fn test_offline_uuid_deterministic_v3() {
@@ -341,5 +443,83 @@ mod tests {
         );
         assert!(build_quickplay_args("1.21.4", Some("   ")).is_empty());
         assert!(build_quickplay_args("1.21.4", None).is_empty());
+    }
+
+    #[test]
+    fn test_build_game_args_deduplicates_modern_1_21_4_options() {
+        let paths = LauncherPaths::with_root(PathBuf::from("test-root"));
+        let req = LaunchRequest {
+            profile_id: "vanilla-1-21-4".to_string(),
+            mc_version: "1.21.4".to_string(),
+            username: "Hugo".to_string(),
+            ram_mb: 4096,
+            gc_preset: GcPreset::GenerationalZgc,
+            process_priority: ProcessPriority::AboveNormal,
+            server_address: Some("play.example.net:25565".to_string()),
+            javaw_path: PathBuf::from("javaw.exe"),
+            main_class: "net.minecraft.client.main.Main".to_string(),
+            java_major: 21,
+            classpath_entries: Vec::new(),
+            native_archives: Vec::new(),
+            asset_index_id: "19".to_string(),
+            extra_jvm_args: Vec::new(),
+            extra_game_args: vec![
+                "--username".to_string(),
+                "${auth_player_name}".to_string(),
+                "--version".to_string(),
+                "${version_name}".to_string(),
+                "--gameDir".to_string(),
+                "${game_directory}".to_string(),
+                "--assetsDir".to_string(),
+                "${assets_root}".to_string(),
+                "--assetIndex".to_string(),
+                "${assets_index_name}".to_string(),
+                "--uuid".to_string(),
+                "${auth_uuid}".to_string(),
+                "--accessToken".to_string(),
+                "${auth_access_token}".to_string(),
+                "--clientId".to_string(),
+                "${clientid}".to_string(),
+                "--xuid".to_string(),
+                "${auth_xuid}".to_string(),
+                "--userType".to_string(),
+                "${user_type}".to_string(),
+                "--versionType".to_string(),
+                "${version_type}".to_string(),
+                "--customLoaderFlag".to_string(),
+                "enabled".to_string(),
+            ],
+        };
+
+        let args = build_game_args(&req, &paths);
+
+        for unique_flag in [
+            "--version",
+            "--username",
+            "--gameDir",
+            "--assetsDir",
+            "--assetIndex",
+            "--uuid",
+            "--accessToken",
+            "--userType",
+            "--versionType",
+            "--clientId",
+            "--xuid",
+            "--quickPlayMultiplayer",
+        ] {
+            let count = args.iter().filter(|a| a.as_str() == unique_flag).count();
+            assert_eq!(
+                count, 1,
+                "Expected option '{unique_flag}' exactly once, found {count} in {args:?}"
+            );
+        }
+
+        assert!(
+            args.iter().all(|a| !a.contains("${")),
+            "Found unresolved template placeholder in {args:?}"
+        );
+        assert!(args.contains(&"1.21.4".to_string()));
+        assert!(args.contains(&"--customLoaderFlag".to_string()));
+        assert!(args.contains(&"enabled".to_string()));
     }
 }

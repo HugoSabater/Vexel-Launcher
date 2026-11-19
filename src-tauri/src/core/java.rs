@@ -113,38 +113,49 @@ pub async fn install_java_runtime<F>(
     on_progress: F,
 ) -> AppResult<PathBuf>
 where
-    F: Fn(u64, Option<u64>, &str) + Send + Sync,
+    F: Fn(u64, Option<u64>, &str, &str) + Send + Sync,
 {
     let url = adoptium_download_url(major);
     let cache_dir = paths.shared_cache_dir();
     tokio::fs::create_dir_all(&cache_dir).await?;
     let zip_path = cache_dir.join(format!("adoptium-jre-{major}.zip"));
 
-    on_progress(0, None, &format!("Conectando con Eclipse Adoptium (Java {major})..."));
+    on_progress(
+        0,
+        None,
+        "Descargando JRE...",
+        &format!("Conectando con Eclipse Adoptium (Java {major})..."),
+    );
 
     let response = client.get(&url).send().await?.error_for_status()?;
     let total_bytes = response.content_length();
     let mut stream = response.bytes_stream();
     let mut zip_file = tokio::fs::File::create(&zip_path).await?;
     let mut downloaded = 0_u64;
+    let mut last_emitted = 0_u64;
+    let detail_dl = format!("Eclipse Temurin JRE {major} (Windows x64)");
+
+    on_progress(0, total_bytes, "Descargando JRE...", &detail_dl);
 
     while let Some(chunk_res) = stream.next().await {
         let chunk = chunk_res?;
         zip_file.write_all(&chunk).await?;
         downloaded += chunk.len() as u64;
-        on_progress(
-            downloaded,
-            total_bytes,
-            &format!("Descargando Adoptium JRE {major}"),
-        );
+        if downloaded.saturating_sub(last_emitted) >= 256 * 1024
+            || total_bytes.is_some_and(|t| downloaded >= t)
+        {
+            last_emitted = downloaded;
+            on_progress(downloaded, total_bytes, "Descargando JRE...", &detail_dl);
+        }
     }
     zip_file.flush().await?;
     drop(zip_file);
 
     on_progress(
         downloaded,
-        total_bytes,
-        &format!("Extrayendo Java {major} en shared/runtimes/java-{major}..."),
+        total_bytes.or(Some(downloaded)),
+        "Extrayendo runtime...",
+        &format!("Descomprimiendo en shared/runtimes/java-{major}/..."),
     );
 
     let runtime_dir = paths.runtime_dir(major);
@@ -158,9 +169,18 @@ where
 
     let _ = tokio::fs::remove_file(&zip_path).await;
 
-    find_javaw_in_dir(&runtime_dir)
+    let javaw = find_javaw_in_dir(&runtime_dir)
         .await?
         .ok_or(AppError::JavaNotFound {
             required_major: major,
-        })
+        })?;
+
+    on_progress(
+        downloaded,
+        total_bytes.or(Some(downloaded)),
+        "Runtime listo",
+        &format!("Java {major} instalado correctamente"),
+    );
+
+    Ok(javaw)
 }
