@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #334155 #0b1120;
+}
+
+body {
+  margin: 0;
+  background-color: #0b1120;
+  color: #f1f5f9;
+  font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+}
