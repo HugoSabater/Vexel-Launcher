@@ -1,5 +1,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+pub mod core;
+pub mod error;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if let Err(err) = tauri::Builder::default().run(tauri::generate_context!()) {
