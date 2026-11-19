@@ -4,25 +4,24 @@
 
 :root {
   color-scheme: dark;
-  --obsidian-base: #090b10;
-  --obsidian-sidebar: #0e121a;
-  --obsidian-surface: rgba(22, 28, 42, 0.72);
-  --obsidian-hairline: rgba(255, 255, 255, 0.07);
-  --obsidian-highlight: rgba(255, 255, 255, 0.06);
-  --accent-emerald: #10b981;
-  --accent-emerald-hover: #059669;
-  --accent-cyan: #38bdf8;
+  --bg-canvas: #0a0c10;
+  --bg-chrome: #10131a;
+  --bg-interactive: #181d28;
+  --hairline: rgba(255, 255, 255, 0.06);
+  --accent-play: #10b981;
+  --accent-play-hover: #059669;
+  --accent-tech: #38bdf8;
 }
 
 * {
   box-sizing: border-box;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
 }
 
 *::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 *::-webkit-scrollbar-track {
@@ -30,12 +29,12 @@
 }
 
 *::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.12);
+  background-color: rgba(255, 255, 255, 0.1);
   border-radius: 999px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.22);
+  background-color: rgba(255, 255, 255, 0.2);
 }
 
 html,
@@ -43,10 +42,19 @@ body,
 #root {
   height: 100%;
   margin: 0;
-  background-color: var(--obsidian-base);
+  background-color: var(--bg-canvas);
   color: #e2e8f0;
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
   overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea,
+.selectable-logs {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 code,
@@ -56,43 +64,12 @@ pre,
 }
 
 @layer utilities {
-  .obsidian-card {
-    background: var(--obsidian-surface);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid var(--obsidian-hairline);
-    box-shadow: inset 0 1px 0 var(--obsidian-highlight);
-  }
-
-  .obsidian-panel {
-    background: rgba(14, 18, 26, 0.88);
-    border: 1px solid var(--obsidian-hairline);
-    box-shadow: inset 0 1px 0 var(--obsidian-highlight);
-  }
-
-  .obsidian-hairline {
-    border: 1px solid var(--obsidian-hairline);
-  }
-
-  .obsidian-inset {
-    box-shadow: inset 0 1px 0 var(--obsidian-highlight);
-  }
-
-  .play-glow {
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.22),
-      0 0 28px -6px rgba(16, 185, 129, 0.5);
-  }
-
-  .play-glow:hover {
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.28),
-      0 0 34px -4px rgba(16, 185, 129, 0.65);
+  .surface-hairline {
+    border: 1px solid var(--hairline);
   }
 }
 
-/* Custom precision range input */
-input[type="range"].obsidian-slider {
+input[type="range"].native-slider {
   -webkit-appearance: none;
   appearance: none;
   height: 4px;
@@ -101,19 +78,13 @@ input[type="range"].obsidian-slider {
   outline: none;
 }
 
-input[type="range"].obsidian-slider::-webkit-slider-thumb {
+input[type="range"].native-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   border-radius: 999px;
   background: #38bdf8;
-  border: 2px solid #090b10;
+  border: 2px solid #0a0c10;
   cursor: pointer;
-  transition: transform 120ms ease, background-color 120ms ease;
-}
-
-input[type="range"].obsidian-slider::-webkit-slider-thumb:hover {
-  transform: scale(1.15);
-  background: #7dd3fc;
 }

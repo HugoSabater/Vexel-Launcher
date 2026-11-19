@@ -85,6 +85,11 @@ export interface LaunchResult {
   java_major: number;
 }
 
+export interface InstanceExitEvent {
+  profile_id: string;
+  exit_code: number | null;
+}
+
 export interface IpcErrorPayload {
   code?: string;
   message?: string;

@@ -294,14 +294,49 @@ pub fn build_game_args(req: &LaunchRequest, paths: &LauncherPaths) -> Vec<String
     args
 }
 
-pub async fn spawn_minecraft<F>(
+#[cfg(windows)]
+pub async fn terminate_process(pid: u32) -> AppResult<()> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+    tokio::task::spawn_blocking(move || {
+        // Safety: Opens process with PROCESS_TERMINATE, terminates if alive, and always closes handle.
+        unsafe {
+            let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+            if handle.is_null() {
+                // Process may already have exited; treat as already stopped.
+                return Ok(());
+            }
+            let term_ok = TerminateProcess(handle, 1);
+            let _ = CloseHandle(handle);
+            if term_ok == 0 {
+                return Err(AppError::Win32Error(format!(
+                    "TerminateProcess failed for PID {pid}: {}",
+                    std::io::Error::last_os_error()
+                )));
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|err| AppError::ProcessLaunch(format!("Terminate task failed: {err}")))?
+}
+
+#[cfg(not(windows))]
+pub async fn terminate_process(_pid: u32) -> AppResult<()> {
+    Ok(())
+}
+
+pub async fn spawn_minecraft<F, E>(
     req: LaunchRequest,
     paths: &LauncherPaths,
     logical_cores: usize,
     on_log: F,
+    on_exit: E,
 ) -> AppResult<u32>
 where
     F: Fn(String, bool) + Send + Sync + 'static,
+    E: FnOnce(Option<i32>) + Send + 'static,
 {
     paths.ensure_instance_dirs(&req.profile_id).await?;
     let game_dir = paths.instance_dir(&req.profile_id);
@@ -390,10 +425,17 @@ where
     }
 
     tokio::spawn(async move {
-        match child.wait().await {
-            Ok(status) => on_log(format!("[Minecraft] Process exited with {status}"), false),
-            Err(err) => on_log(format!("[Minecraft] Wait error: {err}"), true),
-        }
+        let exit_code = match child.wait().await {
+            Ok(status) => {
+                on_log(format!("[Minecraft] Process exited with {status}"), false);
+                status.code()
+            }
+            Err(err) => {
+                on_log(format!("[Minecraft] Wait error: {err}"), true);
+                Some(-1)
+            }
+        };
+        on_exit(exit_code);
     });
 
     Ok(pid)

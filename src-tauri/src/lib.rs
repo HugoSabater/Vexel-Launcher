@@ -4,6 +4,9 @@ pub mod commands;
 pub mod core;
 pub mod error;
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use tauri::Manager;
 use tokio::sync::Mutex;
 
@@ -29,6 +32,7 @@ pub fn run() {
                 paths,
                 hardware,
                 config: Mutex::new(config),
+                running_processes: Arc::new(Mutex::new(HashMap::new())),
             });
 
             Ok(())
@@ -46,6 +50,8 @@ pub fn run() {
             commands::inject_performance_stack,
             commands::check_profile_java,
             commands::install_adoptium_java,
+            commands::stop_instance,
+            commands::open_instance_folder,
             commands::launch_profile,
         ]);
 

@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  Cpu,
+  Copy,
+  FolderOpen,
   Globe,
+  Play,
   Plus,
-  Server,
+  Square,
   Star,
   Trash2,
   X,
@@ -18,26 +20,30 @@ import type {
 interface SidebarProfilesProps {
   profiles: Profile[];
   selectedProfileId: string;
+  runningProfileIds: Record<string, boolean>;
   hardware: HardwareInfo;
   onSelectProfile: (profileId: string) => void;
+  onPlayProfile: (profileId: string) => Promise<void>;
+  onStopProfile: (profileId: string) => Promise<void>;
+  onOpenFolder: (profileId: string) => Promise<void>;
+  onDuplicateProfile: (profile: Profile) => Promise<void>;
   onSetDefault: (profileId: string) => Promise<void>;
   onSaveProfile: (profile: Profile) => Promise<void>;
   onDeleteProfile: (profileId: string) => Promise<void>;
 }
 
-const LOADER_BADGE_STYLES: Record<ModLoaderKind, string> = {
-  vanilla: "bg-emerald-500/10 text-emerald-300 border-emerald-500/25",
-  fabric: "bg-[#38bdf8]/10 text-[#38bdf8] border-[#38bdf8]/25",
-  forge: "bg-amber-500/10 text-amber-300 border-amber-500/25",
-  neo_forge: "bg-orange-500/10 text-orange-300 border-orange-500/25",
+const LOADER_DOT: Record<ModLoaderKind, string> = {
+  vanilla: "bg-emerald-400",
+  fabric: "bg-[#38BDF8]",
+  forge: "bg-amber-400",
+  neo_forge: "bg-orange-400",
 };
 
-const LOADER_LABELS: Record<ModLoaderKind, string> = {
-  vanilla: "Vanilla",
-  fabric: "Fabric",
-  forge: "Forge",
-  neo_forge: "NeoForge",
-};
+interface ContextMenuState {
+  x: number;
+  y: number;
+  profile: Profile;
+}
 
 function slugifyProfileId(name: string): string {
   const clean = name
@@ -50,13 +56,19 @@ function slugifyProfileId(name: string): string {
 export function SidebarProfiles({
   profiles,
   selectedProfileId,
+  runningProfileIds,
   hardware,
   onSelectProfile,
+  onPlayProfile,
+  onStopProfile,
+  onOpenFolder,
+  onDuplicateProfile,
   onSetDefault,
   onSaveProfile,
   onDeleteProfile,
 }: SidebarProfilesProps) {
   const [modalOpen, setModalOpen] = useState(false);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [name, setName] = useState("");
   const [mcVersion, setMcVersion] = useState("1.21.4");
   const [loader, setLoader] = useState<ModLoaderKind>("fabric");
@@ -64,6 +76,19 @@ export function SidebarProfiles({
   const [gcPreset, setGcPreset] = useState<GcPreset>("generational_zgc");
   const [serverAddress, setServerAddress] = useState("");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const dismiss = () => setContextMenu(null);
+    window.addEventListener("click", dismiss);
+    window.addEventListener("contextmenu", dismiss);
+    window.addEventListener("keydown", dismiss);
+    return () => {
+      window.removeEventListener("click", dismiss);
+      window.removeEventListener("contextmenu", dismiss);
+      window.removeEventListener("keydown", dismiss);
+    };
+  }, [contextMenu]);
 
   const openModal = () => {
     setName("");
@@ -109,165 +134,191 @@ export function SidebarProfiles({
   };
 
   return (
-    <aside className="w-[272px] shrink-0 bg-[#0e121a] border-r border-white/[0.07] flex flex-col select-none">
-      <div className="px-4 pt-4 pb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
-            Instancias
-          </span>
-          <span className="rounded-md bg-white/[0.05] border border-white/[0.07] px-1.5 py-0.5 text-[10px] font-mono text-slate-400">
-            {profiles.length}
-          </span>
-        </div>
-
+    <aside className="w-[220px] shrink-0 bg-[#10131A] border-r border-white/[0.05] flex flex-col">
+      <div className="h-11 px-3 flex items-center justify-between">
+        <span className="text-[11px] font-medium tracking-wide text-slate-400">
+          Perfiles
+        </span>
         <button
           type="button"
           onClick={openModal}
-          className="inline-flex items-center gap-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] px-2.5 py-1 text-[11px] font-medium text-slate-200 transition-colors"
+          title="Nuevo perfil"
+          className="h-6 w-6 rounded-md flex items-center justify-center text-slate-400 hover:text-white hover:bg-[#181D28] transition-colors"
         >
-          <Plus className="h-3.5 w-3.5 text-[#38bdf8]" />
-          Nuevo
+          <Plus className="h-3.5 w-3.5" />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-2.5 pb-3 space-y-1.5">
+      <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
         {profiles.map((profile) => {
           const isSelected = profile.id === selectedProfileId;
+          const isRunning = Boolean(runningProfileIds[profile.id]);
+
           return (
-            <div
+            <button
               key={profile.id}
+              type="button"
               onClick={() => onSelectProfile(profile.id)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  onSelectProfile(profile.id);
-                }
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onSelectProfile(profile.id);
+                setContextMenu({
+                  x: Math.min(e.clientX, window.innerWidth - 210),
+                  y: Math.min(e.clientY, window.innerHeight - 210),
+                  profile,
+                });
               }}
-              className={`group relative rounded-xl p-3 cursor-pointer transition-all ${
+              className={`relative w-full text-left rounded-lg px-2.5 py-2 flex items-center gap-2.5 transition-colors ${
                 isSelected
-                  ? "bg-[rgba(22,28,42,0.88)] border border-white/[0.11] obsidian-inset"
-                  : "bg-transparent border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]"
+                  ? "bg-[#181D28] border border-white/[0.06] text-white"
+                  : "border border-transparent text-slate-400 hover:text-slate-200 hover:bg-[#181D28]/50"
               }`}
             >
               {isSelected && (
-                <span className="absolute left-0 top-3 bottom-3 w-[2.5px] rounded-r-full bg-[#38bdf8]" />
+                <span className="absolute left-0 top-2 bottom-2 w-[2px] rounded-r-full bg-[#38BDF8]" />
               )}
 
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 pl-1">
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className={`truncate text-[13px] font-semibold tracking-tight ${
-                        isSelected ? "text-white" : "text-slate-300"
-                      }`}
-                    >
-                      {profile.name}
-                    </span>
-                  </div>
+              <span
+                className={`h-2 w-2 rounded-full shrink-0 ${
+                  isRunning
+                    ? "bg-[#10B981] animate-pulse"
+                    : LOADER_DOT[profile.loader]
+                }`}
+              />
 
-                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    <span className="rounded bg-[#090b10] border border-white/[0.07] px-1.5 py-0.5 text-[10px] font-mono text-slate-300">
-                      {profile.mc_version}
-                    </span>
-                    <span
-                      className={`rounded border px-1.5 py-0.5 text-[10px] font-mono font-medium ${LOADER_BADGE_STYLES[profile.loader]}`}
-                    >
-                      {LOADER_LABELS[profile.loader]}
-                    </span>
-                    {profile.is_default && (
-                      <span className="text-[10px] font-mono text-[#10b981]">
-                        ● default
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-0.5 shrink-0">
-                  <button
-                    type="button"
-                    title="Marcar como perfil por defecto"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void onSetDefault(profile.id);
-                    }}
-                    className={`p-1 rounded-md hover:bg-white/[0.06] transition-colors ${
-                      profile.is_default
-                        ? "text-[#10b981]"
-                        : "text-slate-600 hover:text-slate-300"
-                    }`}
-                  >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-[12.5px] font-medium leading-tight">
+                    {profile.name}
+                  </span>
+                  {profile.is_default && (
                     <Star
-                      className="h-3.5 w-3.5"
-                      fill={profile.is_default ? "currentColor" : "none"}
+                      className="h-2.5 w-2.5 shrink-0 text-slate-500"
+                      fill="currentColor"
                     />
-                  </button>
-                  {profiles.length > 1 && (
-                    <button
-                      type="button"
-                      title="Quitar perfil"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void onDeleteProfile(profile.id);
-                      }}
-                      className="p-1 rounded-md text-slate-600 hover:text-rose-400 hover:bg-white/[0.06] opacity-0 group-hover:opacity-100 transition-all"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
                   )}
                 </div>
+                <div className="mt-0.5 flex items-center gap-1.5 text-[10px] font-mono text-slate-500">
+                  <span>{profile.mc_version}</span>
+                  <span>·</span>
+                  <span className="capitalize">{profile.loader}</span>
+                </div>
               </div>
-
-              <div className="mt-2 pl-1 flex items-center justify-between text-[10px] font-mono text-slate-500">
-                <span>{profile.ram_mb} MB</span>
-                {profile.server_address && (
-                  <span className="inline-flex items-center gap-1 text-[#38bdf8] truncate max-w-[140px]">
-                    <Server className="h-2.5 w-2.5 shrink-0" />
-                    <span className="truncate">{profile.server_address}</span>
-                  </span>
-                )}
-              </div>
-            </div>
+            </button>
           );
         })}
       </div>
 
-      <div className="p-3 border-t border-white/[0.07] bg-[#090b10]/60">
-        <div className="flex items-center gap-2.5">
-          <div className="h-7 w-7 rounded-lg bg-[#38bdf8]/10 border border-[#38bdf8]/20 flex items-center justify-center text-[#38bdf8] shrink-0">
-            <Cpu className="h-3.5 w-3.5" />
-          </div>
-          <div className="min-w-0">
-            <div className="text-[11px] font-medium text-slate-300 truncate">
-              Host Telemetry
-            </div>
-            <div className="text-[10px] font-mono text-slate-500">
-              {Math.round(hardware.total_ram_mb / 1024)} GB RAM ·{" "}
-              {hardware.logical_cores} threads
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Native Right-Click Context Menu */}
+      {contextMenu && (
+        <div
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+          className="fixed z-50 w-52 rounded-xl bg-[#181D28] border border-white/[0.08] py-1.5 shadow-2xl"
+        >
+          {runningProfileIds[contextMenu.profile.id] ? (
+            <button
+              type="button"
+              onClick={() => {
+                const id = contextMenu.profile.id;
+                setContextMenu(null);
+                void onStopProfile(id);
+              }}
+              className="w-full px-3 py-1.5 text-left text-xs text-rose-300 hover:bg-white/[0.06] flex items-center gap-2.5"
+            >
+              <Square className="h-3.5 w-3.5 fill-current" />
+              Detener instancia
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                const id = contextMenu.profile.id;
+                setContextMenu(null);
+                void onPlayProfile(id);
+              }}
+              className="w-full px-3 py-1.5 text-left text-xs text-emerald-300 hover:bg-white/[0.06] flex items-center gap-2.5"
+            >
+              <Play className="h-3.5 w-3.5 fill-current" />
+              Jugar
+            </button>
+          )}
 
+          <button
+            type="button"
+            onClick={() => {
+              const id = contextMenu.profile.id;
+              setContextMenu(null);
+              void onOpenFolder(id);
+            }}
+            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-white/[0.06] flex items-center gap-2.5"
+          >
+            <FolderOpen className="h-3.5 w-3.5 text-slate-400" />
+            Abrir carpeta de la instancia
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const target = contextMenu.profile;
+              setContextMenu(null);
+              void onDuplicateProfile(target);
+            }}
+            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-white/[0.06] flex items-center gap-2.5"
+          >
+            <Copy className="h-3.5 w-3.5 text-slate-400" />
+            Duplicar perfil
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const id = contextMenu.profile.id;
+              setContextMenu(null);
+              void onSetDefault(id);
+            }}
+            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-white/[0.06] flex items-center gap-2.5"
+          >
+            <Star className="h-3.5 w-3.5 text-slate-400" />
+            Fijar como predeterminado
+          </button>
+
+          {profiles.length > 1 && (
+            <>
+              <div className="my-1 border-t border-white/[0.06]" />
+              <button
+                type="button"
+                onClick={() => {
+                  const id = contextMenu.profile.id;
+                  setContextMenu(null);
+                  void onDeleteProfile(id);
+                }}
+                className="w-full px-3 py-1.5 text-left text-xs text-rose-400 hover:bg-rose-500/10 flex items-center gap-2.5"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Eliminar
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* New Profile Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
           <form
             onSubmit={handleCreate}
-            className="w-full max-w-md rounded-2xl obsidian-card p-5 space-y-4"
+            className="w-full max-w-md rounded-xl bg-[#10131A] border border-white/[0.08] p-5 space-y-4"
           >
-            <div className="flex items-center justify-between border-b border-white/[0.07] pb-3">
-              <div>
-                <h2 className="text-sm font-semibold text-white">
-                  Nueva Instancia Aislada
-                </h2>
-                <p className="text-[11px] text-slate-400">
-                  Comparte assets/librerías · Aísla mods y configuración
-                </p>
-              </div>
+            <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
+              <h2 className="text-sm font-semibold text-white">
+                Nuevo Perfil
+              </h2>
               <button
                 type="button"
                 onClick={() => setModalOpen(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.06]"
+                className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-[#181D28]"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -275,43 +326,42 @@ export function SidebarProfiles({
 
             <div className="space-y-3">
               <div>
-                <label className="block text-[11px] font-medium text-slate-300 mb-1">
-                  Nombre de la Instancia
+                <label className="block text-[11px] text-slate-400 mb-1">
+                  Nombre
                 </label>
                 <input
                   type="text"
                   required
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Ej. Survival 1.21.4 Fabric"
-                  className="w-full rounded-lg border border-white/[0.08] bg-[#090b10] px-3 py-2 text-xs text-white placeholder:text-slate-600 focus:border-[#38bdf8] focus:outline-none"
+                  placeholder="Survival 1.21.4 Fabric"
+                  className="w-full rounded-lg border border-white/[0.07] bg-[#0A0C10] px-3 py-2 text-xs text-white focus:border-[#38BDF8] focus:outline-none"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[11px] font-medium text-slate-300 mb-1">
-                    Versión MC
+                  <label className="block text-[11px] text-slate-400 mb-1">
+                    Versión
                   </label>
                   <input
                     type="text"
                     required
                     value={mcVersion}
                     onChange={(e) => setMcVersion(e.target.value)}
-                    placeholder="1.21.4"
-                    className="w-full rounded-lg border border-white/[0.08] bg-[#090b10] px-3 py-2 text-xs font-mono text-white focus:border-[#38bdf8] focus:outline-none"
+                    className="w-full rounded-lg border border-white/[0.07] bg-[#0A0C10] px-3 py-2 text-xs font-mono text-white focus:border-[#38BDF8] focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-medium text-slate-300 mb-1">
-                    Mod Loader
+                  <label className="block text-[11px] text-slate-400 mb-1">
+                    Loader
                   </label>
                   <select
                     value={loader}
                     onChange={(e) =>
                       handleLoaderChange(e.target.value as ModLoaderKind)
                     }
-                    className="w-full rounded-lg border border-white/[0.08] bg-[#090b10] px-3 py-2 text-xs text-white focus:border-[#38bdf8] focus:outline-none"
+                    className="w-full rounded-lg border border-white/[0.07] bg-[#0A0C10] px-3 py-2 text-xs text-white focus:border-[#38BDF8] focus:outline-none"
                   >
                     <option value="vanilla">Vanilla</option>
                     <option value="fabric">Fabric</option>
@@ -323,10 +373,10 @@ export function SidebarProfiles({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[11px] font-medium text-slate-300 mb-1.5">
-                    Heap RAM{" "}
-                    <span className="font-mono text-[#38bdf8]">
-                      {ramMb} MB
+                  <label className="block text-[11px] text-slate-400 mb-1.5">
+                    RAM{" "}
+                    <span className="font-mono text-[#38BDF8]">
+                      {(ramMb / 1024).toFixed(1)} GB
                     </span>
                   </label>
                   <input
@@ -336,53 +386,53 @@ export function SidebarProfiles({
                     step={512}
                     value={ramMb}
                     onChange={(e) => setRamMb(Number(e.target.value))}
-                    className="w-full obsidian-slider"
+                    className="w-full native-slider"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-medium text-slate-300 mb-1">
-                    Garbage Collector
+                  <label className="block text-[11px] text-slate-400 mb-1">
+                    GC
                   </label>
                   <select
                     value={gcPreset}
                     onChange={(e) => setGcPreset(e.target.value as GcPreset)}
-                    className="w-full rounded-lg border border-white/[0.08] bg-[#090b10] px-3 py-2 text-xs text-white focus:border-[#38bdf8] focus:outline-none"
+                    className="w-full rounded-lg border border-white/[0.07] bg-[#0A0C10] px-3 py-2 text-xs text-white focus:border-[#38BDF8] focus:outline-none"
                   >
-                    <option value="generational_zgc">Generational ZGC</option>
-                    <option value="aikar_g1_gc">Aikar&apos;s G1GC</option>
+                    <option value="generational_zgc">ZGC</option>
+                    <option value="aikar_g1_gc">G1GC</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-300 mb-1">
-                  <Globe className="h-3 w-3 text-[#38bdf8]" />
-                  QuickPlay Direct Server (Opcional)
+                <label className="flex items-center gap-1.5 text-[11px] text-slate-400 mb-1">
+                  <Globe className="h-3 w-3 text-[#38BDF8]" />
+                  Servidor QuickPlay (Opcional)
                 </label>
                 <input
                   type="text"
                   value={serverAddress}
                   onChange={(e) => setServerAddress(e.target.value)}
                   placeholder="play.servidor.net:25565"
-                  className="w-full rounded-lg border border-white/[0.08] bg-[#090b10] px-3 py-2 text-xs font-mono text-white placeholder:text-slate-600 focus:border-[#38bdf8] focus:outline-none"
+                  className="w-full rounded-lg border border-white/[0.07] bg-[#0A0C10] px-3 py-2 text-xs font-mono text-white focus:border-[#38BDF8] focus:outline-none"
                 />
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-white/[0.07]">
+            <div className="flex justify-end gap-2 pt-2 border-t border-white/[0.06]">
               <button
                 type="button"
                 onClick={() => setModalOpen(false)}
-                className="rounded-lg border border-white/[0.08] px-3.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-white/[0.05]"
+                className="rounded-lg border border-white/[0.06] px-3.5 py-1.5 text-xs text-slate-300 hover:bg-[#181D28]"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
                 disabled={saving}
-                className="rounded-lg bg-[#10b981] hover:bg-[#059669] px-4 py-1.5 text-xs font-semibold text-slate-950 disabled:opacity-50 transition-colors"
+                className="rounded-lg bg-[#10B981] hover:bg-[#059669] px-4 py-1.5 text-xs font-semibold text-slate-950 disabled:opacity-50"
               >
-                {saving ? "Creando..." : "Crear Instancia"}
+                {saving ? "Creando..." : "Crear"}
               </button>
             </div>
           </form>

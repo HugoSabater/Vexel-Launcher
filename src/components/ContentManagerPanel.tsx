@@ -94,7 +94,7 @@ export function ContentManagerPanel({
         setInjectProgress(ev);
       });
       setStatusMessage(
-        `Stack instalado (${installed.length}): ${installed.join(", ")}`,
+        `Instalados (${installed.length} con dependencias requeridas): ${installed.join(", ")}`,
       );
       if (activeTab === "mod") {
         await refreshItems();
@@ -122,45 +122,16 @@ export function ContentManagerPanel({
   };
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-2xl obsidian-card p-5 space-y-4">
+    <div className="h-full overflow-y-auto p-6 bg-[#0A0C10]">
+      <div className="max-w-4xl mx-auto space-y-5">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setActiveTab("mod")}
-              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-medium border transition-colors ${
-                activeTab === "mod"
-                  ? "bg-[#38bdf8]/12 text-[#38bdf8] border-[#38bdf8]/30"
-                  : "bg-white/[0.02] text-slate-400 border-white/[0.07] hover:text-slate-200"
-              }`}
-            >
-              <Package className="h-3.5 w-3.5" />
-              Mods <span className="font-mono text-[10px] opacity-75">.jar</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("resource_pack")}
-              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-medium border transition-colors ${
-                activeTab === "resource_pack"
-                  ? "bg-[#38bdf8]/12 text-[#38bdf8] border-[#38bdf8]/30"
-                  : "bg-white/[0.02] text-slate-400 border-white/[0.07] hover:text-slate-200"
-              }`}
-            >
-              <FileArchive className="h-3.5 w-3.5" />
-              Resource Packs{" "}
-              <span className="font-mono text-[10px] opacity-75">.zip</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => void refreshItems()}
-              className="p-2 rounded-lg border border-white/[0.07] bg-white/[0.02] text-slate-400 hover:text-white hover:bg-white/[0.06]"
-              title="Recargar carpeta"
-            >
-              <RefreshCw
-                className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
-              />
-            </button>
+          <div>
+            <h2 className="text-lg font-semibold text-white">
+              Mods y Paquetes · {profile.name}
+            </h2>
+            <p className="text-xs font-mono text-slate-500">
+              instances/{profile.id}/ · {profile.mc_version} ({profile.loader})
+            </p>
           </div>
 
           {profile.loader === "fabric" && (
@@ -168,27 +139,56 @@ export function ContentManagerPanel({
               type="button"
               disabled={injecting}
               onClick={() => void handleInjectStack()}
-              className="inline-flex items-center gap-2 rounded-lg bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 px-4 py-2 text-xs font-semibold text-slate-950 transition-colors"
+              className="inline-flex items-center gap-2 rounded-lg bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 px-4 py-2 text-xs font-semibold text-slate-950 transition-colors"
             >
               <Rocket className="h-3.5 w-3.5" />
               {injecting
-                ? "Descargando Modrinth..."
+                ? "Resolviendo Modrinth + Deps..."
                 : "Inyectar Pack de Rendimiento"}
             </button>
           )}
         </div>
 
-        <p className="text-[11px] text-slate-400">
-          Stack Modrinth (Fabric):{" "}
-          <span className="font-mono text-slate-300">
-            Sodium · Lithium · FerriteCore · ImmediatelyFast · C2ME · Distant
-            Horizons
-          </span>
-        </p>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setActiveTab("mod")}
+            className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors ${
+              activeTab === "mod"
+                ? "bg-[#181D28] text-white border-white/[0.08]"
+                : "bg-transparent text-slate-400 border-transparent hover:bg-[#181D28]/50"
+            }`}
+          >
+            <Package className="h-3.5 w-3.5 text-[#38BDF8]" />
+            Mods
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("resource_pack")}
+            className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors ${
+              activeTab === "resource_pack"
+                ? "bg-[#181D28] text-white border-white/[0.08]"
+                : "bg-transparent text-slate-400 border-transparent hover:bg-[#181D28]/50"
+            }`}
+          >
+            <FileArchive className="h-3.5 w-3.5 text-[#38BDF8]" />
+            Resource Packs
+          </button>
+          <button
+            type="button"
+            onClick={() => void refreshItems()}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-[#181D28]"
+            title="Recargar"
+          >
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+            />
+          </button>
+        </div>
 
         {injectProgress && injecting && (
-          <div className="rounded-xl border border-white/[0.08] bg-[#06080d] px-3.5 py-2.5 text-xs space-y-1">
-            <div className="flex justify-between text-[#38bdf8] font-medium text-[11px]">
+          <div className="rounded-lg bg-[#10131A] border border-white/[0.06] px-4 py-2.5 text-xs space-y-1">
+            <div className="flex justify-between text-[#38BDF8] font-medium text-[11px]">
               <span>{injectProgress.phase}</span>
               <span className="font-mono">
                 {injectProgress.completed}/{injectProgress.total}
@@ -201,7 +201,7 @@ export function ContentManagerPanel({
         )}
 
         {statusMessage && (
-          <div className="rounded-xl border border-white/[0.08] bg-[#06080d] px-3.5 py-2.5 text-xs font-mono text-slate-300">
+          <div className="rounded-lg bg-[#10131A] border border-white/[0.06] px-4 py-2.5 text-xs font-mono text-slate-300">
             {statusMessage}
           </div>
         )}
@@ -215,31 +215,30 @@ export function ContentManagerPanel({
           onDrop={(e) => void handleDrop(e)}
           className={`rounded-xl border border-dashed p-5 text-center transition-colors ${
             dragActive
-              ? "border-[#38bdf8] bg-[#38bdf8]/10"
-              : "border-white/[0.12] bg-[#090b10]/60"
+              ? "border-[#38BDF8] bg-[#38BDF8]/10"
+              : "border-white/[0.1] bg-[#10131A]/60"
           }`}
         >
-          <Upload className="h-4 w-4 mx-auto text-[#38bdf8] mb-1.5" />
+          <Upload className="h-4 w-4 mx-auto text-[#38BDF8] mb-1.5" />
           <p className="text-xs text-slate-400">
             Arrastra archivos{" "}
-            <code className="text-[#38bdf8]">
+            <code className="text-[#38BDF8]">
               {activeTab === "mod" ? ".jar" : ".zip"}
             </code>{" "}
-            aquí para copiarlos en{" "}
-            <code className="text-slate-300">instances/{profile.id}/</code>
+            aquí para instalarlos en el perfil
           </p>
         </div>
 
-        <div className="divide-y divide-white/[0.06] rounded-xl border border-white/[0.07] bg-[#090b10]/80 overflow-hidden">
+        <div className="divide-y divide-white/[0.05] rounded-xl border border-white/[0.06] bg-[#10131A] overflow-hidden">
           {items.length === 0 ? (
-            <div className="p-6 text-center text-xs font-mono text-slate-600">
-              empty directory
+            <div className="p-8 text-center text-xs font-mono text-slate-500">
+              Carpeta vacía
             </div>
           ) : (
             items.map((item) => (
               <div
                 key={item.file_name}
-                className="flex items-center justify-between px-4 py-2.5 hover:bg-white/[0.025] transition-colors"
+                className="flex items-center justify-between px-4 py-2.5 hover:bg-[#181D28]/60 transition-colors"
               >
                 <div className="min-w-0 pr-4">
                   <div
@@ -261,11 +260,11 @@ export function ContentManagerPanel({
                   onClick={() => void handleToggle(item)}
                   className={`shrink-0 rounded-md px-2.5 py-1 text-[10px] font-mono font-semibold border transition-colors ${
                     item.enabled
-                      ? "bg-[#10b981]/12 text-[#10b981] border-[#10b981]/30 hover:bg-[#10b981]/20"
-                      : "bg-white/[0.03] text-slate-500 border-white/[0.08] hover:text-slate-300"
+                      ? "bg-[#10B981]/12 text-[#10B981] border-[#10B981]/30"
+                      : "bg-[#181D28] text-slate-500 border-white/[0.06] hover:text-slate-300"
                   }`}
                 >
-                  {item.enabled ? "ENABLED" : "DISABLED"}
+                  {item.enabled ? "ACTIVO" : "INACTIVO"}
                 </button>
               </div>
             ))

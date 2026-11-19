@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -13,7 +15,8 @@ use crate::core::content::{
 use crate::core::downloader::{verify_and_download_all, DownloadProgress};
 use crate::core::hardware::HardwareInfo;
 use crate::core::instance::{
-    delete_profile, save_config_atomic, upsert_profile, LauncherConfig, ModLoaderKind, Profile,
+    delete_profile, save_config_atomic, upsert_profile, validate_profile_id, LauncherConfig,
+    ModLoaderKind, Profile,
 };
 use crate::core::java::{check_java_runtime, install_java_runtime, JavaRuntimeStatus};
 use crate::core::jvm_optimizer::{generate_jvm_flags, GcPreset, JvmTuningInput, JvmTuningOutput};
@@ -23,7 +26,7 @@ use crate::core::manifest::{
     fetch_or_load_version_manifest,
 };
 use crate::core::paths::LauncherPaths;
-use crate::core::runner::{spawn_minecraft, LaunchRequest, ProcessPriority};
+use crate::core::runner::{spawn_minecraft, terminate_process, LaunchRequest, ProcessPriority};
 use crate::error::{AppError, AppResult};
 
 pub struct AppState {
@@ -31,6 +34,13 @@ pub struct AppState {
     pub paths: LauncherPaths,
     pub hardware: HardwareInfo,
     pub config: Mutex<LauncherConfig>,
+    pub running_processes: Arc<Mutex<HashMap<String, u32>>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InstanceExitEvent {
+    pub profile_id: String,
+    pub exit_code: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -312,13 +322,60 @@ pub async fn install_adoptium_java(
 }
 
 #[tauri::command]
+pub async fn stop_instance(state: State<'_, AppState>, profile_id: String) -> AppResult<()> {
+    let pid_opt = {
+        let mut guard = state.running_processes.lock().await;
+        guard.remove(&profile_id)
+    };
+    if let Some(pid) = pid_opt {
+        terminate_process(pid).await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_instance_folder(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> AppResult<()> {
+    validate_profile_id(&profile_id)?;
+    state.paths.ensure_instance_dirs(&profile_id).await?;
+    let dir = state.paths.instance_dir(&profile_id);
+
+    #[cfg(windows)]
+    {
+        tokio::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|err| AppError::ProcessLaunch(format!("Failed to open Explorer: {err}")))?;
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn launch_profile(
     window: Window,
     state: State<'_, AppState>,
     profile_id: String,
     on_progress: Channel<LaunchProgressEvent>,
     on_log: Channel<LogLineEvent>,
+    on_exit: Channel<InstanceExitEvent>,
 ) -> AppResult<LaunchResult> {
+    {
+        let running = state.running_processes.lock().await;
+        if running.contains_key(&profile_id) {
+            return Err(AppError::ProcessLaunch(format!(
+                "Profile '{profile_id}' is already running"
+            )));
+        }
+    }
+
     let (profile, config_snapshot) = {
         let guard = state.config.lock().await;
         let profile = guard
@@ -424,9 +481,15 @@ pub async fn launch_profile(
     });
 
     let log_channel = on_log.clone();
+    let running_map = Arc::clone(&state.running_processes);
+    let profile_id_for_exit = profile.id.clone();
+    let window_for_exit = window.clone();
+    let should_restore_window = config_snapshot.close_on_launch;
+    let exit_channel = on_exit.clone();
+
     let pid = spawn_minecraft(
         LaunchRequest {
-            profile_id: profile.id,
+            profile_id: profile.id.clone(),
             mc_version: profile.mc_version,
             username: config_snapshot.offline_username,
             ram_mb: profile.ram_mb,
@@ -451,8 +514,31 @@ pub async fn launch_profile(
                 timestamp: current_hms_timestamp(),
             });
         },
+        move |exit_code| {
+            let running_ref = Arc::clone(&running_map);
+            let pid_key = profile_id_for_exit.clone();
+            tokio::spawn(async move {
+                let mut guard = running_ref.lock().await;
+                guard.remove(&pid_key);
+            });
+
+            if should_restore_window {
+                let _ = window_for_exit.show();
+                let _ = window_for_exit.set_focus();
+            }
+
+            let _ = exit_channel.send(InstanceExitEvent {
+                profile_id: profile_id_for_exit,
+                exit_code,
+            });
+        },
     )
     .await?;
+
+    {
+        let mut guard = state.running_processes.lock().await;
+        guard.insert(profile.id, pid);
+    }
 
     if config_snapshot.close_on_launch {
         let _ = window.hide();

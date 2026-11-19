@@ -1,3 +1,4 @@
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -32,12 +33,23 @@ pub struct ContentItem {
     pub kind: ContentKind,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct ModrinthVersion {
+    #[serde(default)]
+    project_id: String,
     files: Vec<ModrinthFile>,
+    #[serde(default)]
+    dependencies: Vec<ModrinthDependency>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
+struct ModrinthDependency {
+    project_id: Option<String>,
+    version_id: Option<String>,
+    dependency_type: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct ModrinthFile {
     hashes: ModrinthHashes,
     url: String,
@@ -46,9 +58,33 @@ struct ModrinthFile {
     size: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct ModrinthHashes {
     sha1: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PendingModrinthTarget {
+    Project(String, String),
+    Version(String),
+}
+
+fn extract_required_dependencies(deps: &[ModrinthDependency]) -> Vec<PendingModrinthTarget> {
+    let mut out = Vec::new();
+    for dep in deps {
+        if dep.dependency_type != "required" {
+            continue;
+        }
+        if let Some(ver_id) = dep.version_id.as_deref().filter(|s| !s.is_empty()) {
+            out.push(PendingModrinthTarget::Version(ver_id.to_string()));
+        } else if let Some(proj_id) = dep.project_id.as_deref().filter(|s| !s.is_empty()) {
+            out.push(PendingModrinthTarget::Project(
+                proj_id.to_string(),
+                format!("Dependency ({proj_id})"),
+            ));
+        }
+    }
+    out
 }
 
 fn validate_file_name(file_name: &str) -> AppResult<()> {
@@ -222,36 +258,92 @@ where
     let mods_dir = paths.instance_mods_dir(profile_id);
     let mut artifacts = Vec::new();
     let mut installed_names = Vec::new();
+    let mut queue: VecDeque<PendingModrinthTarget> = PERFORMANCE_STACK_MODS
+        .iter()
+        .map(|(slug, label)| PendingModrinthTarget::Project((*slug).to_string(), (*label).to_string()))
+        .collect();
 
-    for (index, (slug, label)) in PERFORMANCE_STACK_MODS.iter().enumerate() {
-        on_progress(DownloadProgress {
-            phase: "Consultando Modrinth API".to_string(),
-            completed_files: index,
-            total_files: PERFORMANCE_STACK_MODS.len(),
-            bytes_downloaded: 0,
-            current_file: (*label).to_string(),
-            fast_path_hits: 0,
-        });
+    let mut visited_projects: HashSet<String> = HashSet::new();
+    let mut visited_versions: HashSet<String> = HashSet::new();
+    let mut seen_filenames: HashSet<String> = HashSet::new();
+    let mut resolved_count = 0_usize;
 
-        let url = format!(
-            "https://api.modrinth.com/v2/project/{slug}/version?loaders=%5B%22fabric%22%5D&game_versions=%5B%22{mc_version}%22%5D"
-        );
-        let versions: Vec<ModrinthVersion> =
-            client.get(&url).send().await?.error_for_status()?.json().await?;
+    while let Some(target) = queue.pop_front() {
+        let (label, version_opt) = match target {
+            PendingModrinthTarget::Project(slug_or_id, display_label) => {
+                if !visited_projects.insert(slug_or_id.clone()) {
+                    continue;
+                }
+                on_progress(DownloadProgress {
+                    phase: "Resolviendo Modrinth + Dependencias".to_string(),
+                    completed_files: resolved_count,
+                    total_files: resolved_count + queue.len() + 1,
+                    bytes_downloaded: 0,
+                    current_file: display_label.clone(),
+                    fast_path_hits: 0,
+                });
 
-        let Some(first_version) = versions.first() else {
+                let url = format!(
+                    "https://api.modrinth.com/v2/project/{slug_or_id}/version?loaders=%5B%22fabric%22%5D&game_versions=%5B%22{mc_version}%22%5D"
+                );
+                let resp = client.get(&url).send().await?;
+                if !resp.status().is_success() {
+                    continue;
+                }
+                let versions: Vec<ModrinthVersion> = resp.json().await?;
+                (display_label, versions.into_iter().next())
+            }
+            PendingModrinthTarget::Version(ver_id) => {
+                if !visited_versions.insert(ver_id.clone()) {
+                    continue;
+                }
+                on_progress(DownloadProgress {
+                    phase: "Resolviendo dependencia requerida".to_string(),
+                    completed_files: resolved_count,
+                    total_files: resolved_count + queue.len() + 1,
+                    bytes_downloaded: 0,
+                    current_file: format!("version/{ver_id}"),
+                    fast_path_hits: 0,
+                });
+
+                let url = format!("https://api.modrinth.com/v2/version/{ver_id}");
+                let resp = client.get(&url).send().await?;
+                if !resp.status().is_success() {
+                    continue;
+                }
+                let ver: ModrinthVersion = resp.json().await?;
+                (format!("Required ({})", ver.project_id), Some(ver))
+            }
+        };
+
+        let Some(version) = version_opt else {
             continue;
         };
-        let selected_file = first_version
+
+        if !version.project_id.is_empty() {
+            visited_projects.insert(version.project_id.clone());
+        }
+
+        // Enqueue required dependencies (e.g. fabric-api) before downloading
+        for req_dep in extract_required_dependencies(&version.dependencies) {
+            queue.push_back(req_dep);
+        }
+
+        let selected_file = version
             .files
             .iter()
             .find(|f| f.primary)
-            .or_else(|| first_version.files.first());
+            .or_else(|| version.files.first());
 
         let Some(file) = selected_file else {
             continue;
         };
 
+        if !seen_filenames.insert(file.filename.clone()) {
+            continue;
+        }
+
+        resolved_count += 1;
         installed_names.push(format!("{label} ({})", file.filename));
         artifacts.push(DownloadArtifact {
             relative_key: format!("instances/{profile_id}/mods/{}", file.filename),
@@ -270,4 +362,49 @@ where
 
     verify_and_download_all(client, artifacts, &paths.integrity_index_path(), on_progress).await?;
     Ok(installed_names)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_required_dependencies, ModrinthDependency, PendingModrinthTarget};
+
+    #[test]
+    fn test_extract_required_modrinth_dependencies_filters_optional() {
+        let deps = vec![
+            ModrinthDependency {
+                project_id: Some("P7dR8mSH".to_string()),
+                version_id: None,
+                dependency_type: "required".to_string(),
+            },
+            ModrinthDependency {
+                project_id: Some("optional-mod".to_string()),
+                version_id: None,
+                dependency_type: "optional".to_string(),
+            },
+            ModrinthDependency {
+                project_id: Some("pinned-dep".to_string()),
+                version_id: Some("v12345".to_string()),
+                dependency_type: "required".to_string(),
+            },
+            ModrinthDependency {
+                project_id: Some("incompatible-mod".to_string()),
+                version_id: None,
+                dependency_type: "incompatible".to_string(),
+            },
+        ];
+
+        let extracted = extract_required_dependencies(&deps);
+        assert_eq!(extracted.len(), 2);
+        assert_eq!(
+            extracted[0],
+            PendingModrinthTarget::Project(
+                "P7dR8mSH".to_string(),
+                "Dependency (P7dR8mSH)".to_string()
+            )
+        );
+        assert_eq!(
+            extracted[1],
+            PendingModrinthTarget::Version("v12345".to_string())
+        );
+    }
 }
