@@ -380,7 +380,7 @@ pub async fn get_instance_summary(
             });
         }
     }
-    worlds.sort_by(|a, b| b.last_modified_ms.cmp(&a.last_modified_ms));
+    worlds.sort_by_key(|w| std::cmp::Reverse(w.last_modified_ms));
     worlds.truncate(3);
 
     let screenshots_dir = state.paths.instance_screenshots_dir(&profile_id);
