@@ -3,15 +3,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::Engine as _;
 use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{State, Window};
 use tokio::sync::Mutex;
 
 use crate::core::content::{
-    import_content_file, inject_modrinth_preset, install_single_modrinth_item,
-    list_curated_recommendations, list_instance_content, toggle_content_item, ContentItem,
-    ContentKind, CuratedRecommendation, PerformancePreset,
+    import_content_bytes, import_content_file, inject_modrinth_preset,
+    install_single_modrinth_item, list_curated_recommendations, list_instance_content,
+    search_modrinth_catalog, toggle_content_item, ContentItem, ContentKind, CuratedRecommendation,
+    PerformancePreset,
 };
 use crate::core::downloader::{verify_and_download_all, DownloadProgress};
 use crate::core::hardware::HardwareInfo;
@@ -42,6 +44,18 @@ pub struct AppState {
 pub struct InstanceExitEvent {
     pub profile_id: String,
     pub exit_code: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorldSummary {
+    pub folder_name: String,
+    pub last_modified_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InstanceSummary {
+    pub recent_worlds: Vec<WorldSummary>,
+    pub latest_screenshot_data_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -210,6 +224,250 @@ pub async fn import_profile_content(
     source_path: String,
 ) -> AppResult<ContentItem> {
     import_content_file(&state.paths, &profile_id, kind, &PathBuf::from(source_path)).await
+}
+
+#[tauri::command]
+pub async fn import_profile_content_bytes(
+    state: State<'_, AppState>,
+    profile_id: String,
+    kind: ContentKind,
+    file_name: String,
+    bytes: Vec<u8>,
+) -> AppResult<ContentItem> {
+    import_content_bytes(&state.paths, &profile_id, kind, &file_name, &bytes).await
+}
+
+#[tauri::command]
+pub async fn search_modrinth(
+    state: State<'_, AppState>,
+    profile_id: String,
+    query: String,
+    mc_version: String,
+    loader: String,
+    kind: ContentKind,
+) -> AppResult<Vec<CuratedRecommendation>> {
+    search_modrinth_catalog(
+        &state.client,
+        &state.paths,
+        &profile_id,
+        &query,
+        &mc_version,
+        &loader,
+        kind,
+    )
+    .await
+}
+
+fn encode_png_data_url(bytes: &[u8]) -> String {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    format!("data:image/png;base64,{encoded}")
+}
+
+fn validate_png_signature(bytes: &[u8]) -> AppResult<()> {
+    const PNG_MAGIC: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    if bytes.len() < 8 || &bytes[..8] != PNG_MAGIC {
+        return Err(AppError::ContentError(
+            "El archivo seleccionado no es un PNG válido".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn upload_custom_skin(
+    state: State<'_, AppState>,
+    source_path: String,
+) -> AppResult<String> {
+    let src = PathBuf::from(&source_path);
+    let bytes = tokio::fs::read(&src).await?;
+    validate_png_signature(&bytes)?;
+
+    state.paths.ensure_base_dirs().await?;
+    let dest = state.paths.custom_skin_path();
+    tokio::fs::write(&dest, &bytes).await?;
+
+    {
+        let mut guard = state.config.lock().await;
+        guard.skin_path = Some(dest.to_string_lossy().into_owned());
+        save_config_atomic(&state.paths, &guard).await?;
+    }
+
+    Ok(encode_png_data_url(&bytes))
+}
+
+#[tauri::command]
+pub async fn upload_custom_skin_bytes(
+    state: State<'_, AppState>,
+    bytes: Vec<u8>,
+) -> AppResult<String> {
+    validate_png_signature(&bytes)?;
+
+    state.paths.ensure_base_dirs().await?;
+    let dest = state.paths.custom_skin_path();
+    tokio::fs::write(&dest, &bytes).await?;
+
+    {
+        let mut guard = state.config.lock().await;
+        guard.skin_path = Some(dest.to_string_lossy().into_owned());
+        save_config_atomic(&state.paths, &guard).await?;
+    }
+
+    Ok(encode_png_data_url(&bytes))
+}
+
+#[tauri::command]
+pub async fn get_player_skin_data(state: State<'_, AppState>) -> AppResult<Option<String>> {
+    let skin_path_opt = {
+        let guard = state.config.lock().await;
+        guard.skin_path.clone()
+    };
+
+    let candidate = skin_path_opt
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state.paths.custom_skin_path());
+
+    if !tokio::fs::try_exists(&candidate).await? {
+        return Ok(None);
+    }
+
+    let bytes = tokio::fs::read(&candidate).await?;
+    if validate_png_signature(&bytes).is_err() {
+        return Ok(None);
+    }
+    Ok(Some(encode_png_data_url(&bytes)))
+}
+
+#[tauri::command]
+pub async fn set_skin_model(
+    state: State<'_, AppState>,
+    model: String,
+) -> AppResult<LauncherConfig> {
+    let normalized = match model.as_str() {
+        "slim" => "slim".to_string(),
+        _ => "classic".to_string(),
+    };
+    let mut guard = state.config.lock().await;
+    guard.skin_model = normalized;
+    save_config_atomic(&state.paths, &guard).await?;
+    Ok(guard.clone())
+}
+
+#[tauri::command]
+pub async fn get_instance_summary(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> AppResult<InstanceSummary> {
+    validate_profile_id(&profile_id)?;
+    state.paths.ensure_instance_dirs(&profile_id).await?;
+
+    let saves_dir = state.paths.instance_saves_dir(&profile_id);
+    let mut worlds = Vec::new();
+    if tokio::fs::try_exists(&saves_dir).await? {
+        let mut entries = tokio::fs::read_dir(&saves_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let meta = entry.metadata().await?;
+            if !meta.is_dir() {
+                continue;
+            }
+            let modified_ms = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_millis() as u64);
+            worlds.push(WorldSummary {
+                folder_name: entry.file_name().to_string_lossy().into_owned(),
+                last_modified_ms: modified_ms,
+            });
+        }
+    }
+    worlds.sort_by(|a, b| b.last_modified_ms.cmp(&a.last_modified_ms));
+    worlds.truncate(3);
+
+    let screenshots_dir = state.paths.instance_screenshots_dir(&profile_id);
+    let mut latest_shot: Option<(u64, PathBuf)> = None;
+    if tokio::fs::try_exists(&screenshots_dir).await? {
+        let mut entries = tokio::fs::read_dir(&screenshots_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let is_png = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("png"));
+            if !is_png {
+                continue;
+            }
+            let meta = entry.metadata().await?;
+            if !meta.is_file() || meta.len() > 8 * 1024 * 1024 {
+                continue;
+            }
+            let modified_ms = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_millis() as u64);
+            if latest_shot
+                .as_ref()
+                .is_none_or(|(prev_ms, _)| modified_ms > *prev_ms)
+            {
+                latest_shot = Some((modified_ms, path));
+            }
+        }
+    }
+
+    let latest_screenshot_data_url = if let Some((_, shot_path)) = latest_shot {
+        tokio::fs::read(&shot_path)
+            .await
+            .ok()
+            .filter(|b| validate_png_signature(b).is_ok())
+            .map(|b| encode_png_data_url(&b))
+    } else {
+        None
+    };
+
+    Ok(InstanceSummary {
+        recent_worlds: worlds,
+        latest_screenshot_data_url,
+    })
+}
+
+#[tauri::command]
+pub async fn open_instance_saves_folder(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> AppResult<()> {
+    validate_profile_id(&profile_id)?;
+    state.paths.ensure_instance_dirs(&profile_id).await?;
+    let dir = state.paths.instance_saves_dir(&profile_id);
+    #[cfg(windows)]
+    {
+        tokio::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|err| AppError::ProcessLaunch(format!("Failed to open Explorer: {err}")))?;
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_data_root_folder(state: State<'_, AppState>) -> AppResult<()> {
+    state.paths.ensure_base_dirs().await?;
+    let dir = state.paths.root().to_path_buf();
+    #[cfg(windows)]
+    {
+        tokio::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|err| AppError::ProcessLaunch(format!("Failed to open Explorer: {err}")))?;
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+    }
+    Ok(())
 }
 
 #[tauri::command]

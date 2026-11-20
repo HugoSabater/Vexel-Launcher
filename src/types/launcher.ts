@@ -3,6 +3,7 @@ export type ProcessPriority = "normal" | "above_normal" | "high";
 export type ModLoaderKind = "vanilla" | "fabric" | "forge" | "neo_forge";
 export type ContentKind = "mod" | "resource_pack";
 export type PerformancePreset = "fps_pure" | "distant_horizons";
+export type SkinModel = "classic" | "slim";
 
 export interface HardwareInfo {
   total_ram_mb: number;
@@ -29,6 +30,8 @@ export interface LauncherConfig {
   offline_username: string;
   process_priority: ProcessPriority;
   close_on_launch: boolean;
+  skin_path: string | null;
+  skin_model: string;
   profiles: Profile[];
 }
 
@@ -54,6 +57,17 @@ export interface CuratedRecommendation {
   badge: string;
   kind: ContentKind;
   installed: boolean;
+  icon_url: string | null;
+}
+
+export interface WorldSummary {
+  folder_name: string;
+  last_modified_ms: number;
+}
+
+export interface InstanceSummary {
+  recent_worlds: WorldSummary[];
+  latest_screenshot_data_url: string | null;
 }
 
 export interface LaunchProgressEvent {

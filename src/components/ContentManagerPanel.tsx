@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   Check,
   Compass,
   Download,
   FileArchive,
+  FolderPlus,
   Package,
   RefreshCw,
   Rocket,
+  Search,
   Sparkles,
   Upload,
 } from "lucide-react";
@@ -30,6 +33,13 @@ interface ContentManagerPanelProps {
   onGetRecommendations: (
     profileId: string,
   ) => Promise<CuratedRecommendation[]>;
+  onSearchModrinth: (
+    profileId: string,
+    query: string,
+    mcVersion: string,
+    loader: string,
+    kind: ContentKind,
+  ) => Promise<CuratedRecommendation[]>;
   onToggleContent: (
     profileId: string,
     kind: ContentKind,
@@ -40,6 +50,12 @@ interface ContentManagerPanelProps {
     profileId: string,
     kind: ContentKind,
     sourcePath: string,
+  ) => Promise<ContentItem>;
+  onImportContentBytes: (
+    profileId: string,
+    kind: ContentKind,
+    fileName: string,
+    bytes: number[],
   ) => Promise<ContentItem>;
   onInjectPreset: (
     profileId: string,
@@ -64,8 +80,10 @@ export function ContentManagerPanel({
   profile,
   onListContent,
   onGetRecommendations,
+  onSearchModrinth,
   onToggleContent,
   onImportContent,
+  onImportContentBytes,
   onInjectPreset,
   onInstallItem,
 }: ContentManagerPanelProps) {
@@ -75,11 +93,18 @@ export function ContentManagerPanel({
   const [recommendations, setRecommendations] = useState<
     CuratedRecommendation[]
   >([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchKind, setSearchKind] = useState<ContentKind>("mod");
+  const [searchResults, setSearchResults] = useState<
+    CuratedRecommendation[] | null
+  >(null);
+  const [searching, setSearching] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [progress, setProgress] = useState<LaunchProgressEvent | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const refreshAll = useCallback(async () => {
     setLoading(true);
@@ -101,6 +126,56 @@ export function ContentManagerPanel({
     void refreshAll();
   }, [refreshAll]);
 
+  // Native Tauri v2 Drag & Drop listener for real physical paths
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    try {
+      void getCurrentWebview()
+        .onDragDropEvent((event) => {
+          if (event.payload.type === "over") {
+            setDragActive(true);
+          } else if (event.payload.type === "leave") {
+            setDragActive(false);
+          } else if (event.payload.type === "drop") {
+            setDragActive(false);
+            const paths = event.payload.paths;
+            if (!paths || paths.length === 0) return;
+
+            void (async () => {
+              let imported = 0;
+              for (const fullPath of paths) {
+                const lower = fullPath.toLowerCase();
+                if (lower.endsWith(".jar") || lower.endsWith(".jar.disabled")) {
+                  await onImportContent(profile.id, "mod", fullPath);
+                  imported += 1;
+                } else if (
+                  lower.endsWith(".zip") ||
+                  lower.endsWith(".zip.disabled")
+                ) {
+                  await onImportContent(profile.id, "resource_pack", fullPath);
+                  imported += 1;
+                }
+              }
+              if (imported > 0) {
+                setStatusMessage(
+                  `Importados ${imported} archivo(s) mediante arrastrar y soltar.`,
+                );
+                await refreshAll();
+              }
+            })();
+          }
+        })
+        .then((fn) => {
+          unlisten = fn;
+        });
+    } catch {
+      // Running outside Tauri desktop webview
+    }
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [onImportContent, profile.id, refreshAll]);
+
   const handleToggle = async (item: ContentItem, kind: ContentKind) => {
     const updated = await onToggleContent(
       profile.id,
@@ -116,6 +191,61 @@ export function ContentManagerPanel({
       setResourcePacks((prev) =>
         prev.map((c) => (c.file_name === item.file_name ? updated : c)),
       );
+    }
+  };
+
+  const handleManualImport = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) return;
+    let count = 0;
+    for (const file of files) {
+      const lower = file.name.toLowerCase();
+      const kind: ContentKind =
+        lower.endsWith(".zip") || lower.endsWith(".zip.disabled")
+          ? "resource_pack"
+          : "mod";
+      const buffer = await file.arrayBuffer();
+      await onImportContentBytes(
+        profile.id,
+        kind,
+        file.name,
+        Array.from(new Uint8Array(buffer)),
+      );
+      count += 1;
+    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (count > 0) {
+      setStatusMessage(`Importados ${count} archivo(s) en la instancia.`);
+      await refreshAll();
+    }
+  };
+
+  const handleSearch = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const q = searchQuery.trim();
+    if (!q) {
+      setSearchResults(null);
+      return;
+    }
+    setSearching(true);
+    setStatusMessage(null);
+    try {
+      const hits = await onSearchModrinth(
+        profile.id,
+        q,
+        profile.mc_version,
+        profile.loader,
+        searchKind,
+      );
+      setSearchResults(hits);
+    } catch (err) {
+      setStatusMessage(
+        err instanceof Error ? err.message : JSON.stringify(err),
+      );
+    } finally {
+      setSearching(false);
     }
   };
 
@@ -152,6 +282,15 @@ export function ContentManagerPanel({
       );
       setStatusMessage(`Instalado ${rec.name}: ${installed.join(", ")}`);
       await refreshAll();
+      if (searchResults) {
+        setSearchResults((prev) =>
+          prev
+            ? prev.map((r) =>
+                r.slug === rec.slug ? { ...r, installed: true } : r,
+              )
+            : null,
+        );
+      }
     } catch (err) {
       setStatusMessage(
         err instanceof Error ? err.message : JSON.stringify(err),
@@ -162,31 +301,19 @@ export function ContentManagerPanel({
     }
   };
 
-  const handleDrop = async (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    setDragActive(false);
-    const kind: ContentKind =
-      activeTab === "resource_packs" ? "resource_pack" : "mod";
-    const files = Array.from(event.dataTransfer.files);
-    for (const file of files) {
-      const fileWithPath = file as File & { path?: string };
-      if (fileWithPath.path) {
-        await onImportContent(profile.id, kind, fileWithPath.path);
-      }
-    }
-    await refreshAll();
-  };
+  const displayCatalog = searchResults ?? recommendations;
 
   return (
-    <div
-      onDragOver={(e) => {
-        e.preventDefault();
-        setDragActive(true);
-      }}
-      onDragLeave={() => setDragActive(false)}
-      onDrop={(e) => void handleDrop(e)}
-      className="h-full overflow-y-auto p-5 bg-[#080A0F]"
-    >
+    <div className="h-full overflow-y-auto p-5 bg-[#080A0F]">
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept=".jar,.zip"
+        onChange={(e) => void handleManualImport(e)}
+        className="hidden"
+      />
+
       <div className="max-w-5xl mx-auto space-y-4">
         {/* Header & Segmented Tabs */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -238,6 +365,15 @@ export function ContentManagerPanel({
 
             <button
               type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="h-8 px-3 rounded-lg bg-[#11151E] hover:bg-[#171D2A] border border-[#1E2534] inline-flex items-center gap-1.5 text-xs text-slate-200"
+            >
+              <FolderPlus className="h-3.5 w-3.5 text-[#38BDF8]" />
+              Importar archivo
+            </button>
+
+            <button
+              type="button"
               onClick={() => void refreshAll()}
               title="Recargar"
               className="h-8 w-8 rounded-lg bg-[#11151E] border border-[#1E2534] flex items-center justify-center text-slate-400 hover:text-white"
@@ -249,7 +385,14 @@ export function ContentManagerPanel({
           </div>
         </div>
 
-        {/* Live Progress Strip */}
+        {/* Native Drag-and-Drop Overlay Indicator */}
+        {dragActive && (
+          <div className="rounded-xl border-2 border-dashed border-[#38BDF8] bg-[#38BDF8]/10 p-4 text-center text-xs font-medium text-[#38BDF8]">
+            Suelta tus archivos .jar o .zip aquí para instalarlos directamente en{" "}
+            {profile.name}
+          </div>
+        )}
+
         {progress && busySlug && (
           <div className="rounded-lg bg-[#11151E] border border-[#1E2534] px-4 py-2.5 space-y-1.5">
             <div className="flex items-center justify-between text-[11px]">
@@ -272,7 +415,7 @@ export function ContentManagerPanel({
           </div>
         )}
 
-        {/* TAB: RECOMENDADOS */}
+        {/* TAB: RECOMENDADOS / EXPLORAR */}
         {activeTab === "recommended" && (
           <div className="space-y-4">
             {/* 2 Side-by-Side 1-Click Presets */}
@@ -336,36 +479,107 @@ export function ContentManagerPanel({
               </div>
             </div>
 
-            {/* Curated 2-Column Modrinth Grid */}
+            {/* Live Modrinth Search Bar */}
+            <form
+              onSubmit={(e) => void handleSearch(e)}
+              className="flex flex-wrap items-center gap-2"
+            >
+              <div className="relative flex-1 min-w-[220px]">
+                <Search className="h-3.5 w-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    if (!e.target.value.trim()) setSearchResults(null);
+                  }}
+                  placeholder={`Buscar en Modrinth para MC ${profile.mc_version}...`}
+                  className="w-full rounded-lg bg-[#11151E] border border-[#1E2534] pl-9 pr-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-[#38BDF8] focus:outline-none"
+                />
+              </div>
+
+              <select
+                value={searchKind}
+                onChange={(e) => setSearchKind(e.target.value as ContentKind)}
+                className="rounded-lg bg-[#11151E] border border-[#1E2534] px-3 py-2 text-xs text-slate-200 focus:border-[#38BDF8] focus:outline-none"
+              >
+                <option value="mod">Mods</option>
+                <option value="resource_pack">Resource Packs</option>
+              </select>
+
+              <button
+                type="submit"
+                disabled={searching}
+                className="rounded-lg bg-[#171D2A] hover:bg-[#1E2534] border border-[#1E2534] px-4 py-2 text-xs font-medium text-white disabled:opacity-50"
+              >
+                {searching ? "Buscando..." : "Buscar"}
+              </button>
+            </form>
+
+            {/* Curated / Live Search 2-Column Grid */}
             <div className="space-y-2">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-300">
-                <Sparkles className="h-3.5 w-3.5 text-[#38BDF8]" />
-                Selección Curada Modrinth (MC {profile.mc_version})
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
+                  <Sparkles className="h-3.5 w-3.5 text-[#38BDF8]" />
+                  {searchResults
+                    ? `Resultados de Modrinth (${searchResults.length})`
+                    : `Selección Curada (MC ${profile.mc_version})`}
+                </span>
+                {searchResults && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setSearchResults(null);
+                    }}
+                    className="text-[11px] text-[#38BDF8] hover:underline"
+                  >
+                    Ver curados
+                  </button>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                {recommendations.map((rec) => {
+                {displayCatalog.map((rec) => {
                   const isInstalling = busySlug === rec.slug;
                   const disabledByLoader =
                     rec.kind === "mod" && profile.loader !== "fabric";
 
                   return (
                     <div
-                      key={rec.slug}
+                      key={`${rec.kind}-${rec.slug}`}
                       className="rounded-xl bg-[#11151E] border border-[#1E2534] p-3.5 flex items-center justify-between gap-3"
                     >
-                      <div className="min-w-0 space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-semibold text-white truncate">
-                            {rec.name}
-                          </span>
-                          <span className="rounded bg-[#080A0F] border border-[#1E2534] px-1.5 py-0.5 text-[9px] font-mono text-slate-400">
-                            {rec.badge}
-                          </span>
+                      <div className="min-w-0 flex items-center gap-3">
+                        {rec.icon_url ? (
+                          <img
+                            src={rec.icon_url}
+                            alt={rec.name}
+                            className="h-9 w-9 rounded-lg object-cover border border-[#1E2534] shrink-0 bg-[#080A0F]"
+                          />
+                        ) : (
+                          <div className="h-9 w-9 rounded-lg bg-[#080A0F] border border-[#1E2534] flex items-center justify-center text-[#38BDF8] shrink-0">
+                            {rec.kind === "mod" ? (
+                              <Package className="h-4 w-4" />
+                            ) : (
+                              <FileArchive className="h-4 w-4" />
+                            )}
+                          </div>
+                        )}
+
+                        <div className="min-w-0 space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-white truncate">
+                              {rec.name}
+                            </span>
+                            <span className="shrink-0 rounded bg-[#080A0F] border border-[#1E2534] px-1.5 py-0.5 text-[9px] font-mono text-slate-400">
+                              {rec.badge}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 line-clamp-1">
+                            {rec.description}
+                          </p>
                         </div>
-                        <p className="text-[11px] text-slate-400 line-clamp-2">
-                          {rec.description}
-                        </p>
                       </div>
 
                       {rec.installed ? (
@@ -392,24 +606,25 @@ export function ContentManagerPanel({
           </div>
         )}
 
-        {/* TAB: INSTALADOS or RESOURCE PACKS */}
+        {/* TAB: INSTALADOS or RESOURCE PACKS (Native Sliding Toggle Switches) */}
         {(activeTab === "installed" || activeTab === "resource_packs") && (
           <div className="space-y-3">
-            <div
-              className={`rounded-xl border border-dashed px-4 py-3 flex items-center justify-center gap-2 text-xs transition-colors ${
-                dragActive
-                  ? "border-[#38BDF8] bg-[#38BDF8]/10 text-[#38BDF8]"
-                  : "border-[#1E2534] bg-[#11151E]/60 text-slate-400"
-              }`}
-            >
-              <Upload className="h-3.5 w-3.5 text-[#38BDF8]" />
-              <span>
+            <div className="rounded-xl border border-dashed border-[#1E2534] bg-[#11151E]/60 px-4 py-3 flex items-center justify-between gap-3 text-xs text-slate-400">
+              <span className="inline-flex items-center gap-2">
+                <Upload className="h-3.5 w-3.5 text-[#38BDF8]" />
                 Arrastra archivos{" "}
                 <code className="text-[#38BDF8]">
                   {activeTab === "resource_packs" ? ".zip" : ".jar"}
                 </code>{" "}
-                aquí para importarlos
+                a esta ventana para importarlos
               </span>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="text-[#38BDF8] hover:underline font-medium"
+              >
+                Seleccionar archivo
+              </button>
             </div>
 
             <div className="divide-y divide-[#1E2534] rounded-xl border border-[#1E2534] bg-[#11151E] overflow-hidden">
@@ -450,16 +665,25 @@ export function ContentManagerPanel({
                           </div>
                         </div>
 
+                        {/* Native Sliding Switch */}
                         <button
                           type="button"
+                          role="switch"
+                          aria-checked={item.enabled}
                           onClick={() => void handleToggle(item, kind)}
-                          className={`shrink-0 rounded-md px-2.5 py-1 text-[10px] font-mono font-semibold border transition-colors ${
+                          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
                             item.enabled
-                              ? "bg-[#10B981]/12 text-[#10B981] border-[#10B981]/30"
-                              : "bg-[#080A0F] text-slate-500 border-[#1E2534] hover:text-slate-300"
+                              ? "bg-[#10B981]/25 border-[#10B981]/50"
+                              : "bg-[#080A0F] border-[#1E2534]"
                           }`}
                         >
-                          {item.enabled ? "ACTIVO" : "INACTIVO"}
+                          <span
+                            className={`inline-block h-3.5 w-3.5 rounded-full transition-transform ${
+                              item.enabled
+                                ? "translate-x-4 bg-[#10B981]"
+                                : "translate-x-0.5 bg-slate-500"
+                            }`}
+                          />
                         </button>
                       </div>
                     );

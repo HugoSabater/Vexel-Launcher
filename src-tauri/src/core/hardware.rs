@@ -14,13 +14,13 @@ pub struct HardwareInfo {
 #[must_use]
 pub fn calculate_ram_presets(total_ram_mb: u64) -> (u64, u64, u64) {
     if total_ram_mb <= 8192 {
-        let max_safe = total_ram_mb.saturating_sub(1536).max(2048);
+        let max_safe = (total_ram_mb / 2).max(2048);
         (2048, 3072.min(max_safe), max_safe)
     } else if total_ram_mb <= 24576 {
-        let max_safe = total_ram_mb.saturating_sub(2048).max(6144);
+        let max_safe = 8192;
         (4096, 6144, max_safe)
     } else {
-        let max_safe = 16384.min(total_ram_mb.saturating_sub(4096)).max(8192);
+        let max_safe = 12288;
         (6144, 8192, max_safe)
     }
 }
@@ -55,8 +55,8 @@ mod tests {
     fn test_ram_presets_4gb() {
         let (vanilla, modded, max_safe) = calculate_ram_presets(4096);
         assert_eq!(vanilla, 2048);
-        assert_eq!(modded, 2560);
-        assert_eq!(max_safe, 2560);
+        assert_eq!(modded, 2048);
+        assert_eq!(max_safe, 2048);
     }
 
     #[test]
@@ -64,7 +64,7 @@ mod tests {
         let (vanilla, modded, max_safe) = calculate_ram_presets(8192);
         assert_eq!(vanilla, 2048);
         assert_eq!(modded, 3072);
-        assert_eq!(max_safe, 6656);
+        assert_eq!(max_safe, 4096);
     }
 
     #[test]
@@ -72,7 +72,7 @@ mod tests {
         let (vanilla, modded, max_safe) = calculate_ram_presets(16384);
         assert_eq!(vanilla, 4096);
         assert_eq!(modded, 6144);
-        assert_eq!(max_safe, 14336);
+        assert_eq!(max_safe, 8192);
     }
 
     #[test]
@@ -80,12 +80,12 @@ mod tests {
         let (vanilla_32, modded_32, max_32) = calculate_ram_presets(32768);
         assert_eq!(vanilla_32, 6144);
         assert_eq!(modded_32, 8192);
-        assert_eq!(max_32, 16384);
+        assert_eq!(max_32, 12288);
 
         let (vanilla_64, modded_64, max_64) = calculate_ram_presets(65536);
         assert_eq!(vanilla_64, 6144);
         assert_eq!(modded_64, 8192);
-        assert_eq!(max_64, 16384);
+        assert_eq!(max_64, 12288);
     }
 
     #[test]

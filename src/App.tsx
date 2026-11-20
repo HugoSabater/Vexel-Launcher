@@ -14,7 +14,10 @@ import {
 } from "lucide-react";
 import { ContentManagerPanel } from "./components/ContentManagerPanel";
 import { ProfileDashboard } from "./components/ProfileDashboard";
-import { SettingsPerformancePanel } from "./components/SettingsPerformancePanel";
+import {
+  SettingsPerformancePanel,
+  type SettingsTab,
+} from "./components/SettingsPerformancePanel";
 import {
   SidebarProfiles,
   type MainView,
@@ -25,6 +28,7 @@ import type {
   ContentKind,
   CuratedRecommendation,
   InstanceExitEvent,
+  InstanceSummary,
   IpcErrorPayload,
   JavaRuntimeStatus,
   JvmTuningOutput,
@@ -88,7 +92,8 @@ export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapState | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string>("");
   const [activeView, setActiveView] = useState<MainView>("home");
-  const [javaStatus, setJavaStatus] = useState<JavaRuntimeStatus | null>(null);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("performance");
+  const [skinDataUrl, setSkinDataUrl] = useState<string | null>(null);
   const [jvmTuning, setJvmTuning] = useState<JvmTuningOutput | null>(null);
   const [launching, setLaunching] = useState(false);
   const [runningProfiles, setRunningProfiles] = useState<
@@ -159,8 +164,12 @@ export function App() {
 
   const loadBootstrap = useCallback(async () => {
     try {
-      const data = await invoke<BootstrapState>("get_bootstrap_state");
+      const [data, skin] = await Promise.all([
+        invoke<BootstrapState>("get_bootstrap_state"),
+        invoke<string | null>("get_player_skin_data").catch(() => null),
+      ]);
       setBootstrap(data);
+      setSkinDataUrl(skin);
       const def =
         data.config.profiles.find((p) => p.is_default) ??
         data.config.profiles[0];
@@ -199,10 +208,9 @@ export function App() {
       const status = await invoke<JavaRuntimeStatus>("check_profile_java", {
         mcVersion: profile.mc_version,
       });
-      setJavaStatus(status);
       javaMajor = status.major;
     } catch {
-      setJavaStatus(null);
+      // Fallback to 21
     }
 
     try {
@@ -273,6 +281,26 @@ export function App() {
     }
   };
 
+  const handleOpenSavesFolder = async (profileId: string) => {
+    try {
+      await invoke("open_instance_saves_folder", { profileId });
+    } catch (err) {
+      setBannerError(
+        extractIpcError(err).message ?? "No se pudo abrir saves/",
+      );
+    }
+  };
+
+  const handleOpenDataRoot = async () => {
+    try {
+      await invoke("open_data_root_folder");
+    } catch (err) {
+      setBannerError(
+        extractIpcError(err).message ?? "No se pudo abrir la carpeta raíz",
+      );
+    }
+  };
+
   const handleSaveGlobalSettings = async (
     offlineUsername: string,
     processPriority: ProcessPriority,
@@ -282,6 +310,26 @@ export function App() {
       offlineUsername,
       processPriority,
       closeOnLaunch,
+    });
+    updateConfigState(nextConfig);
+  };
+
+  const handleUploadSkinBytes = async (bytes: number[]) => {
+    try {
+      const dataUrl = await invoke<string>("upload_custom_skin_bytes", {
+        bytes,
+      });
+      setSkinDataUrl(dataUrl);
+    } catch (err) {
+      setBannerError(
+        extractIpcError(err).message ?? "Error al subir skin PNG",
+      );
+    }
+  };
+
+  const handleSetSkinModel = async (model: "classic" | "slim") => {
+    const nextConfig = await invoke<LauncherConfig>("set_skin_model", {
+      model,
     });
     updateConfigState(nextConfig);
   };
@@ -390,11 +438,10 @@ export function App() {
     };
 
     try {
-      const status = await invoke<JavaRuntimeStatus>("install_adoptium_java", {
+      await invoke<JavaRuntimeStatus>("install_adoptium_java", {
         major,
         onProgress,
       });
-      setJavaStatus(status);
       setMissingJavaMajor(null);
       setJavaInstallProgress(null);
       await handlePlayProfile();
@@ -425,10 +472,34 @@ export function App() {
     [],
   );
 
+  const handleGetInstanceSummary = useCallback(
+    async (profileId: string) =>
+      invoke<InstanceSummary>("get_instance_summary", { profileId }),
+    [],
+  );
+
   const handleGetRecommendations = useCallback(
     async (profileId: string) =>
       invoke<CuratedRecommendation[]>("get_curated_recommendations", {
         profileId,
+      }),
+    [],
+  );
+
+  const handleSearchModrinth = useCallback(
+    async (
+      profileId: string,
+      query: string,
+      mcVersion: string,
+      loader: string,
+      kind: ContentKind,
+    ) =>
+      invoke<CuratedRecommendation[]>("search_modrinth", {
+        profileId,
+        query,
+        mcVersion,
+        loader,
+        kind,
       }),
     [],
   );
@@ -455,6 +526,22 @@ export function App() {
         profileId,
         kind,
         sourcePath,
+      }),
+    [],
+  );
+
+  const handleImportContentBytes = useCallback(
+    async (
+      profileId: string,
+      kind: ContentKind,
+      fileName: string,
+      bytes: number[],
+    ) =>
+      invoke<ContentItem>("import_profile_content_bytes", {
+        profileId,
+        kind,
+        fileName,
+        bytes,
       }),
     [],
   );
@@ -540,7 +627,7 @@ export function App() {
         >
           <span className="inline-flex items-center gap-1.5 truncate">
             <Search className="h-3 w-3 text-slate-500" />
-            Buscar instancias, vistas...
+            Buscar instancias...
           </span>
           <span className="font-mono text-[10px] text-slate-600">Ctrl+K</span>
         </button>
@@ -573,11 +660,11 @@ export function App() {
         </div>
       </header>
 
-      {/* Main Obsidian Forge Body */}
+      {/* Main Body */}
       {!bootstrap || !selectedProfile ? (
         <main className="flex-1 flex items-center justify-center p-6">
           <p className="text-xs font-mono text-slate-400">
-            {bannerError ?? "Inicializando Obsidian Forge..."}
+            {bannerError ?? "Inicializando..."}
           </p>
         </main>
       ) : (
@@ -591,7 +678,10 @@ export function App() {
             offlineUsername={bootstrap.config.offline_username}
             hardware={bootstrap.hardware}
             onSelectProfile={setSelectedProfileId}
-            onSelectView={setActiveView}
+            onSelectView={(v) => {
+              if (v === "performance") setSettingsTab("performance");
+              setActiveView(v);
+            }}
             onToggleConsole={() => setConsoleOpen((v) => !v)}
             onUpdateUsername={(nick) =>
               handleSaveGlobalSettings(
@@ -675,9 +765,7 @@ export function App() {
                 <ProfileDashboard
                   profile={selectedProfile}
                   config={bootstrap.config}
-                  hardware={bootstrap.hardware}
-                  javaStatus={javaStatus}
-                  jvmTuning={jvmTuning}
+                  skinDataUrl={skinDataUrl}
                   launching={launching}
                   isRunning={Boolean(runningProfiles[selectedProfile.id])}
                   progress={progress}
@@ -685,11 +773,29 @@ export function App() {
                   installingJava={installingJava}
                   javaInstallProgress={javaInstallProgress}
                   onListContent={handleListContent}
+                  onGetInstanceSummary={handleGetInstanceSummary}
+                  onUpdateUsername={(nick) =>
+                    handleSaveGlobalSettings(
+                      nick,
+                      bootstrap.config.process_priority,
+                      bootstrap.config.close_on_launch,
+                    )
+                  }
                   onPlay={() => handlePlayProfile()}
                   onStop={() => handleStopProfile()}
                   onOpenFolder={() => handleOpenFolder(selectedProfile.id)}
+                  onOpenSavesFolder={() =>
+                    handleOpenSavesFolder(selectedProfile.id)
+                  }
                   onOpenMods={() => setActiveView("content")}
-                  onOpenPerformance={() => setActiveView("performance")}
+                  onOpenSettings={() => {
+                    setSettingsTab("performance");
+                    setActiveView("performance");
+                  }}
+                  onOpenSkinTab={() => {
+                    setSettingsTab("skin");
+                    setActiveView("performance");
+                  }}
                   onConfirmInstallJava={handleConfirmInstallJava}
                   onDismissJavaModal={() => {
                     setMissingJavaMajor(null);
@@ -703,8 +809,10 @@ export function App() {
                   profile={selectedProfile}
                   onListContent={handleListContent}
                   onGetRecommendations={handleGetRecommendations}
+                  onSearchModrinth={handleSearchModrinth}
                   onToggleContent={handleToggleContent}
                   onImportContent={handleImportContent}
+                  onImportContentBytes={handleImportContentBytes}
                   onInjectPreset={handleInjectPreset}
                   onInstallItem={handleInstallModrinthItem}
                 />
@@ -715,14 +823,20 @@ export function App() {
                   profile={selectedProfile}
                   config={bootstrap.config}
                   hardware={bootstrap.hardware}
+                  jvmTuning={jvmTuning}
+                  skinDataUrl={skinDataUrl}
                   dataRoot={bootstrap.data_root}
+                  initialTab={settingsTab}
                   onUpdateProfile={handleSaveProfile}
                   onSaveGlobalSettings={handleSaveGlobalSettings}
+                  onUploadSkinBytes={handleUploadSkinBytes}
+                  onSetSkinModel={handleSetSkinModel}
+                  onOpenDataRoot={handleOpenDataRoot}
                 />
               )}
             </div>
 
-            {/* Slide-Up Console Drawer (Ctrl+L) with Local System Time */}
+            {/* Slide-Up Console Drawer (Ctrl+L) */}
             {consoleOpen && (
               <section className="h-56 shrink-0 border-t border-[#1E2534] bg-[#06080C] flex flex-col">
                 <div className="h-9 px-4 bg-[#11151E] border-b border-[#1E2534] flex items-center justify-between">

@@ -50,6 +50,7 @@ pub struct CuratedRecommendation {
     pub badge: String,
     pub kind: ContentKind,
     pub installed: bool,
+    pub icon_url: Option<String>,
 }
 
 struct CuratedCatalogEntry {
@@ -335,6 +336,7 @@ pub async fn list_curated_recommendations(
                 badge: entry.badge.to_string(),
                 kind: entry.kind,
                 installed,
+                icon_url: None,
             }
         })
         .collect();
@@ -415,6 +417,131 @@ pub async fn import_content_file(
     parse_content_entry(file_name, kind, meta.len()).ok_or_else(|| {
         AppError::ContentError(format!("Failed to parse imported item '{file_name}'"))
     })
+}
+
+pub async fn import_content_bytes(
+    paths: &LauncherPaths,
+    profile_id: &str,
+    kind: ContentKind,
+    file_name: &str,
+    bytes: &[u8],
+) -> AppResult<ContentItem> {
+    validate_profile_id(profile_id)?;
+    validate_file_name(file_name)?;
+    paths.ensure_instance_dirs(profile_id).await?;
+
+    let valid_ext = match kind {
+        ContentKind::Mod => file_name.ends_with(".jar") || file_name.ends_with(".jar.disabled"),
+        ContentKind::ResourcePack => {
+            file_name.ends_with(".zip") || file_name.ends_with(".zip.disabled")
+        }
+    };
+    if !valid_ext {
+        return Err(AppError::ContentError(format!(
+            "File '{file_name}' has an incompatible extension"
+        )));
+    }
+
+    let dst_path = content_dir(paths, profile_id, kind).join(file_name);
+    tokio::fs::write(&dst_path, bytes).await?;
+    let meta = tokio::fs::metadata(&dst_path).await?;
+    parse_content_entry(file_name, kind, meta.len()).ok_or_else(|| {
+        AppError::ContentError(format!("Failed to parse imported item '{file_name}'"))
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct ModrinthSearchResponse {
+    hits: Vec<ModrinthSearchHit>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModrinthSearchHit {
+    slug: String,
+    title: String,
+    description: String,
+    icon_url: Option<String>,
+    downloads: u64,
+}
+
+pub async fn search_modrinth_catalog(
+    client: &reqwest::Client,
+    paths: &LauncherPaths,
+    profile_id: &str,
+    query: &str,
+    mc_version: &str,
+    loader: &str,
+    kind: ContentKind,
+) -> AppResult<Vec<CuratedRecommendation>> {
+    let installed_items = list_instance_content(paths, profile_id, kind).await?;
+    let installed_lower: Vec<String> = installed_items
+        .iter()
+        .map(|i| i.file_name.to_lowercase())
+        .collect();
+
+    let project_type = match kind {
+        ContentKind::Mod => "mod",
+        ContentKind::ResourcePack => "resourcepack",
+    };
+
+    let mut facets = vec![
+        vec![format!("project_type:{project_type}")],
+        vec![format!("versions:{mc_version}")],
+    ];
+    if kind == ContentKind::Mod && !loader.is_empty() && loader != "vanilla" {
+        let loader_norm = if loader == "neo_forge" {
+            "neoforge"
+        } else {
+            loader
+        };
+        facets.push(vec![format!("categories:{loader_norm}")]);
+    }
+
+    let facets_json = serde_json::to_string(&facets)?;
+    let resp: ModrinthSearchResponse = client
+        .get("https://api.modrinth.com/v2/search")
+        .query(&[
+            ("query", query.trim()),
+            ("facets", facets_json.as_str()),
+            ("limit", "12"),
+        ])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let results = resp
+        .hits
+        .into_iter()
+        .map(|hit| {
+            let slug_low = hit.slug.to_lowercase();
+            let slug_compact = slug_low.replace('-', "");
+            let installed = installed_lower
+                .iter()
+                .any(|f| f.contains(&slug_low) || f.contains(&slug_compact));
+            let dl_badge = if hit.downloads >= 1_000_000 {
+                format!("{:.1}M DL", hit.downloads as f64 / 1_000_000.0)
+            } else if hit.downloads >= 1_000 {
+                format!("{}K DL", hit.downloads / 1_000)
+            } else {
+                format!("{} DL", hit.downloads)
+            };
+
+            CuratedRecommendation {
+                slug: hit.slug,
+                name: hit.title,
+                description: hit.description,
+                category: project_type.to_string(),
+                badge: dl_badge,
+                kind,
+                installed,
+                icon_url: hit.icon_url.filter(|u| !u.trim().is_empty()),
+            }
+        })
+        .collect();
+
+    Ok(results)
 }
 
 async fn install_modrinth_targets<F>(

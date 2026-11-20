@@ -1986,6 +1986,7 @@ dependencies = [
 name = "mc-launcher-rust"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "directories",
  "futures-util",
  "hex",

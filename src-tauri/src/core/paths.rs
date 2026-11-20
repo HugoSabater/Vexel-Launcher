@@ -95,6 +95,16 @@ impl LauncherPaths {
     }
 
     #[must_use]
+    pub fn shared_skins_dir(&self) -> PathBuf {
+        self.shared_dir().join("skins")
+    }
+
+    #[must_use]
+    pub fn custom_skin_path(&self) -> PathBuf {
+        self.shared_skins_dir().join("custom_skin.png")
+    }
+
+    #[must_use]
     pub fn integrity_index_path(&self) -> PathBuf {
         self.shared_cache_dir().join("integrity_index.json")
     }
@@ -130,6 +140,11 @@ impl LauncherPaths {
     }
 
     #[must_use]
+    pub fn instance_screenshots_dir(&self, profile_id: &str) -> PathBuf {
+        self.instance_dir(profile_id).join("screenshots")
+    }
+
+    #[must_use]
     pub fn instance_natives_dir(&self, profile_id: &str) -> PathBuf {
         self.instance_dir(profile_id).join("natives")
     }
@@ -153,6 +168,7 @@ impl LauncherPaths {
             self.shared_versions_dir(),
             self.shared_runtimes_dir(),
             self.shared_cache_dir(),
+            self.shared_skins_dir(),
             self.instances_dir(),
         ];
 

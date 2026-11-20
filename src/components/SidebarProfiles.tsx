@@ -14,6 +14,7 @@ import {
   Star,
   Terminal,
   Trash2,
+  User,
   X,
 } from "lucide-react";
 import type {
@@ -65,35 +66,6 @@ function slugifyProfileId(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return `${clean || "profile"}-${Date.now().toString(36).slice(-4)}`;
-}
-
-function PixelMinecraftAvatar({ username }: { username: string }) {
-  const hash = Array.from(username || "Player").reduce(
-    (acc, ch) => (acc * 31 + ch.charCodeAt(0)) % 360,
-    17,
-  );
-  const skinBase = `hsl(${((hash + 25) % 45) + 18}, 42%, 56%)`;
-  const hairColor = `hsl(${hash}, 38%, 22%)`;
-  const eyeColor = `hsl(${(hash + 180) % 360}, 65%, 52%)`;
-
-  return (
-    <svg
-      viewBox="0 0 8 8"
-      className="h-9 w-9 rounded-lg shrink-0 border border-[#1E2534]"
-      style={{ imageRendering: "pixelated" }}
-    >
-      <rect width="8" height="8" fill={skinBase} />
-      <rect x="0" y="0" width="8" height="2" fill={hairColor} />
-      <rect x="0" y="2" width="1" height="1" fill={hairColor} />
-      <rect x="7" y="2" width="1" height="1" fill={hairColor} />
-      <rect x="1" y="4" width="1" height="1" fill="#f8fafc" />
-      <rect x="2" y="4" width="1" height="1" fill={eyeColor} />
-      <rect x="5" y="4" width="1" height="1" fill={eyeColor} />
-      <rect x="6" y="4" width="1" height="1" fill="#f8fafc" />
-      <rect x="3" y="5" width="2" height="1" fill="rgba(0,0,0,0.18)" />
-      <rect x="2" y="6" width="4" height="1" fill="rgba(0,0,0,0.28)" />
-    </svg>
-  );
 }
 
 export function SidebarProfiles({
@@ -201,10 +173,12 @@ export function SidebarProfiles({
 
   return (
     <aside className="w-[240px] shrink-0 bg-[#11151E] border-r border-[#1E2534] flex flex-col">
-      {/* Top: Player Identity Card */}
+      {/* Compact Player Identity Strip (3D Avatar lives in Home & Skin tab) */}
       <div className="p-3 border-b border-[#1E2534]">
-        <div className="rounded-xl bg-[#080A0F] border border-[#1E2534] p-2.5 flex items-center gap-2.5">
-          <PixelMinecraftAvatar username={offlineUsername} />
+        <div className="rounded-lg bg-[#080A0F] border border-[#1E2534] px-2.5 py-2 flex items-center gap-2.5">
+          <div className="h-7 w-7 rounded-md bg-[#11151E] border border-[#1E2534] flex items-center justify-center text-[#38BDF8] shrink-0">
+            <User className="h-3.5 w-3.5" />
+          </div>
           <div className="min-w-0 flex-1">
             {editingNick ? (
               <form
@@ -242,9 +216,9 @@ export function SidebarProfiles({
                 <Pencil className="h-3 w-3 text-slate-600 group-hover:text-[#38BDF8] shrink-0 transition-colors" />
               </button>
             )}
-            <div className="mt-0.5 flex items-center gap-1.5 text-[10px] font-mono text-slate-400">
+            <div className="mt-0.5 flex items-center gap-1.5 text-[10px] font-mono text-slate-500">
               <span className="h-1.5 w-1.5 rounded-full bg-[#10B981]" />
-              <span>Offline Ready</span>
+              <span>Offline</span>
             </div>
           </div>
         </div>
@@ -370,7 +344,7 @@ export function SidebarProfiles({
           <Gauge
             className={`h-3.5 w-3.5 ${activeView === "performance" ? "text-[#38BDF8]" : ""}`}
           />
-          Rendimiento
+          Ajustes
         </button>
 
         <div className="pt-1 mt-1 border-t border-[#1E2534]">

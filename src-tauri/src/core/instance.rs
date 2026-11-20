@@ -28,11 +28,19 @@ pub struct Profile {
     pub is_default: bool,
 }
 
+fn default_skin_model() -> String {
+    "classic".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LauncherConfig {
     pub offline_username: String,
     pub process_priority: ProcessPriority,
     pub close_on_launch: bool,
+    #[serde(default)]
+    pub skin_path: Option<String>,
+    #[serde(default = "default_skin_model")]
+    pub skin_model: String,
     pub profiles: Vec<Profile>,
 }
 
@@ -43,6 +51,8 @@ impl LauncherConfig {
             offline_username: "Player".to_string(),
             process_priority: ProcessPriority::AboveNormal,
             close_on_launch: false,
+            skin_path: None,
+            skin_model: default_skin_model(),
             profiles: vec![
                 Profile {
                     id: "vanilla-1-21-4".to_string(),
