@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
+  AlertTriangle,
   Check,
   Compass,
   Download,
@@ -16,13 +17,14 @@ import {
 import type {
   ContentItem,
   ContentKind,
-  CuratedRecommendation,
   LaunchProgressEvent,
+  ModrinthSearchResult,
   PerformancePreset,
   Profile,
 } from "../types/launcher";
 
 type ContentTab = "installed" | "recommended" | "resource_packs";
+type DiscoveryChip = "performance" | "visual" | "qol" | "world" | "resource_pack";
 
 interface ContentManagerPanelProps {
   profile: Profile;
@@ -30,16 +32,18 @@ interface ContentManagerPanelProps {
     profileId: string,
     kind: ContentKind,
   ) => Promise<ContentItem[]>;
-  onGetRecommendations: (
+  onGetDynamicRecommendations: (
     profileId: string,
-  ) => Promise<CuratedRecommendation[]>;
+    category: string,
+    kind: ContentKind,
+  ) => Promise<ModrinthSearchResult[]>;
   onSearchModrinth: (
     profileId: string,
     query: string,
     mcVersion: string,
     loader: string,
     kind: ContentKind,
-  ) => Promise<CuratedRecommendation[]>;
+  ) => Promise<ModrinthSearchResult[]>;
   onToggleContent: (
     profileId: string,
     kind: ContentKind,
@@ -70,16 +74,30 @@ interface ContentManagerPanelProps {
   ) => Promise<string[]>;
 }
 
+const FPS_PURE_TOKENS = [
+  "sodium",
+  "lithium",
+  "ferrite",
+  "immediatelyfast",
+  "c2me",
+];
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+function formatDownloads(dl: number): string {
+  if (dl >= 1_000_000) return `${(dl / 1_000_000).toFixed(1)}M`;
+  if (dl >= 1_000) return `${Math.round(dl / 1_000)}K`;
+  return `${dl}`;
+}
+
 export function ContentManagerPanel({
   profile,
   onListContent,
-  onGetRecommendations,
+  onGetDynamicRecommendations,
   onSearchModrinth,
   onToggleContent,
   onImportContent,
@@ -88,17 +106,20 @@ export function ContentManagerPanel({
   onInstallItem,
 }: ContentManagerPanelProps) {
   const [activeTab, setActiveTab] = useState<ContentTab>("recommended");
+  const [discoveryChip, setDiscoveryChip] =
+    useState<DiscoveryChip>("performance");
   const [installedMods, setInstalledMods] = useState<ContentItem[]>([]);
   const [resourcePacks, setResourcePacks] = useState<ContentItem[]>([]);
-  const [recommendations, setRecommendations] = useState<
-    CuratedRecommendation[]
-  >([]);
+  const [dynamicFeed, setDynamicFeed] = useState<ModrinthSearchResult[]>([]);
+  const [loadingFeed, setLoadingFeed] = useState(false);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [searchKind, setSearchKind] = useState<ContentKind>("mod");
   const [searchResults, setSearchResults] = useState<
-    CuratedRecommendation[] | null
+    ModrinthSearchResult[] | null
   >(null);
   const [searching, setSearching] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [progress, setProgress] = useState<LaunchProgressEvent | null>(null);
@@ -106,27 +127,49 @@ export function ContentManagerPanel({
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const refreshAll = useCallback(async () => {
+  const refreshLocal = useCallback(async () => {
     setLoading(true);
     try {
-      const [mods, packs, recs] = await Promise.all([
+      const [mods, packs] = await Promise.all([
         onListContent(profile.id, "mod"),
         onListContent(profile.id, "resource_pack"),
-        onGetRecommendations(profile.id),
       ]);
       setInstalledMods(mods);
       setResourcePacks(packs);
-      setRecommendations(recs);
     } finally {
       setLoading(false);
     }
-  }, [onGetRecommendations, onListContent, profile.id]);
+  }, [onListContent, profile.id]);
+
+  const refreshDynamicFeed = useCallback(async () => {
+    setLoadingFeed(true);
+    try {
+      const kind: ContentKind =
+        discoveryChip === "resource_pack" ? "resource_pack" : "mod";
+      const items = await onGetDynamicRecommendations(
+        profile.id,
+        discoveryChip,
+        kind,
+      );
+      setDynamicFeed(items);
+    } catch {
+      setDynamicFeed([]);
+    } finally {
+      setLoadingFeed(false);
+    }
+  }, [discoveryChip, onGetDynamicRecommendations, profile.id]);
 
   useEffect(() => {
-    void refreshAll();
-  }, [refreshAll]);
+    void refreshLocal();
+  }, [refreshLocal]);
 
-  // Native Tauri v2 Drag & Drop listener for real physical paths
+  useEffect(() => {
+    if (activeTab === "recommended" && searchResults === null) {
+      void refreshDynamicFeed();
+    }
+  }, [activeTab, refreshDynamicFeed, searchResults]);
+
+  // Native Tauri v2 Drag & Drop listener
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     try {
@@ -160,7 +203,7 @@ export function ContentManagerPanel({
                 setStatusMessage(
                   `Importados ${imported} archivo(s) mediante arrastrar y soltar.`,
                 );
-                await refreshAll();
+                await refreshLocal();
               }
             })();
           }
@@ -169,12 +212,26 @@ export function ContentManagerPanel({
           unlisten = fn;
         });
     } catch {
-      // Running outside Tauri desktop webview
+      // Browser preview fallback
     }
     return () => {
       if (unlisten) unlisten();
     };
-  }, [onImportContent, profile.id, refreshAll]);
+  }, [onImportContent, profile.id, refreshLocal]);
+
+  const fpsPureInstalled = useMemo(() => {
+    const names = installedMods.map((m) => m.file_name.toLowerCase());
+    return FPS_PURE_TOKENS.every((token) =>
+      names.some((n) => n.includes(token)),
+    );
+  }, [installedMods]);
+
+  const distantHorizonsInstalled = useMemo(() => {
+    const names = installedMods.map((m) => m.file_name.toLowerCase());
+    return names.some(
+      (n) => n.includes("distanthorizons") || n.includes("distant-horizons"),
+    );
+  }, [installedMods]);
 
   const handleToggle = async (item: ContentItem, kind: ContentKind) => {
     const updated = await onToggleContent(
@@ -218,7 +275,7 @@ export function ContentManagerPanel({
     if (fileInputRef.current) fileInputRef.current.value = "";
     if (count > 0) {
       setStatusMessage(`Importados ${count} archivo(s) en la instancia.`);
-      await refreshAll();
+      await refreshLocal();
     }
   };
 
@@ -259,7 +316,8 @@ export function ContentManagerPanel({
       setStatusMessage(
         `Instalados (${installed.length} con dependencias): ${installed.join(", ")}`,
       );
-      await refreshAll();
+      await refreshLocal();
+      await refreshDynamicFeed();
     } catch (err) {
       setStatusMessage(
         err instanceof Error ? err.message : JSON.stringify(err),
@@ -270,26 +328,28 @@ export function ContentManagerPanel({
     }
   };
 
-  const handleInstallSingle = async (rec: CuratedRecommendation) => {
-    setBusySlug(rec.slug);
+  const handleInstallSingle = async (item: ModrinthSearchResult) => {
+    setBusySlug(item.slug);
     setStatusMessage(null);
     try {
       const installed = await onInstallItem(
         profile.id,
-        rec.slug,
-        rec.kind,
+        item.slug,
+        item.kind,
         (ev) => setProgress(ev),
       );
-      setStatusMessage(`Instalado ${rec.name}: ${installed.join(", ")}`);
-      await refreshAll();
+      setStatusMessage(`Instalado ${item.title}: ${installed.join(", ")}`);
+      await refreshLocal();
       if (searchResults) {
         setSearchResults((prev) =>
           prev
             ? prev.map((r) =>
-                r.slug === rec.slug ? { ...r, installed: true } : r,
+                r.slug === item.slug ? { ...r, installed: true } : r,
               )
             : null,
         );
+      } else {
+        setDynamicFeed((prev) => prev.filter((r) => r.slug !== item.slug));
       }
     } catch (err) {
       setStatusMessage(
@@ -301,7 +361,7 @@ export function ContentManagerPanel({
     }
   };
 
-  const displayCatalog = searchResults ?? recommendations;
+  const displayList = searchResults ?? dynamicFeed;
 
   return (
     <div className="h-full overflow-y-auto p-5 bg-[#080A0F]">
@@ -369,26 +429,28 @@ export function ContentManagerPanel({
               className="h-8 px-3 rounded-lg bg-[#11151E] hover:bg-[#171D2A] border border-[#1E2534] inline-flex items-center gap-1.5 text-xs text-slate-200"
             >
               <FolderPlus className="h-3.5 w-3.5 text-[#38BDF8]" />
-              Importar archivo
+              Importar
             </button>
 
             <button
               type="button"
-              onClick={() => void refreshAll()}
+              onClick={() => {
+                void refreshLocal();
+                if (activeTab === "recommended") void refreshDynamicFeed();
+              }}
               title="Recargar"
               className="h-8 w-8 rounded-lg bg-[#11151E] border border-[#1E2534] flex items-center justify-center text-slate-400 hover:text-white"
             >
               <RefreshCw
-                className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+                className={`h-3.5 w-3.5 ${loading || loadingFeed ? "animate-spin" : ""}`}
               />
             </button>
           </div>
         </div>
 
-        {/* Native Drag-and-Drop Overlay Indicator */}
         {dragActive && (
           <div className="rounded-xl border-2 border-dashed border-[#38BDF8] bg-[#38BDF8]/10 p-4 text-center text-xs font-medium text-[#38BDF8]">
-            Suelta tus archivos .jar o .zip aquí para instalarlos directamente en{" "}
+            Suelta tus archivos .jar o .zip aquí para instalarlos en{" "}
             {profile.name}
           </div>
         )}
@@ -415,71 +477,119 @@ export function ContentManagerPanel({
           </div>
         )}
 
-        {/* TAB: RECOMENDADOS / EXPLORAR */}
+        {/* TAB: RECOMENDADOS & SMART SEARCH */}
         {activeTab === "recommended" && (
           <div className="space-y-4">
-            {/* 2 Side-by-Side 1-Click Presets */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="rounded-xl bg-[#11151E] border border-[#1E2534] p-4 flex flex-col justify-between gap-3">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-white">
-                      <Rocket className="h-3.5 w-3.5 text-[#10B981]" />
-                      FPS Puros (Core Stack)
-                    </span>
-                    <span className="rounded bg-[#10B981]/12 border border-[#10B981]/30 px-1.5 py-0.5 text-[10px] font-mono text-[#10B981]">
-                      5 mods + deps
-                    </span>
+            {/* Compact Status Band if Presets are Already Installed, Otherwise Full Cards */}
+            {profile.loader === "fabric" &&
+              (fpsPureInstalled && distantHorizonsInstalled ? (
+                <div className="rounded-xl bg-[#11151E] border border-[#10B981]/30 px-4 py-2.5 flex items-center justify-between gap-3">
+                  <div className="inline-flex items-center gap-2 text-xs text-[#10B981] font-medium">
+                    <Check className="h-4 w-4" />
+                    Stack FPS Puros y Distant Horizons instalados
                   </div>
-                  <p className="text-[11px] text-slate-400">
-                    Sodium, Lithium, FerriteCore, ImmediatelyFast y C2ME con
-                    resolución automática de Fabric API.
-                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("installed")}
+                    className="rounded-md bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-2.5 py-1 text-[11px] text-slate-300"
+                  >
+                    Gestionar
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  disabled={busySlug !== null || profile.loader !== "fabric"}
-                  onClick={() => void handlePreset("fps_pure")}
-                  className="w-full rounded-lg bg-[#10B981] hover:bg-[#059669] disabled:opacity-45 py-2 text-xs font-semibold text-slate-950 transition-colors"
-                >
-                  {busySlug === "fps_pure"
-                    ? "Instalando FPS Puros..."
-                    : profile.loader === "fabric"
-                      ? "Instalar FPS Puros"
-                      : "Requiere perfil Fabric"}
-                </button>
-              </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {fpsPureInstalled ? (
+                    <div className="rounded-xl bg-[#11151E] border border-[#10B981]/25 px-4 py-3 flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-2 text-xs font-medium text-[#10B981]">
+                        <Check className="h-4 w-4" />
+                        Stack FPS Puros instalado
+                      </span>
+                      <button
+                        type="button"
+                        disabled={busySlug !== null}
+                        onClick={() => void handlePreset("fps_pure")}
+                        className="rounded-md bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-2.5 py-1 text-[11px] text-slate-300"
+                      >
+                        Reinstalar
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl bg-[#11151E] border border-[#1E2534] p-4 flex flex-col justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-white">
+                            <Rocket className="h-3.5 w-3.5 text-[#10B981]" />
+                            FPS Puros (Core Stack)
+                          </span>
+                          <span className="rounded bg-[#10B981]/12 border border-[#10B981]/30 px-1.5 py-0.5 text-[10px] font-mono text-[#10B981]">
+                            5 mods + deps
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          Sodium, Lithium, FerriteCore, ImmediatelyFast y C2ME
+                          con Fabric API automático.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busySlug !== null}
+                        onClick={() => void handlePreset("fps_pure")}
+                        className="btn-accent w-full rounded-lg disabled:opacity-45 py-2 text-xs font-semibold text-slate-950 transition-colors"
+                      >
+                        {busySlug === "fps_pure"
+                          ? "Instalando FPS Puros..."
+                          : "Instalar FPS Puros"}
+                      </button>
+                    </div>
+                  )}
 
-              <div className="rounded-xl bg-[#11151E] border border-[#1E2534] p-4 flex flex-col justify-between gap-3">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-white">
-                      <Compass className="h-3.5 w-3.5 text-[#38BDF8]" />
-                      Horizonte Opcional (LODs)
-                    </span>
-                    <span className="rounded bg-[#38BDF8]/12 border border-[#38BDF8]/30 px-1.5 py-0.5 text-[10px] font-mono text-[#38BDF8]">
-                      64+ chunks
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">
-                    Distant Horizons independiente del pack base para renderizar
-                    horizontes masivos bajo demanda.
-                  </p>
+                  {distantHorizonsInstalled ? (
+                    <div className="rounded-xl bg-[#11151E] border border-[#38BDF8]/25 px-4 py-3 flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-2 text-xs font-medium text-[#38BDF8]">
+                        <Check className="h-4 w-4" />
+                        Distant Horizons instalado
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab("installed")}
+                        className="rounded-md bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-2.5 py-1 text-[11px] text-slate-300"
+                      >
+                        Gestionar
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl bg-[#11151E] border border-[#1E2534] p-4 flex flex-col justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-white">
+                            <Compass className="h-3.5 w-3.5 text-[#38BDF8]" />
+                            Horizonte Opcional (LODs)
+                          </span>
+                          <span className="rounded bg-[#38BDF8]/12 border border-[#38BDF8]/30 px-1.5 py-0.5 text-[10px] font-mono text-[#38BDF8]">
+                            64+ chunks
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          Distant Horizons independiente del pack base para
+                          horizontes masivos bajo demanda.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busySlug !== null}
+                        onClick={() => void handlePreset("distant_horizons")}
+                        className="w-full rounded-lg bg-[#171D2A] hover:bg-[#1E2534] border border-[#38BDF8]/30 disabled:opacity-45 py-2 text-xs font-semibold text-[#38BDF8] transition-colors"
+                      >
+                        {busySlug === "distant_horizons"
+                          ? "Instalando Distant Horizons..."
+                          : "Añadir Distant Horizons"}
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  disabled={busySlug !== null || profile.loader !== "fabric"}
-                  onClick={() => void handlePreset("distant_horizons")}
-                  className="w-full rounded-lg bg-[#171D2A] hover:bg-[#1E2534] border border-[#38BDF8]/30 disabled:opacity-45 py-2 text-xs font-semibold text-[#38BDF8] transition-colors"
-                >
-                  {busySlug === "distant_horizons"
-                    ? "Instalando Distant Horizons..."
-                    : "Añadir Distant Horizons"}
-                </button>
-              </div>
-            </div>
+              ))}
 
-            {/* Live Modrinth Search Bar */}
+            {/* Smart Modrinth Search Bar */}
             <form
               onSubmit={(e) => void handleSearch(e)}
               className="flex flex-wrap items-center gap-2"
@@ -493,7 +603,7 @@ export function ContentManagerPanel({
                     setSearchQuery(e.target.value);
                     if (!e.target.value.trim()) setSearchResults(null);
                   }}
-                  placeholder={`Buscar en Modrinth para MC ${profile.mc_version}...`}
+                  placeholder={`Buscar en Modrinth para ${profile.loader} ${profile.mc_version}...`}
                   className="w-full rounded-lg bg-[#11151E] border border-[#1E2534] pl-9 pr-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-[#38BDF8] focus:outline-none"
                 />
               </div>
@@ -516,14 +626,42 @@ export function ContentManagerPanel({
               </button>
             </form>
 
-            {/* Curated / Live Search 2-Column Grid */}
+            {/* Dynamic Discovery Filter Chips */}
+            {!searchResults && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(
+                  [
+                    { id: "performance", label: "Rendimiento" },
+                    { id: "visual", label: "Visual y Shaders" },
+                    { id: "qol", label: "Calidad de Vida" },
+                    { id: "world", label: "Mundo y Aventura" },
+                    { id: "resource_pack", label: "Resource Packs" },
+                  ] as { id: DiscoveryChip; label: string }[]
+                ).map((chip) => (
+                  <button
+                    key={chip.id}
+                    type="button"
+                    onClick={() => setDiscoveryChip(chip.id)}
+                    className={`rounded-full px-3 py-1 text-[11px] font-medium border transition-colors ${
+                      discoveryChip === chip.id
+                        ? "bg-[#171D2A] text-[#38BDF8] border-[#38BDF8]/40"
+                        : "bg-[#11151E] text-slate-400 border-[#1E2534] hover:text-slate-200"
+                    }`}
+                  >
+                    {chip.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Dynamic "Te podría gustar" / Search Results Grid */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
                   <Sparkles className="h-3.5 w-3.5 text-[#38BDF8]" />
                   {searchResults
                     ? `Resultados de Modrinth (${searchResults.length})`
-                    : `Selección Curada (MC ${profile.mc_version})`}
+                    : `Te podría gustar · MC ${profile.mc_version}`}
                 </span>
                 {searchResults && (
                   <button
@@ -534,79 +672,99 @@ export function ContentManagerPanel({
                     }}
                     className="text-[11px] text-[#38BDF8] hover:underline"
                   >
-                    Ver curados
+                    Volver a descubrimiento
                   </button>
                 )}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                {displayCatalog.map((rec) => {
-                  const isInstalling = busySlug === rec.slug;
-                  const disabledByLoader =
-                    rec.kind === "mod" && profile.loader !== "fabric";
+              {loadingFeed && !searchResults ? (
+                <div className="rounded-xl bg-[#11151E] border border-[#1E2534] p-6 text-center text-xs font-mono text-slate-500">
+                  Consultando Modrinth API v2...
+                </div>
+              ) : displayList.length === 0 ? (
+                <div className="rounded-xl bg-[#11151E] border border-[#1E2534] p-6 text-center text-xs font-mono text-slate-500">
+                  No se encontraron resultados nuevos para esta categoría.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {displayList.map((item) => {
+                    const isInstalling = busySlug === item.slug;
+                    const disabledByLoader =
+                      item.kind === "mod" && profile.loader !== "fabric";
 
-                  return (
-                    <div
-                      key={`${rec.kind}-${rec.slug}`}
-                      className="rounded-xl bg-[#11151E] border border-[#1E2534] p-3.5 flex items-center justify-between gap-3"
-                    >
-                      <div className="min-w-0 flex items-center gap-3">
-                        {rec.icon_url ? (
-                          <img
-                            src={rec.icon_url}
-                            alt={rec.name}
-                            className="h-9 w-9 rounded-lg object-cover border border-[#1E2534] shrink-0 bg-[#080A0F]"
-                          />
-                        ) : (
-                          <div className="h-9 w-9 rounded-lg bg-[#080A0F] border border-[#1E2534] flex items-center justify-center text-[#38BDF8] shrink-0">
-                            {rec.kind === "mod" ? (
-                              <Package className="h-4 w-4" />
-                            ) : (
-                              <FileArchive className="h-4 w-4" />
+                    return (
+                      <div
+                        key={`${item.kind}-${item.slug}`}
+                        className="rounded-xl bg-[#11151E] border border-[#1E2534] p-3.5 flex items-center justify-between gap-3"
+                      >
+                        <div className="min-w-0 flex items-center gap-3">
+                          {item.icon_url ? (
+                            <img
+                              src={item.icon_url}
+                              alt={item.title}
+                              className="h-9 w-9 rounded-lg object-cover border border-[#1E2534] shrink-0 bg-[#080A0F]"
+                            />
+                          ) : (
+                            <div className="h-9 w-9 rounded-lg bg-[#080A0F] border border-[#1E2534] flex items-center justify-center text-[#38BDF8] shrink-0">
+                              {item.kind === "mod" ? (
+                                <Package className="h-4 w-4" />
+                              ) : (
+                                <FileArchive className="h-4 w-4" />
+                              )}
+                            </div>
+                          )}
+
+                          <div className="min-w-0 space-y-0.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs font-semibold text-white truncate">
+                                {item.title}
+                              </span>
+                              <span className="shrink-0 rounded bg-[#080A0F] border border-[#1E2534] px-1.5 py-0.5 text-[9px] font-mono text-slate-400">
+                                {formatDownloads(item.downloads)} DL
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-400 line-clamp-1">
+                              {item.description}
+                            </p>
+                            {!item.compatible && item.compatibility_note && (
+                              <span className="inline-flex items-center gap-1 rounded bg-[#F59E0B]/12 border border-[#F59E0B]/35 px-1.5 py-0.5 text-[9px] font-mono text-[#F59E0B]">
+                                <AlertTriangle className="h-2.5 w-2.5" />
+                                {item.compatibility_note}
+                              </span>
                             )}
                           </div>
-                        )}
-
-                        <div className="min-w-0 space-y-0.5">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-white truncate">
-                              {rec.name}
-                            </span>
-                            <span className="shrink-0 rounded bg-[#080A0F] border border-[#1E2534] px-1.5 py-0.5 text-[9px] font-mono text-slate-400">
-                              {rec.badge}
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-slate-400 line-clamp-1">
-                            {rec.description}
-                          </p>
                         </div>
-                      </div>
 
-                      {rec.installed ? (
-                        <span className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[#10B981]/12 border border-[#10B981]/30 px-2.5 py-1.5 text-[11px] font-mono text-[#10B981]">
-                          <Check className="h-3 w-3" />
-                          Instalado
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={busySlug !== null || disabledByLoader}
-                          onClick={() => void handleInstallSingle(rec)}
-                          className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-[#171D2A] hover:bg-[#1E2534] border border-[#1E2534] disabled:opacity-45 px-3 py-1.5 text-[11px] font-medium text-white transition-colors"
-                        >
-                          <Download className="h-3 w-3 text-[#38BDF8]" />
-                          {isInstalling ? "..." : "Instalar"}
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                        {item.installed ? (
+                          <span className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[#10B981]/12 border border-[#10B981]/30 px-2.5 py-1.5 text-[11px] font-mono text-[#10B981]">
+                            <Check className="h-3 w-3" />
+                            Instalado
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={
+                              busySlug !== null ||
+                              disabledByLoader ||
+                              !item.compatible
+                            }
+                            onClick={() => void handleInstallSingle(item)}
+                            className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-[#171D2A] hover:bg-[#1E2534] border border-[#1E2534] disabled:opacity-40 px-3 py-1.5 text-[11px] font-medium text-white transition-colors"
+                          >
+                            <Download className="h-3 w-3 text-[#38BDF8]" />
+                            {isInstalling ? "..." : "Instalar"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* TAB: INSTALADOS or RESOURCE PACKS (Native Sliding Toggle Switches) */}
+        {/* TAB: INSTALADOS / RESOURCE PACKS */}
         {(activeTab === "installed" || activeTab === "resource_packs") && (
           <div className="space-y-3">
             <div className="rounded-xl border border-dashed border-[#1E2534] bg-[#11151E]/60 px-4 py-3 flex items-center justify-between gap-3 text-xs text-slate-400">
@@ -665,7 +823,6 @@ export function ContentManagerPanel({
                           </div>
                         </div>
 
-                        {/* Native Sliding Switch */}
                         <button
                           type="button"
                           role="switch"

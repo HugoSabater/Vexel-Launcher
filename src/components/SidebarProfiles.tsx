@@ -152,6 +152,11 @@ export function SidebarProfiles({
         gc_preset: gcPreset,
         server_address: serverAddress.trim() ? serverAddress.trim() : null,
         is_default: false,
+        window_width: null,
+        window_height: null,
+        fullscreen: false,
+        custom_jvm_args: null,
+        custom_java_path: null,
       };
       await onSaveProfile(profile);
       onSelectProfile(profile.id);

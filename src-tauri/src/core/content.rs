@@ -450,6 +450,20 @@ pub async fn import_content_bytes(
     })
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModrinthSearchResult {
+    pub slug: String,
+    pub title: String,
+    pub description: String,
+    pub icon_url: Option<String>,
+    pub downloads: u64,
+    pub categories: Vec<String>,
+    pub compatible: bool,
+    pub compatibility_note: Option<String>,
+    pub installed: bool,
+    pub kind: ContentKind,
+}
+
 #[derive(Debug, Deserialize)]
 struct ModrinthSearchResponse {
     hits: Vec<ModrinthSearchHit>,
@@ -462,6 +476,46 @@ struct ModrinthSearchHit {
     description: String,
     icon_url: Option<String>,
     downloads: u64,
+    #[serde(default)]
+    categories: Vec<String>,
+}
+
+#[must_use]
+pub fn normalize_modrinth_query(raw: &str) -> String {
+    raw.replace('&', " and ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn is_slug_installed(slug: &str, installed_lower: &[String]) -> bool {
+    let slug_low = slug.to_lowercase();
+    let slug_compact = slug_low.replace('-', "");
+    installed_lower
+        .iter()
+        .any(|f| f.contains(&slug_low) || f.contains(&slug_compact))
+}
+
+fn hit_to_result(
+    hit: ModrinthSearchHit,
+    kind: ContentKind,
+    installed_lower: &[String],
+    compatible: bool,
+    compatibility_note: Option<String>,
+) -> ModrinthSearchResult {
+    let installed = is_slug_installed(&hit.slug, installed_lower);
+    ModrinthSearchResult {
+        slug: hit.slug,
+        title: hit.title,
+        description: hit.description,
+        icon_url: hit.icon_url.filter(|u| !u.trim().is_empty()),
+        downloads: hit.downloads,
+        categories: hit.categories,
+        compatible,
+        compatibility_note,
+        installed,
+        kind,
+    }
 }
 
 pub async fn search_modrinth_catalog(
@@ -472,7 +526,114 @@ pub async fn search_modrinth_catalog(
     mc_version: &str,
     loader: &str,
     kind: ContentKind,
-) -> AppResult<Vec<CuratedRecommendation>> {
+) -> AppResult<Vec<ModrinthSearchResult>> {
+    let installed_items = list_instance_content(paths, profile_id, kind).await?;
+    let installed_lower: Vec<String> = installed_items
+        .iter()
+        .map(|i| i.file_name.to_lowercase())
+        .collect();
+
+    let clean_query = normalize_modrinth_query(query);
+    let project_type = match kind {
+        ContentKind::Mod => "mod",
+        ContentKind::ResourcePack => "resourcepack",
+    };
+
+    let loader_norm = if loader == "neo_forge" {
+        "neoforge"
+    } else {
+        loader
+    };
+
+    let mut strict_facets = vec![
+        vec![format!("project_type:{project_type}")],
+        vec![format!("versions:{mc_version}")],
+    ];
+    if kind == ContentKind::Mod && !loader_norm.is_empty() && loader_norm != "vanilla" {
+        strict_facets.push(vec![format!("categories:{loader_norm}")]);
+    }
+
+    let strict_facets_json = serde_json::to_string(&strict_facets)?;
+    let strict_resp: ModrinthSearchResponse = client
+        .get("https://api.modrinth.com/v2/search")
+        .query(&[
+            ("query", clean_query.as_str()),
+            ("facets", strict_facets_json.as_str()),
+            ("index", "relevance"),
+            ("limit", "12"),
+        ])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let mut seen_slugs: HashSet<String> = HashSet::new();
+    let mut results: Vec<ModrinthSearchResult> = strict_resp
+        .hits
+        .into_iter()
+        .filter(|h| seen_slugs.insert(h.slug.clone()))
+        .map(|h| hit_to_result(h, kind, &installed_lower, true, None))
+        .collect();
+
+    // Intelligent fallback: if strict search returns < 3 hits, perform relaxed search
+    if results.len() < 3 && !clean_query.is_empty() {
+        let relaxed_facets = serde_json::to_string(&vec![vec![format!(
+            "project_type:{project_type}"
+        )]])?;
+        let relaxed_resp: ModrinthSearchResponse = client
+            .get("https://api.modrinth.com/v2/search")
+            .query(&[
+                ("query", clean_query.as_str()),
+                ("facets", relaxed_facets.as_str()),
+                ("index", "relevance"),
+                ("limit", "12"),
+            ])
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        let loader_display = match loader_norm {
+            "fabric" => "Fabric",
+            "forge" => "Forge",
+            "neoforge" => "NeoForge",
+            _ => "Vanilla",
+        };
+        let note = match kind {
+            ContentKind::Mod => format!("Incompatible con {loader_display} {mc_version}"),
+            ContentKind::ResourcePack => format!("Sin versión oficial para MC {mc_version}"),
+        };
+
+        for hit in relaxed_resp.hits {
+            if seen_slugs.insert(hit.slug.clone()) {
+                results.push(hit_to_result(
+                    hit,
+                    kind,
+                    &installed_lower,
+                    false,
+                    Some(note.clone()),
+                ));
+            }
+            if results.len() >= 12 {
+                break;
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+pub async fn get_dynamic_recommendations(
+    client: &reqwest::Client,
+    paths: &LauncherPaths,
+    profile_id: &str,
+    mc_version: &str,
+    loader: &str,
+    category: &str,
+    kind: ContentKind,
+) -> AppResult<Vec<ModrinthSearchResult>> {
     let installed_items = list_instance_content(paths, profile_id, kind).await?;
     let installed_lower: Vec<String> = installed_items
         .iter()
@@ -484,26 +645,47 @@ pub async fn search_modrinth_catalog(
         ContentKind::ResourcePack => "resourcepack",
     };
 
+    let loader_norm = if loader == "neo_forge" {
+        "neoforge"
+    } else {
+        loader
+    };
+
     let mut facets = vec![
         vec![format!("project_type:{project_type}")],
         vec![format!("versions:{mc_version}")],
     ];
-    if kind == ContentKind::Mod && !loader.is_empty() && loader != "vanilla" {
-        let loader_norm = if loader == "neo_forge" {
-            "neoforge"
-        } else {
-            loader
-        };
+    if kind == ContentKind::Mod && !loader_norm.is_empty() && loader_norm != "vanilla" {
         facets.push(vec![format!("categories:{loader_norm}")]);
+    }
+
+    let category_facets: Option<Vec<String>> = match category {
+        "performance" => Some(vec!["categories:optimization".to_string()]),
+        "visual" => Some(vec![
+            "categories:decoration".to_string(),
+            "categories:cursed".to_string(),
+        ]),
+        "qol" => Some(vec!["categories:utility".to_string()]),
+        "world" => Some(vec![
+            "categories:worldgen".to_string(),
+            "categories:adventure".to_string(),
+        ]),
+        _ => None,
+    };
+
+    if kind == ContentKind::Mod {
+        if let Some(cat_facet) = category_facets {
+            facets.push(cat_facet);
+        }
     }
 
     let facets_json = serde_json::to_string(&facets)?;
     let resp: ModrinthSearchResponse = client
         .get("https://api.modrinth.com/v2/search")
         .query(&[
-            ("query", query.trim()),
             ("facets", facets_json.as_str()),
-            ("limit", "12"),
+            ("index", "downloads"),
+            ("limit", "20"),
         ])
         .send()
         .await?
@@ -511,37 +693,15 @@ pub async fn search_modrinth_catalog(
         .json()
         .await?;
 
-    let results = resp
+    let filtered: Vec<ModrinthSearchResult> = resp
         .hits
         .into_iter()
-        .map(|hit| {
-            let slug_low = hit.slug.to_lowercase();
-            let slug_compact = slug_low.replace('-', "");
-            let installed = installed_lower
-                .iter()
-                .any(|f| f.contains(&slug_low) || f.contains(&slug_compact));
-            let dl_badge = if hit.downloads >= 1_000_000 {
-                format!("{:.1}M DL", hit.downloads as f64 / 1_000_000.0)
-            } else if hit.downloads >= 1_000 {
-                format!("{}K DL", hit.downloads / 1_000)
-            } else {
-                format!("{} DL", hit.downloads)
-            };
-
-            CuratedRecommendation {
-                slug: hit.slug,
-                name: hit.title,
-                description: hit.description,
-                category: project_type.to_string(),
-                badge: dl_badge,
-                kind,
-                installed,
-                icon_url: hit.icon_url.filter(|u| !u.trim().is_empty()),
-            }
-        })
+        .filter(|hit| !is_slug_installed(&hit.slug, &installed_lower))
+        .take(10)
+        .map(|hit| hit_to_result(hit, kind, &installed_lower, true, None))
         .collect();
 
-    Ok(results)
+    Ok(filtered)
 }
 
 async fn install_modrinth_targets<F>(
@@ -739,9 +899,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_required_dependencies, preset_mod_list, ModrinthDependency, PendingModrinthTarget,
-        PerformancePreset,
+        extract_required_dependencies, normalize_modrinth_query, preset_mod_list,
+        ModrinthDependency, PendingModrinthTarget, PerformancePreset,
     };
+
+    #[test]
+    fn test_normalize_modrinth_query() {
+        assert_eq!(
+            normalize_modrinth_query("  Farmers & Delight   Plus  "),
+            "Farmers and Delight Plus"
+        );
+        assert_eq!(normalize_modrinth_query("sodium"), "sodium");
+    }
 
     #[test]
     fn test_extract_required_modrinth_dependencies_filters_optional() {

@@ -8,3 +8,4 @@ pub mod loaders;
 pub mod manifest;
 pub mod paths;
 pub mod runner;
+pub mod skin_pack;

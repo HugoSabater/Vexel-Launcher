@@ -1,15 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
-  Check,
   Download,
   FolderOpen,
   Globe2,
   Package,
-  Pencil,
   Play,
   Radio,
-  Shirt,
   SlidersHorizontal,
   Square,
 } from "lucide-react";
@@ -40,13 +37,13 @@ interface ProfileDashboardProps {
   ) => Promise<ContentItem[]>;
   onGetInstanceSummary: (profileId: string) => Promise<InstanceSummary>;
   onUpdateUsername: (username: string) => Promise<void>;
+  onUploadSkinBytes: (bytes: number[]) => Promise<void>;
   onPlay: () => Promise<void>;
   onStop: () => Promise<void>;
   onOpenFolder: () => Promise<void>;
   onOpenSavesFolder: () => Promise<void>;
   onOpenMods: () => void;
   onOpenSettings: () => void;
-  onOpenSkinTab: () => void;
   onConfirmInstallJava: (major: number) => Promise<void>;
   onDismissJavaModal: () => void;
 }
@@ -96,13 +93,13 @@ export function ProfileDashboard({
   onListContent,
   onGetInstanceSummary,
   onUpdateUsername,
+  onUploadSkinBytes,
   onPlay,
   onStop,
   onOpenFolder,
   onOpenSavesFolder,
   onOpenMods,
   onOpenSettings,
-  onOpenSkinTab,
   onConfirmInstallJava,
   onDismissJavaModal,
 }: ProfileDashboardProps) {
@@ -111,12 +108,7 @@ export function ProfileDashboard({
     recent_worlds: [],
     latest_screenshot_data_url: null,
   });
-  const [editingNick, setEditingNick] = useState(false);
-  const [nickDraft, setNickDraft] = useState(config.offline_username);
-
-  useEffect(() => {
-    setNickDraft(config.offline_username);
-  }, [config.offline_username]);
+  const quickSkinInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -147,21 +139,28 @@ export function ProfileDashboard({
       : 0;
   const isWorking = launching || installingJava;
 
-  const commitNick = async () => {
-    setEditingNick(false);
-    const trimmed = nickDraft.trim();
-    if (trimmed && trimmed !== config.offline_username) {
-      await onUpdateUsername(trimmed);
-    } else {
-      setNickDraft(config.offline_username);
-    }
+  const handleQuickSkinPick = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const buffer = await file.arrayBuffer();
+    await onUploadSkinBytes(Array.from(new Uint8Array(buffer)));
+    if (quickSkinInputRef.current) quickSkinInputRef.current.value = "";
   };
 
   return (
     <div className="h-full w-full flex flex-col bg-[#080A0F] overflow-hidden">
+      <input
+        ref={quickSkinInputRef}
+        type="file"
+        accept=".png,image/png"
+        onChange={(e) => void handleQuickSkinPick(e)}
+        className="hidden"
+      />
+
       {/* Main Player-First Atmospheric Stage */}
       <section className="relative flex-1 min-h-0 overflow-hidden flex items-center px-8 py-6">
-        {/* Blurred Latest Screenshot Ambient Background (if present) */}
         {summary.latest_screenshot_data_url && (
           <div
             className="pointer-events-none absolute inset-0 bg-cover bg-center scale-105 opacity-25 blur-xl"
@@ -171,14 +170,13 @@ export function ProfileDashboard({
           />
         )}
 
-        {/* Loader Atmospheric Vignette */}
         <div
           className="pointer-events-none absolute inset-0"
           style={{ background: LOADER_VIGNETTE[profile.loader] }}
         />
 
         <div className="relative z-10 w-full max-w-5xl mx-auto grid grid-cols-12 items-center gap-6">
-          {/* Left 7 Cols: Title, Clean Metadata Line, QuickPlay & Protagonist Action */}
+          {/* Left 7 Cols */}
           <div className="col-span-12 md:col-span-7 space-y-5">
             <div className="space-y-2">
               {profile.server_address && (
@@ -194,8 +192,7 @@ export function ProfileDashboard({
 
               <p className="text-sm font-mono text-slate-400">
                 MC {profile.mc_version} · {LOADER_LABEL[profile.loader]} ·{" "}
-                {activeMods.length}{" "}
-                {activeMods.length === 1 ? "mod" : "mods"}
+                {activeMods.length} {activeMods.length === 1 ? "mod" : "mods"}
               </p>
             </div>
 
@@ -222,7 +219,7 @@ export function ProfileDashboard({
                   type="button"
                   disabled={isWorking}
                   onClick={() => void onPlay()}
-                  className="h-12 min-w-[180px] px-7 rounded-xl bg-[#10B981] hover:bg-[#059669] active:scale-[0.99] disabled:opacity-50 inline-flex items-center justify-center gap-2.5 text-sm font-bold tracking-wider text-slate-950 transition-all"
+                  className="btn-accent h-12 min-w-[180px] px-7 rounded-xl active:scale-[0.99] disabled:opacity-50 inline-flex items-center justify-center gap-2.5 text-sm font-bold tracking-wider text-slate-950 transition-all"
                 >
                   <Play className="h-4 w-4 fill-current" />
                   {launching ? "INICIANDO..." : "JUGAR"}
@@ -249,65 +246,21 @@ export function ProfileDashboard({
             </div>
           </div>
 
-          {/* Right 5 Cols: Full-Body 3D Character directly on Atmospheric Stage */}
-          <div className="hidden md:flex col-span-5 flex-col items-center justify-center">
+          {/* Right 5 Cols: 3D Character with Floating Nametag + Hover Skin Pill */}
+          <div className="hidden md:flex col-span-5 items-center justify-center">
             <SkinViewer3D
               skinUrl={skinDataUrl}
               model={config.skin_model}
-              width={210}
-              height={265}
+              username={config.offline_username}
+              onUpdateUsername={onUpdateUsername}
+              onChangeSkinClick={() => quickSkinInputRef.current?.click()}
+              width={220}
+              height={295}
             />
-
-            <div className="mt-1 flex items-center gap-3">
-              {editingNick ? (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void commitNick();
-                  }}
-                  className="flex items-center gap-1"
-                >
-                  <input
-                    type="text"
-                    autoFocus
-                    value={nickDraft}
-                    onChange={(e) => setNickDraft(e.target.value)}
-                    onBlur={() => void commitNick()}
-                    className="w-32 rounded-md bg-[#11151E] border border-[#38BDF8] px-2 py-0.5 text-xs font-mono text-white focus:outline-none"
-                  />
-                  <button
-                    type="submit"
-                    className="text-[#10B981] hover:text-emerald-300"
-                  >
-                    <Check className="h-3.5 w-3.5" />
-                  </button>
-                </form>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setEditingNick(true)}
-                  className="group inline-flex items-center gap-1.5 text-xs font-mono font-medium text-slate-200 hover:text-white"
-                >
-                  <span>{config.offline_username}</span>
-                  <Pencil className="h-3 w-3 text-slate-500 group-hover:text-[#38BDF8]" />
-                </button>
-              )}
-
-              <span className="text-slate-700">·</span>
-
-              <button
-                type="button"
-                onClick={onOpenSkinTab}
-                className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-[#38BDF8] transition-colors"
-              >
-                <Shirt className="h-3.5 w-3.5" />
-                Cambiar skin
-              </button>
-            </div>
           </div>
         </div>
 
-        {/* 2px Cyan Progress Line on Bottom Edge of Stage */}
+        {/* 2px Cyan Progress Line on Bottom Edge */}
         {isWorking && (
           <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#1E2534]">
             <div
@@ -318,10 +271,9 @@ export function ProfileDashboard({
         )}
       </section>
 
-      {/* Compact Player Content Bottom Strip: Recent Worlds + Active Mod Chips */}
+      {/* Compact Player Content Bottom Strip */}
       <footer className="shrink-0 bg-[#11151E] border-t border-[#1E2534] px-8 py-4">
         <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Recent Worlds */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-slate-400">
@@ -364,7 +316,6 @@ export function ProfileDashboard({
             )}
           </div>
 
-          {/* Active Mods (Max 5 Clean Chips) */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-slate-400">
@@ -389,7 +340,7 @@ export function ProfileDashboard({
                   onClick={onOpenMods}
                   className="text-[#38BDF8] hover:underline"
                 >
-                  Instalar recomendados
+                  Explorar Modrinth
                 </button>
               </p>
             ) : (
@@ -500,7 +451,7 @@ export function ProfileDashboard({
                 type="button"
                 disabled={installingJava}
                 onClick={() => void onConfirmInstallJava(missingJavaMajor)}
-                className="rounded-lg bg-[#10B981] hover:bg-[#059669] px-4 py-1.5 text-xs font-semibold text-slate-950 disabled:opacity-50"
+                className="btn-accent rounded-lg px-4 py-1.5 text-xs font-semibold text-slate-950 disabled:opacity-50"
               >
                 {installingJava
                   ? javaInstallProgress?.phase ?? "Instalando JRE..."

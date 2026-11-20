@@ -10,9 +10,10 @@ use tauri::{State, Window};
 use tokio::sync::Mutex;
 
 use crate::core::content::{
-    import_content_bytes, import_content_file, inject_modrinth_preset,
-    install_single_modrinth_item, list_curated_recommendations, list_instance_content,
-    search_modrinth_catalog, toggle_content_item, ContentItem, ContentKind, CuratedRecommendation,
+    get_dynamic_recommendations as fetch_dynamic_recommendations, import_content_bytes,
+    import_content_file, inject_modrinth_preset, install_single_modrinth_item,
+    list_curated_recommendations, list_instance_content, search_modrinth_catalog,
+    toggle_content_item, ContentItem, ContentKind, CuratedRecommendation, ModrinthSearchResult,
     PerformancePreset,
 };
 use crate::core::downloader::{verify_and_download_all, DownloadProgress};
@@ -21,7 +22,10 @@ use crate::core::instance::{
     delete_profile, save_config_atomic, upsert_profile, validate_profile_id, LauncherConfig,
     ModLoaderKind, Profile,
 };
-use crate::core::java::{check_java_runtime, install_java_runtime, JavaRuntimeStatus};
+use crate::core::java::{
+    check_java_runtime, install_java_runtime, list_installed_javas as scan_installed_javas,
+    InstalledJavaRuntime, JavaRuntimeStatus,
+};
 use crate::core::jvm_optimizer::{generate_jvm_flags, GcPreset, JvmTuningInput, JvmTuningOutput};
 use crate::core::loaders::{merge_overlay_into_plan, resolve_fabric_overlay};
 use crate::core::manifest::{
@@ -29,7 +33,10 @@ use crate::core::manifest::{
     fetch_or_load_version_manifest,
 };
 use crate::core::paths::LauncherPaths;
-use crate::core::runner::{spawn_minecraft, terminate_process, LaunchRequest, ProcessPriority};
+use crate::core::runner::{
+    build_full_command_preview, spawn_minecraft, terminate_process, LaunchRequest, ProcessPriority,
+};
+use crate::core::skin_pack::sync_instance_skin_pack;
 use crate::error::{AppError, AppResult};
 
 pub struct AppState {
@@ -56,6 +63,32 @@ pub struct WorldSummary {
 pub struct InstanceSummary {
     pub recent_worlds: Vec<WorldSummary>,
     pub latest_screenshot_data_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StorageBreakdown {
+    pub assets_bytes: u64,
+    pub libraries_bytes: u64,
+    pub runtimes_bytes: u64,
+    pub instances_bytes: u64,
+    pub total_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LogCleanupResult {
+    pub files_removed: usize,
+    pub bytes_freed: u64,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct GlobalSettingsPayload {
+    pub offline_username: String,
+    pub process_priority: ProcessPriority,
+    pub close_on_launch: bool,
+    pub apply_skin_ingame: bool,
+    pub accent_color: String,
+    pub launch_behavior: String,
+    pub auto_open_console_on_crash: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -122,11 +155,9 @@ pub async fn get_bootstrap_state(state: State<'_, AppState>) -> AppResult<Bootst
 #[tauri::command]
 pub async fn save_global_settings(
     state: State<'_, AppState>,
-    offline_username: String,
-    process_priority: ProcessPriority,
-    close_on_launch: bool,
+    settings: GlobalSettingsPayload,
 ) -> AppResult<LauncherConfig> {
-    let trimmed = offline_username.trim();
+    let trimmed = settings.offline_username.trim();
     if trimmed.is_empty() {
         return Err(AppError::ConfigError(
             "Offline username cannot be empty".to_string(),
@@ -135,8 +166,15 @@ pub async fn save_global_settings(
 
     let mut guard = state.config.lock().await;
     guard.offline_username = trimmed.to_string();
-    guard.process_priority = process_priority;
-    guard.close_on_launch = close_on_launch;
+    guard.process_priority = settings.process_priority;
+    guard.launch_behavior = match settings.launch_behavior.as_str() {
+        "hide_and_restore" | "close" => settings.launch_behavior,
+        _ => "keep_open".to_string(),
+    };
+    guard.close_on_launch = guard.launch_behavior != "keep_open" || settings.close_on_launch;
+    guard.apply_skin_ingame = settings.apply_skin_ingame;
+    guard.accent_color = settings.accent_color;
+    guard.auto_open_console_on_crash = settings.auto_open_console_on_crash;
     save_config_atomic(&state.paths, &guard).await?;
     Ok(guard.clone())
 }
@@ -245,7 +283,7 @@ pub async fn search_modrinth(
     mc_version: String,
     loader: String,
     kind: ContentKind,
-) -> AppResult<Vec<CuratedRecommendation>> {
+) -> AppResult<Vec<ModrinthSearchResult>> {
     search_modrinth_catalog(
         &state.client,
         &state.paths,
@@ -256,6 +294,213 @@ pub async fn search_modrinth(
         kind,
     )
     .await
+}
+
+#[tauri::command]
+pub async fn get_dynamic_recommendations(
+    state: State<'_, AppState>,
+    profile_id: String,
+    category: String,
+    kind: ContentKind,
+) -> AppResult<Vec<ModrinthSearchResult>> {
+    let profile = {
+        let guard = state.config.lock().await;
+        guard
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .cloned()
+            .ok_or_else(|| AppError::ConfigError(format!("Profile '{profile_id}' not found")))?
+    };
+
+    let loader_str = match profile.loader {
+        ModLoaderKind::Vanilla => "vanilla",
+        ModLoaderKind::Fabric => "fabric",
+        ModLoaderKind::Forge => "forge",
+        ModLoaderKind::NeoForge => "neoforge",
+    };
+
+    fetch_dynamic_recommendations(
+        &state.client,
+        &state.paths,
+        &profile.id,
+        &profile.mc_version,
+        loader_str,
+        &category,
+        kind,
+    )
+    .await
+}
+
+fn dir_size_recursive_blocking(path: &std::path::Path) -> u64 {
+    let mut total = 0_u64;
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if meta.is_file() {
+            total = total.saturating_add(meta.len());
+        } else if meta.is_dir() {
+            total = total.saturating_add(dir_size_recursive_blocking(&entry.path()));
+        }
+    }
+    total
+}
+
+#[tauri::command]
+pub async fn list_installed_javas(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<InstalledJavaRuntime>> {
+    scan_installed_javas(&state.paths).await
+}
+
+#[tauri::command]
+pub async fn get_storage_breakdown(state: State<'_, AppState>) -> AppResult<StorageBreakdown> {
+    let assets_dir = state.paths.shared_assets_dir();
+    let libraries_dir = state.paths.shared_libraries_dir();
+    let runtimes_dir = state.paths.shared_runtimes_dir();
+    let instances_dir = state.paths.instances_dir();
+
+    let breakdown = tokio::task::spawn_blocking(move || {
+        let assets_bytes = dir_size_recursive_blocking(&assets_dir);
+        let libraries_bytes = dir_size_recursive_blocking(&libraries_dir);
+        let runtimes_bytes = dir_size_recursive_blocking(&runtimes_dir);
+        let instances_bytes = dir_size_recursive_blocking(&instances_dir);
+        let total_bytes = assets_bytes
+            .saturating_add(libraries_bytes)
+            .saturating_add(runtimes_bytes)
+            .saturating_add(instances_bytes);
+        StorageBreakdown {
+            assets_bytes,
+            libraries_bytes,
+            runtimes_bytes,
+            instances_bytes,
+            total_bytes,
+        }
+    })
+    .await
+    .map_err(|err| AppError::ConfigError(format!("Storage scan task failed: {err}")))?;
+
+    Ok(breakdown)
+}
+
+#[tauri::command]
+pub async fn revalidate_cache_index(state: State<'_, AppState>) -> AppResult<()> {
+    let idx_path = state.paths.integrity_index_path();
+    if tokio::fs::try_exists(&idx_path).await? {
+        tokio::fs::remove_file(&idx_path).await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn clean_old_logs(state: State<'_, AppState>) -> AppResult<LogCleanupResult> {
+    let instances_dir = state.paths.instances_dir();
+    if !tokio::fs::try_exists(&instances_dir).await? {
+        return Ok(LogCleanupResult {
+            files_removed: 0,
+            bytes_freed: 0,
+        });
+    }
+
+    let mut files_removed = 0_usize;
+    let mut bytes_freed = 0_u64;
+    let mut inst_entries = tokio::fs::read_dir(&instances_dir).await?;
+    while let Some(inst) = inst_entries.next_entry().await? {
+        let logs_dir = inst.path().join("logs");
+        if !tokio::fs::try_exists(&logs_dir).await? {
+            continue;
+        }
+        let mut log_entries = tokio::fs::read_dir(&logs_dir).await?;
+        while let Some(log_file) = log_entries.next_entry().await? {
+            let name = log_file.file_name().to_string_lossy().into_owned();
+            if name.ends_with(".log.gz") {
+                let size = log_file.metadata().await.map_or(0, |m| m.len());
+                if tokio::fs::remove_file(log_file.path()).await.is_ok() {
+                    files_removed += 1;
+                    bytes_freed = bytes_freed.saturating_add(size);
+                }
+            }
+        }
+    }
+
+    Ok(LogCleanupResult {
+        files_removed,
+        bytes_freed,
+    })
+}
+
+#[tauri::command]
+pub async fn get_launch_command_preview(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> AppResult<String> {
+    let (profile, config_snapshot) = {
+        let guard = state.config.lock().await;
+        let profile = guard
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .cloned()
+            .ok_or_else(|| AppError::ConfigError(format!("Profile '{profile_id}' not found")))?;
+        (profile, guard.clone())
+    };
+
+    let required_major = infer_java_major_for_mc_version(&profile.mc_version);
+    let javaw_path = profile
+        .custom_java_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            state
+                .paths
+                .runtime_dir(required_major)
+                .join("bin")
+                .join("javaw.exe")
+        });
+
+    let custom_jvm_args: Vec<String> = profile
+        .custom_jvm_args
+        .as_deref()
+        .map(|s| s.split_whitespace().map(str::to_string).collect())
+        .unwrap_or_default();
+
+    let main_class = match profile.loader {
+        ModLoaderKind::Fabric => "net.fabricmc.loader.impl.launch.knot.KnotClient".to_string(),
+        _ => "net.minecraft.client.main.Main".to_string(),
+    };
+
+    let req = LaunchRequest {
+        profile_id: profile.id,
+        mc_version: profile.mc_version,
+        username: config_snapshot.offline_username,
+        ram_mb: profile.ram_mb,
+        gc_preset: profile.gc_preset,
+        process_priority: config_snapshot.process_priority,
+        server_address: profile.server_address,
+        javaw_path,
+        main_class,
+        java_major: required_major,
+        classpath_entries: vec![PathBuf::from("<shared/libraries/*>;<client.jar>")],
+        native_archives: Vec::new(),
+        asset_index_id: "<asset_index>".to_string(),
+        extra_jvm_args: custom_jvm_args,
+        extra_game_args: Vec::new(),
+        window_width: profile.window_width,
+        window_height: profile.window_height,
+        fullscreen: profile.fullscreen,
+    };
+
+    Ok(build_full_command_preview(
+        &req,
+        &state.paths,
+        state.hardware.logical_cores,
+    ))
 }
 
 fn encode_png_data_url(bytes: &[u8]) -> String {
@@ -700,14 +945,32 @@ pub async fn launch_profile(
         .as_ref()
         .map_or(21, |j| j.major_version);
 
-    let javaw_path = match check_java_runtime(required_major, &state.paths).await? {
-        JavaRuntimeStatus::Installed { javaw_path, .. } => PathBuf::from(javaw_path),
-        JavaRuntimeStatus::Missing { major, .. } => {
-            return Err(AppError::JavaNotFound {
-                required_major: major,
-            });
+    let javaw_path = if let Some(custom) = profile
+        .custom_java_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        PathBuf::from(custom)
+    } else {
+        match check_java_runtime(required_major, &state.paths).await? {
+            JavaRuntimeStatus::Installed { javaw_path, .. } => PathBuf::from(javaw_path),
+            JavaRuntimeStatus::Missing { major, .. } => {
+                return Err(AppError::JavaNotFound {
+                    required_major: major,
+                });
+            }
         }
     };
+
+    // Sync offline custom skin micro-resource pack before launching
+    let _ = sync_instance_skin_pack(
+        &state.paths,
+        &profile.id,
+        config_snapshot.apply_skin_ingame,
+        config_snapshot.skin_path.as_deref(),
+    )
+    .await;
 
     let asset_index = fetch_or_load_asset_index(&state.client, &manifest, &state.paths).await?;
     let asset_index_id = manifest
@@ -777,11 +1040,22 @@ pub async fn launch_profile(
         fast_path_hits: summary.fast_path_hits,
     });
 
+    if let Some(custom_args) = profile.custom_jvm_args.as_deref() {
+        extra_jvm_args.extend(custom_args.split_whitespace().map(str::to_string));
+    }
+
     let log_channel = on_log.clone();
     let running_map = Arc::clone(&state.running_processes);
     let profile_id_for_exit = profile.id.clone();
     let window_for_exit = window.clone();
-    let should_restore_window = config_snapshot.close_on_launch;
+    let effective_behavior = if config_snapshot.launch_behavior == "keep_open"
+        && config_snapshot.close_on_launch
+    {
+        "hide_and_restore".to_string()
+    } else {
+        config_snapshot.launch_behavior.clone()
+    };
+    let should_restore_window = effective_behavior == "hide_and_restore";
     let exit_channel = on_exit.clone();
 
     let pid = spawn_minecraft(
@@ -801,6 +1075,9 @@ pub async fn launch_profile(
             asset_index_id,
             extra_jvm_args,
             extra_game_args,
+            window_width: profile.window_width,
+            window_height: profile.window_height,
+            fullscreen: profile.fullscreen,
         },
         &state.paths,
         state.hardware.logical_cores,
@@ -837,8 +1114,10 @@ pub async fn launch_profile(
         guard.insert(profile.id, pid);
     }
 
-    if config_snapshot.close_on_launch {
+    if effective_behavior == "hide_and_restore" {
         let _ = window.hide();
+    } else if effective_behavior == "close" {
+        let _ = window.close();
     }
 
     Ok(LaunchResult {

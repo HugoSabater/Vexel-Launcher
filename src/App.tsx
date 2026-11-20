@@ -16,7 +16,7 @@ import { ContentManagerPanel } from "./components/ContentManagerPanel";
 import { ProfileDashboard } from "./components/ProfileDashboard";
 import {
   SettingsPerformancePanel,
-  type SettingsTab,
+  type SettingsSection,
 } from "./components/SettingsPerformancePanel";
 import {
   SidebarProfiles,
@@ -26,7 +26,8 @@ import type {
   BootstrapState,
   ContentItem,
   ContentKind,
-  CuratedRecommendation,
+  GlobalSettingsPayload,
+  InstalledJavaRuntime,
   InstanceExitEvent,
   InstanceSummary,
   IpcErrorPayload,
@@ -35,16 +36,26 @@ import type {
   LauncherConfig,
   LaunchProgressEvent,
   LaunchResult,
+  LogCleanupResult,
   LogLineEvent,
+  ModrinthSearchResult,
   PerformancePreset,
-  ProcessPriority,
   Profile,
+  StorageBreakdown,
 } from "./types/launcher";
 
 interface CrashToastState {
   profileName: string;
   exitCode: number;
 }
+
+const ACCENT_PALETTE: Record<string, { main: string; hover: string }> = {
+  emerald: { main: "#10b981", hover: "#059669" },
+  cyan: { main: "#38bdf8", hover: "#0284c7" },
+  indigo: { main: "#6366f1", hover: "#4f46e5" },
+  amber: { main: "#f59e0b", hover: "#d97706" },
+  crimson: { main: "#f43f5e", hover: "#e11d48" },
+};
 
 function extractIpcError(err: unknown): IpcErrorPayload {
   if (typeof err === "object" && err !== null) {
@@ -92,7 +103,8 @@ export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapState | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string>("");
   const [activeView, setActiveView] = useState<MainView>("home");
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("performance");
+  const [settingsSection, setSettingsSection] =
+    useState<SettingsSection>("instance");
   const [skinDataUrl, setSkinDataUrl] = useState<string | null>(null);
   const [jvmTuning, setJvmTuning] = useState<JvmTuningOutput | null>(null);
   const [launching, setLaunching] = useState(false);
@@ -137,6 +149,17 @@ export function App() {
       // Browser fallback
     }
   };
+
+  // Apply dynamic CSS accent color variables
+  useEffect(() => {
+    const key = bootstrap?.config.accent_color ?? "emerald";
+    const theme = ACCENT_PALETTE[key] ?? ACCENT_PALETTE.emerald;
+    document.documentElement.style.setProperty("--accent-primary", theme.main);
+    document.documentElement.style.setProperty(
+      "--accent-primary-hover",
+      theme.hover,
+    );
+  }, [bootstrap?.config.accent_color]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -210,7 +233,7 @@ export function App() {
       });
       javaMajor = status.major;
     } catch {
-      // Fallback to 21
+      // Fallback 21
     }
 
     try {
@@ -301,17 +324,24 @@ export function App() {
     }
   };
 
-  const handleSaveGlobalSettings = async (
-    offlineUsername: string,
-    processPriority: ProcessPriority,
-    closeOnLaunch: boolean,
-  ) => {
+  const handleSaveGlobalSettings = async (settings: GlobalSettingsPayload) => {
     const nextConfig = await invoke<LauncherConfig>("save_global_settings", {
-      offlineUsername,
-      processPriority,
-      closeOnLaunch,
+      settings,
     });
     updateConfigState(nextConfig);
+  };
+
+  const handleUpdateUsername = async (nick: string) => {
+    if (!bootstrap) return;
+    await handleSaveGlobalSettings({
+      offline_username: nick,
+      process_priority: bootstrap.config.process_priority,
+      close_on_launch: bootstrap.config.close_on_launch,
+      apply_skin_ingame: bootstrap.config.apply_skin_ingame,
+      accent_color: bootstrap.config.accent_color,
+      launch_behavior: bootstrap.config.launch_behavior,
+      auto_open_console_on_crash: bootstrap.config.auto_open_console_on_crash,
+    });
   };
 
   const handleUploadSkinBytes = async (bytes: number[]) => {
@@ -342,6 +372,9 @@ export function App() {
 
     if (!profileToRun || runningProfiles[profileToRun.id]) return;
 
+    const autoOpenCrash =
+      bootstrap?.config.auto_open_console_on_crash ?? true;
+
     setBannerError(null);
     setCrashToast(null);
     setLaunching(true);
@@ -371,6 +404,9 @@ export function App() {
           profileName: profileToRun.name,
           exitCode: ev.exit_code,
         });
+        if (autoOpenCrash) {
+          setConsoleOpen(true);
+        }
       }
     };
 
@@ -417,6 +453,18 @@ export function App() {
         extractIpcError(err).message ?? "Error al detener proceso",
       );
     }
+  };
+
+  const handleInstallJavaMajorOnly = async (major: number) => {
+    const onProgress = new Channel<LaunchProgressEvent>();
+    onProgress.onmessage = (ev) => {
+      setProgress(ev);
+    };
+    await invoke<JavaRuntimeStatus>("install_adoptium_java", {
+      major,
+      onProgress,
+    });
+    setProgress(null);
   };
 
   const handleConfirmInstallJava = async (major: number) => {
@@ -478,10 +526,12 @@ export function App() {
     [],
   );
 
-  const handleGetRecommendations = useCallback(
-    async (profileId: string) =>
-      invoke<CuratedRecommendation[]>("get_curated_recommendations", {
+  const handleGetDynamicRecommendations = useCallback(
+    async (profileId: string, category: string, kind: ContentKind) =>
+      invoke<ModrinthSearchResult[]>("get_dynamic_recommendations", {
         profileId,
+        category,
+        kind,
       }),
     [],
   );
@@ -494,7 +544,7 @@ export function App() {
       loader: string,
       kind: ContentKind,
     ) =>
-      invoke<CuratedRecommendation[]>("search_modrinth", {
+      invoke<ModrinthSearchResult[]>("search_modrinth", {
         profileId,
         query,
         mcVersion,
@@ -582,6 +632,32 @@ export function App() {
     [],
   );
 
+  const handleListInstalledJavas = useCallback(
+    async () => invoke<InstalledJavaRuntime[]>("list_installed_javas"),
+    [],
+  );
+
+  const handleGetStorageBreakdown = useCallback(
+    async () => invoke<StorageBreakdown>("get_storage_breakdown"),
+    [],
+  );
+
+  const handleRevalidateCache = useCallback(
+    async () => invoke<void>("revalidate_cache_index"),
+    [],
+  );
+
+  const handleCleanOldLogs = useCallback(
+    async () => invoke<LogCleanupResult>("clean_old_logs"),
+    [],
+  );
+
+  const handleGetLaunchCommandPreview = useCallback(
+    async (profileId: string) =>
+      invoke<string>("get_launch_command_preview", { profileId }),
+    [],
+  );
+
   const filteredProfiles = useMemo(() => {
     if (!bootstrap) return [];
     const q = quickQuery.trim().toLowerCase();
@@ -602,7 +678,10 @@ export function App() {
         className="h-9 shrink-0 bg-[#080A0F] border-b border-[#1E2534] px-3 flex items-center justify-between gap-4"
       >
         <div data-tauri-drag-region className="flex items-center gap-2 pl-0.5">
-          <span className="h-2.5 w-2.5 rounded-sm bg-[#10B981]" />
+          <span
+            className="h-2.5 w-2.5 rounded-sm"
+            style={{ backgroundColor: "var(--accent-primary)" }}
+          />
           <span
             data-tauri-drag-region
             className="text-xs font-semibold tracking-tight text-slate-200"
@@ -679,17 +758,11 @@ export function App() {
             hardware={bootstrap.hardware}
             onSelectProfile={setSelectedProfileId}
             onSelectView={(v) => {
-              if (v === "performance") setSettingsTab("performance");
+              if (v === "performance") setSettingsSection("instance");
               setActiveView(v);
             }}
             onToggleConsole={() => setConsoleOpen((v) => !v)}
-            onUpdateUsername={(nick) =>
-              handleSaveGlobalSettings(
-                nick,
-                bootstrap.config.process_priority,
-                bootstrap.config.close_on_launch,
-              )
-            }
+            onUpdateUsername={handleUpdateUsername}
             onPlayProfile={(id) => handlePlayProfile(id)}
             onStopProfile={(id) => handleStopProfile(id)}
             onOpenFolder={handleOpenFolder}
@@ -774,13 +847,8 @@ export function App() {
                   javaInstallProgress={javaInstallProgress}
                   onListContent={handleListContent}
                   onGetInstanceSummary={handleGetInstanceSummary}
-                  onUpdateUsername={(nick) =>
-                    handleSaveGlobalSettings(
-                      nick,
-                      bootstrap.config.process_priority,
-                      bootstrap.config.close_on_launch,
-                    )
-                  }
+                  onUpdateUsername={handleUpdateUsername}
+                  onUploadSkinBytes={handleUploadSkinBytes}
                   onPlay={() => handlePlayProfile()}
                   onStop={() => handleStopProfile()}
                   onOpenFolder={() => handleOpenFolder(selectedProfile.id)}
@@ -789,11 +857,7 @@ export function App() {
                   }
                   onOpenMods={() => setActiveView("content")}
                   onOpenSettings={() => {
-                    setSettingsTab("performance");
-                    setActiveView("performance");
-                  }}
-                  onOpenSkinTab={() => {
-                    setSettingsTab("skin");
+                    setSettingsSection("instance");
                     setActiveView("performance");
                   }}
                   onConfirmInstallJava={handleConfirmInstallJava}
@@ -808,7 +872,7 @@ export function App() {
                 <ContentManagerPanel
                   profile={selectedProfile}
                   onListContent={handleListContent}
-                  onGetRecommendations={handleGetRecommendations}
+                  onGetDynamicRecommendations={handleGetDynamicRecommendations}
                   onSearchModrinth={handleSearchModrinth}
                   onToggleContent={handleToggleContent}
                   onImportContent={handleImportContent}
@@ -826,12 +890,18 @@ export function App() {
                   jvmTuning={jvmTuning}
                   skinDataUrl={skinDataUrl}
                   dataRoot={bootstrap.data_root}
-                  initialTab={settingsTab}
+                  initialSection={settingsSection}
                   onUpdateProfile={handleSaveProfile}
                   onSaveGlobalSettings={handleSaveGlobalSettings}
                   onUploadSkinBytes={handleUploadSkinBytes}
                   onSetSkinModel={handleSetSkinModel}
                   onOpenDataRoot={handleOpenDataRoot}
+                  onListInstalledJavas={handleListInstalledJavas}
+                  onInstallJavaMajor={handleInstallJavaMajorOnly}
+                  onGetStorageBreakdown={handleGetStorageBreakdown}
+                  onRevalidateCache={handleRevalidateCache}
+                  onCleanOldLogs={handleCleanOldLogs}
+                  onGetLaunchCommandPreview={handleGetLaunchCommandPreview}
                 />
               )}
             </div>

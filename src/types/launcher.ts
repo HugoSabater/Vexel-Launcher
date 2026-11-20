@@ -3,7 +3,8 @@ export type ProcessPriority = "normal" | "above_normal" | "high";
 export type ModLoaderKind = "vanilla" | "fabric" | "forge" | "neo_forge";
 export type ContentKind = "mod" | "resource_pack";
 export type PerformancePreset = "fps_pure" | "distant_horizons";
-export type SkinModel = "classic" | "slim";
+export type AccentColor = "emerald" | "cyan" | "indigo" | "amber" | "crimson";
+export type LaunchBehavior = "keep_open" | "hide_and_restore" | "close";
 
 export interface HardwareInfo {
   total_ram_mb: number;
@@ -24,6 +25,11 @@ export interface Profile {
   gc_preset: GcPreset;
   server_address: string | null;
   is_default: boolean;
+  window_width: number | null;
+  window_height: number | null;
+  fullscreen: boolean;
+  custom_jvm_args: string | null;
+  custom_java_path: string | null;
 }
 
 export interface LauncherConfig {
@@ -32,7 +38,21 @@ export interface LauncherConfig {
   close_on_launch: boolean;
   skin_path: string | null;
   skin_model: string;
+  apply_skin_ingame: boolean;
+  accent_color: string;
+  launch_behavior: string;
+  auto_open_console_on_crash: boolean;
   profiles: Profile[];
+}
+
+export interface GlobalSettingsPayload {
+  offline_username: string;
+  process_priority: ProcessPriority;
+  close_on_launch: boolean;
+  apply_skin_ingame: boolean;
+  accent_color: string;
+  launch_behavior: string;
+  auto_open_console_on_crash: boolean;
 }
 
 export interface BootstrapState {
@@ -49,15 +69,36 @@ export interface ContentItem {
   kind: ContentKind;
 }
 
-export interface CuratedRecommendation {
+export interface ModrinthSearchResult {
   slug: string;
-  name: string;
+  title: string;
   description: string;
-  category: string;
-  badge: string;
-  kind: ContentKind;
-  installed: boolean;
   icon_url: string | null;
+  downloads: number;
+  categories: string[];
+  compatible: boolean;
+  compatibility_note: string | null;
+  installed: boolean;
+  kind: ContentKind;
+}
+
+export interface InstalledJavaRuntime {
+  major: number;
+  path: string;
+  size_bytes: number;
+}
+
+export interface StorageBreakdown {
+  assets_bytes: number;
+  libraries_bytes: number;
+  runtimes_bytes: number;
+  instances_bytes: number;
+  total_bytes: number;
+}
+
+export interface LogCleanupResult {
+  files_removed: number;
+  bytes_freed: number;
 }
 
 export interface WorldSummary {

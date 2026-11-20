@@ -26,21 +26,52 @@ pub struct Profile {
     pub gc_preset: GcPreset,
     pub server_address: Option<String>,
     pub is_default: bool,
+    #[serde(default)]
+    pub window_width: Option<u32>,
+    #[serde(default)]
+    pub window_height: Option<u32>,
+    #[serde(default)]
+    pub fullscreen: bool,
+    #[serde(default)]
+    pub custom_jvm_args: Option<String>,
+    #[serde(default)]
+    pub custom_java_path: Option<String>,
 }
 
 fn default_skin_model() -> String {
     "classic".to_string()
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_accent_color() -> String {
+    "emerald".to_string()
+}
+
+fn default_launch_behavior() -> String {
+    "keep_open".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LauncherConfig {
     pub offline_username: String,
     pub process_priority: ProcessPriority,
+    #[serde(default)]
     pub close_on_launch: bool,
     #[serde(default)]
     pub skin_path: Option<String>,
     #[serde(default = "default_skin_model")]
     pub skin_model: String,
+    #[serde(default = "default_true")]
+    pub apply_skin_ingame: bool,
+    #[serde(default = "default_accent_color")]
+    pub accent_color: String,
+    #[serde(default = "default_launch_behavior")]
+    pub launch_behavior: String,
+    #[serde(default = "default_true")]
+    pub auto_open_console_on_crash: bool,
     pub profiles: Vec<Profile>,
 }
 
@@ -53,6 +84,10 @@ impl LauncherConfig {
             close_on_launch: false,
             skin_path: None,
             skin_model: default_skin_model(),
+            apply_skin_ingame: true,
+            accent_color: default_accent_color(),
+            launch_behavior: default_launch_behavior(),
+            auto_open_console_on_crash: true,
             profiles: vec![
                 Profile {
                     id: "vanilla-1-21-4".to_string(),
@@ -64,6 +99,11 @@ impl LauncherConfig {
                     gc_preset: GcPreset::GenerationalZgc,
                     server_address: None,
                     is_default: true,
+                    window_width: None,
+                    window_height: None,
+                    fullscreen: false,
+                    custom_jvm_args: None,
+                    custom_java_path: None,
                 },
                 Profile {
                     id: "fabric-1-21-1-perf".to_string(),
@@ -75,6 +115,11 @@ impl LauncherConfig {
                     gc_preset: GcPreset::GenerationalZgc,
                     server_address: None,
                     is_default: false,
+                    window_width: None,
+                    window_height: None,
+                    fullscreen: false,
+                    custom_jvm_args: None,
+                    custom_java_path: None,
                 },
             ],
         }

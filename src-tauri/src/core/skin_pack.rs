@@ -1,0 +1,182 @@
+use std::fs::File;
+use std::io::Write;
+use std::path::Path;
+
+use zip::write::SimpleFileOptions;
+use zip::CompressionMethod;
+
+use crate::core::instance::validate_profile_id;
+use crate::core::paths::LauncherPaths;
+use crate::error::{AppError, AppResult};
+
+const SKIN_PACK_FILENAME: &str = "_launcher_skin.zip";
+const SKIN_PACK_ENTRY: &str = "\"file/_launcher_skin.zip\"";
+
+const DEFAULT_SKIN_NAMES: &[&str] = &[
+    "alex", "ari", "efe", "kai", "makena", "noor", "steve", "sunny", "zuri",
+];
+
+fn build_skin_zip_blocking(skin_bytes: &[u8], zip_path: &Path) -> AppResult<()> {
+    if let Some(parent) = zip_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let file = File::create(zip_path)?;
+    let mut writer = zip::ZipWriter::new(file);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+    let mcmeta = r#"{
+  "pack": {
+    "pack_format": 34,
+    "supported_formats": [15, 64],
+    "description": "MC Launcher Rust Custom Offline Skin"
+  }
+}"#;
+    writer.start_file("pack.mcmeta", options)?;
+    writer.write_all(mcmeta.as_bytes())?;
+
+    // Modern Minecraft (1.19.3+) default player skins (wide + slim)
+    for variant in ["wide", "slim"] {
+        for name in DEFAULT_SKIN_NAMES {
+            let entry_path = format!("assets/minecraft/textures/entity/player/{variant}/{name}.png");
+            writer.start_file(entry_path, options)?;
+            writer.write_all(skin_bytes)?;
+        }
+    }
+
+    // Legacy Minecraft (<= 1.19.2) steve.png & alex.png
+    for legacy in ["steve", "alex"] {
+        let entry_path = format!("assets/minecraft/textures/entity/{legacy}.png");
+        writer.start_file(entry_path, options)?;
+        writer.write_all(skin_bytes)?;
+    }
+
+    writer.finish()?;
+    Ok(())
+}
+
+#[must_use]
+pub fn update_options_txt_resource_packs(content: &str, include_skin_pack: bool) -> String {
+    let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+    let mut found = false;
+
+    for line in &mut lines {
+        if let Some(rest) = line.strip_prefix("resourcePacks:") {
+            found = true;
+            let trimmed = rest.trim();
+            let inner = trimmed
+                .strip_prefix('[')
+                .and_then(|s| s.strip_suffix(']'))
+                .unwrap_or("");
+
+            let mut entries: Vec<String> = inner
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect();
+
+            entries.retain(|e| e != SKIN_PACK_ENTRY);
+            if include_skin_pack {
+                if !entries.iter().any(|e| e == "\"vanilla\"") {
+                    entries.insert(0, "\"vanilla\"".to_string());
+                }
+                entries.push(SKIN_PACK_ENTRY.to_string());
+            }
+
+            *line = format!("resourcePacks:[{}]", entries.join(","));
+            break;
+        }
+    }
+
+    if !found && include_skin_pack {
+        lines.push(format!("resourcePacks:[\"vanilla\",{SKIN_PACK_ENTRY}]"));
+    }
+
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", lines.join("\n"))
+    }
+}
+
+pub async fn sync_instance_skin_pack(
+    paths: &LauncherPaths,
+    profile_id: &str,
+    apply_skin_ingame: bool,
+    skin_path_override: Option<&str>,
+) -> AppResult<()> {
+    validate_profile_id(profile_id)?;
+    paths.ensure_instance_dirs(profile_id).await?;
+
+    let options_path = paths.instance_dir(profile_id).join("options.txt");
+    let existing_options = if tokio::fs::try_exists(&options_path).await? {
+        tokio::fs::read_to_string(&options_path).await?
+    } else {
+        String::new()
+    };
+
+    if !apply_skin_ingame {
+        if !existing_options.is_empty() {
+            let updated = update_options_txt_resource_packs(&existing_options, false);
+            if updated != existing_options {
+                tokio::fs::write(&options_path, updated.as_bytes()).await?;
+            }
+        }
+        return Ok(());
+    }
+
+    let skin_candidate = skin_path_override
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| paths.custom_skin_path());
+
+    if !tokio::fs::try_exists(&skin_candidate).await? {
+        return Ok(());
+    }
+
+    let skin_bytes = tokio::fs::read(&skin_candidate).await?;
+    let zip_path = paths
+        .instance_resourcepacks_dir(profile_id)
+        .join(SKIN_PACK_FILENAME);
+
+    let zip_clone = zip_path.clone();
+    tokio::task::spawn_blocking(move || build_skin_zip_blocking(&skin_bytes, &zip_clone))
+        .await
+        .map_err(|err| AppError::ContentError(format!("Skin pack build task failed: {err}")))??;
+
+    let updated_options = update_options_txt_resource_packs(&existing_options, true);
+    tokio::fs::write(&options_path, updated_options.as_bytes()).await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::update_options_txt_resource_packs;
+
+    #[test]
+    fn test_update_options_txt_resource_packs_add_and_remove() {
+        let initial = "fov:0.0\nresourcePacks:[\"vanilla\",\"file/faithful.zip\"]\nlang:es_es\n";
+        let added = update_options_txt_resource_packs(initial, true);
+        assert!(added.contains("fov:0.0"));
+        assert!(added.contains("lang:es_es"));
+        assert!(added.contains(
+            "resourcePacks:[\"vanilla\",\"file/faithful.zip\",\"file/_launcher_skin.zip\"]"
+        ));
+
+        // Idempotent second pass
+        let added_again = update_options_txt_resource_packs(&added, true);
+        assert_eq!(added, added_again);
+
+        // Clean removal
+        let removed = update_options_txt_resource_packs(&added, false);
+        assert!(removed.contains("resourcePacks:[\"vanilla\",\"file/faithful.zip\"]"));
+        assert!(!removed.contains("_launcher_skin.zip"));
+
+        // Fresh options.txt creation
+        let fresh = update_options_txt_resource_packs("", true);
+        assert_eq!(
+            fresh,
+            "resourcePacks:[\"vanilla\",\"file/_launcher_skin.zip\"]\n"
+        );
+    }
+}

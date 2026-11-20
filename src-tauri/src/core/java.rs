@@ -21,6 +21,70 @@ pub enum JavaRuntimeStatus {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstalledJavaRuntime {
+    pub major: u32,
+    pub path: String,
+    pub size_bytes: u64,
+}
+
+fn dir_size_blocking(path: &Path) -> u64 {
+    let mut total = 0_u64;
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if meta.is_file() {
+            total = total.saturating_add(meta.len());
+        } else if meta.is_dir() {
+            total = total.saturating_add(dir_size_blocking(&entry.path()));
+        }
+    }
+    total
+}
+
+pub async fn list_installed_javas(paths: &LauncherPaths) -> AppResult<Vec<InstalledJavaRuntime>> {
+    let runtimes_dir = paths.shared_runtimes_dir();
+    if !tokio::fs::try_exists(&runtimes_dir).await? {
+        return Ok(Vec::new());
+    }
+
+    let mut entries = tokio::fs::read_dir(&runtimes_dir).await?;
+    let mut found = Vec::new();
+
+    while let Some(entry) = entries.next_entry().await? {
+        let meta = entry.metadata().await?;
+        if !meta.is_dir() {
+            continue;
+        }
+        let dir_name = entry.file_name().to_string_lossy().into_owned();
+        let Some(major_str) = dir_name.strip_prefix("java-") else {
+            continue;
+        };
+        let Ok(major) = major_str.parse::<u32>() else {
+            continue;
+        };
+        let dir_path = entry.path();
+        if let Some(javaw) = find_javaw_in_dir(&dir_path).await? {
+            let size_dir = dir_path.clone();
+            let size_bytes = tokio::task::spawn_blocking(move || dir_size_blocking(&size_dir))
+                .await
+                .unwrap_or(0);
+            found.push(InstalledJavaRuntime {
+                major,
+                path: javaw.to_string_lossy().into_owned(),
+                size_bytes,
+            });
+        }
+    }
+
+    found.sort_by_key(|r| r.major);
+    Ok(found)
+}
+
 #[must_use]
 pub fn adoptium_download_url(major: u32) -> String {
     format!(

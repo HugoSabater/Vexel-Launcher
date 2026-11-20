@@ -38,6 +38,9 @@ pub struct LaunchRequest {
     pub asset_index_id: String,
     pub extra_jvm_args: Vec<String>,
     pub extra_game_args: Vec<String>,
+    pub window_width: Option<u32>,
+    pub window_height: Option<u32>,
+    pub fullscreen: bool,
 }
 
 #[must_use]
@@ -197,6 +200,8 @@ const SINGLE_VALUE_GAME_OPTIONS: &[&str] = &[
     "--quickPlayMultiplayer",
     "--server",
     "--port",
+    "--width",
+    "--height",
 ];
 
 fn is_single_value_game_option(flag: &str) -> bool {
@@ -264,6 +269,18 @@ pub fn build_game_args(req: &LaunchRequest, paths: &LauncherPaths) -> Vec<String
         .collect();
     combined_extra.extend(quickplay_args);
 
+    if let Some(w) = req.window_width {
+        combined_extra.push("--width".to_string());
+        combined_extra.push(w.to_string());
+    }
+    if let Some(h) = req.window_height {
+        combined_extra.push("--height".to_string());
+        combined_extra.push(h.to_string());
+    }
+    if req.fullscreen && !combined_extra.iter().any(|a| a == "--fullscreen") {
+        combined_extra.push("--fullscreen".to_string());
+    }
+
     let mut idx = 0;
     while idx < combined_extra.len() {
         let token = &combined_extra[idx];
@@ -292,6 +309,43 @@ pub fn build_game_args(req: &LaunchRequest, paths: &LauncherPaths) -> Vec<String
     }
 
     args
+}
+
+#[must_use]
+pub fn build_full_command_preview(
+    req: &LaunchRequest,
+    paths: &LauncherPaths,
+    logical_cores: usize,
+) -> String {
+    let natives_dir = paths.instance_natives_version_dir(&req.profile_id, &req.mc_version);
+    let tuning = generate_jvm_flags(&JvmTuningInput {
+        java_major: req.java_major,
+        ram_mb: req.ram_mb,
+        logical_cores,
+        gc_preset: req.gc_preset,
+    });
+    let separator = if cfg!(windows) { ";" } else { ":" };
+    let classpath = req
+        .classpath_entries
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(separator);
+    let game_args = build_game_args(req, paths);
+
+    let mut parts = Vec::new();
+    parts.push(format!("\"{}\"", req.javaw_path.to_string_lossy()));
+    parts.extend(tuning.flags);
+    parts.extend(req.extra_jvm_args.clone());
+    parts.push(format!(
+        "\"-Djava.library.path={}\"",
+        natives_dir.to_string_lossy()
+    ));
+    parts.push("-cp".to_string());
+    parts.push(format!("\"{classpath}\""));
+    parts.push(req.main_class.clone());
+    parts.extend(game_args);
+    parts.join(" ")
 }
 
 #[cfg(windows)]
@@ -531,6 +585,9 @@ mod tests {
                 "--customLoaderFlag".to_string(),
                 "enabled".to_string(),
             ],
+            window_width: Some(1920),
+            window_height: Some(1080),
+            fullscreen: true,
         };
 
         let args = build_game_args(&req, &paths);
@@ -548,6 +605,8 @@ mod tests {
             "--clientId",
             "--xuid",
             "--quickPlayMultiplayer",
+            "--width",
+            "--height",
         ] {
             let count = args.iter().filter(|a| a.as_str() == unique_flag).count();
             assert_eq!(
@@ -563,5 +622,8 @@ mod tests {
         assert!(args.contains(&"1.21.4".to_string()));
         assert!(args.contains(&"--customLoaderFlag".to_string()));
         assert!(args.contains(&"enabled".to_string()));
+        assert!(args.contains(&"1920".to_string()));
+        assert!(args.contains(&"1080".to_string()));
+        assert!(args.contains(&"--fullscreen".to_string()));
     }
 }

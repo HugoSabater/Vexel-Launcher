@@ -8,8 +8,8 @@
   --forge-surface: #11151e;
   --forge-hover: #171d2a;
   --forge-border: #1e2534;
-  --forge-emerald: #10b981;
-  --forge-emerald-hover: #059669;
+  --accent-primary: #10b981;
+  --accent-primary-hover: #059669;
   --forge-cyan: #38bdf8;
   --forge-amber: #f59e0b;
 }
@@ -62,6 +62,14 @@ code,
 pre,
 .font-mono {
   font-family: "JetBrains Mono", "Consolas", "Cascadia Code", ui-monospace, monospace;
+}
+
+.btn-accent {
+  background-color: var(--accent-primary);
+}
+
+.btn-accent:hover:not(:disabled) {
+  background-color: var(--accent-primary-hover);
 }
 
 input[type="range"].forge-slider {
