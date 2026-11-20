@@ -2,6 +2,7 @@ export type GcPreset = "generational_zgc" | "aikar_g1_gc";
 export type ProcessPriority = "normal" | "above_normal" | "high";
 export type ModLoaderKind = "vanilla" | "fabric" | "forge" | "neo_forge";
 export type ContentKind = "mod" | "resource_pack";
+export type PerformancePreset = "fps_pure" | "distant_horizons";
 
 export interface HardwareInfo {
   total_ram_mb: number;
@@ -45,6 +46,16 @@ export interface ContentItem {
   kind: ContentKind;
 }
 
+export interface CuratedRecommendation {
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  badge: string;
+  kind: ContentKind;
+  installed: boolean;
+}
+
 export interface LaunchProgressEvent {
   phase: string;
   completed: number;
@@ -57,7 +68,7 @@ export interface LaunchProgressEvent {
 export interface LogLineEvent {
   line: string;
   is_stderr: boolean;
-  timestamp: string;
+  timestamp_ms: number;
 }
 
 export type JavaRuntimeStatus =

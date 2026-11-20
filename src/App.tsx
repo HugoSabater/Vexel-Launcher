@@ -5,10 +5,8 @@ import {
   AlertTriangle,
   Check,
   Copy,
-  Layers,
   Minus,
-  Play,
-  SlidersHorizontal,
+  Search,
   Square,
   Terminal,
   Trash2,
@@ -17,11 +15,15 @@ import {
 import { ContentManagerPanel } from "./components/ContentManagerPanel";
 import { ProfileDashboard } from "./components/ProfileDashboard";
 import { SettingsPerformancePanel } from "./components/SettingsPerformancePanel";
-import { SidebarProfiles } from "./components/SidebarProfiles";
+import {
+  SidebarProfiles,
+  type MainView,
+} from "./components/SidebarProfiles";
 import type {
   BootstrapState,
   ContentItem,
   ContentKind,
+  CuratedRecommendation,
   InstanceExitEvent,
   IpcErrorPayload,
   JavaRuntimeStatus,
@@ -30,11 +32,10 @@ import type {
   LaunchProgressEvent,
   LaunchResult,
   LogLineEvent,
+  PerformancePreset,
   ProcessPriority,
   Profile,
 } from "./types/launcher";
-
-type MainView = "play" | "content" | "settings";
 
 interface CrashToastState {
   profileName: string;
@@ -55,6 +56,16 @@ function extractIpcError(err: unknown): IpcErrorPayload {
   return { message: "Error desconocido en IPC" };
 }
 
+function formatLocalHms(timestampMs: number): string {
+  if (!timestampMs) return "READY";
+  return new Date(timestampMs).toLocaleTimeString([], {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 function classifyLogLine(entry: LogLineEvent): string {
   const upper = entry.line.toUpperCase();
   if (entry.is_stderr || upper.includes("[ERROR]") || upper.includes("FATAL")) {
@@ -73,39 +84,10 @@ function classifyLogLine(entry: LogLineEvent): string {
   return "text-slate-300";
 }
 
-function PixelMinecraftAvatar({ username }: { username: string }) {
-  const hash = Array.from(username || "Player").reduce(
-    (acc, ch) => (acc * 31 + ch.charCodeAt(0)) % 360,
-    17,
-  );
-  const skinBase = `hsl(${(hash + 25) % 45 + 18}, 42%, 56%)`;
-  const hairColor = `hsl(${hash}, 38%, 22%)`;
-  const eyeColor = `hsl(${(hash + 180) % 360}, 65%, 52%)`;
-
-  return (
-    <svg
-      viewBox="0 0 8 8"
-      className="h-7 w-7 rounded-md shrink-0 border border-white/[0.08]"
-      style={{ imageRendering: "pixelated" }}
-    >
-      <rect width="8" height="8" fill={skinBase} />
-      <rect x="0" y="0" width="8" height="2" fill={hairColor} />
-      <rect x="0" y="2" width="1" height="1" fill={hairColor} />
-      <rect x="7" y="2" width="1" height="1" fill={hairColor} />
-      <rect x="1" y="4" width="1" height="1" fill="#f8fafc" />
-      <rect x="2" y="4" width="1" height="1" fill={eyeColor} />
-      <rect x="5" y="4" width="1" height="1" fill={eyeColor} />
-      <rect x="6" y="4" width="1" height="1" fill="#f8fafc" />
-      <rect x="3" y="5" width="2" height="1" fill="rgba(0,0,0,0.18)" />
-      <rect x="2" y="6" width="4" height="1" fill="rgba(0,0,0,0.28)" />
-    </svg>
-  );
-}
-
 export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapState | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string>("");
-  const [activeView, setActiveView] = useState<MainView>("play");
+  const [activeView, setActiveView] = useState<MainView>("home");
   const [javaStatus, setJavaStatus] = useState<JavaRuntimeStatus | null>(null);
   const [jvmTuning, setJvmTuning] = useState<JvmTuningOutput | null>(null);
   const [launching, setLaunching] = useState(false);
@@ -123,8 +105,8 @@ export function App() {
   const [copiedLogs, setCopiedLogs] = useState(false);
   const [crashToast, setCrashToast] = useState<CrashToastState | null>(null);
   const [bannerError, setBannerError] = useState<string | null>(null);
-  const [identityPopoverOpen, setIdentityPopoverOpen] = useState(false);
-  const [draftUsername, setDraftUsername] = useState("");
+  const [quickSearchOpen, setQuickSearchOpen] = useState(false);
+  const [quickQuery, setQuickQuery] = useState("");
   const consoleRef = useRef<HTMLDivElement | null>(null);
 
   const handleWindowMinimize = () => {
@@ -153,9 +135,16 @@ export function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "l") {
+      const mod = event.ctrlKey || event.metaKey;
+      if (mod && event.key.toLowerCase() === "l") {
         event.preventDefault();
         setConsoleOpen((open) => !open);
+      } else if (mod && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setQuickQuery("");
+        setQuickSearchOpen((open) => !open);
+      } else if (event.key === "Escape") {
+        setQuickSearchOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -172,7 +161,6 @@ export function App() {
     try {
       const data = await invoke<BootstrapState>("get_bootstrap_state");
       setBootstrap(data);
-      setDraftUsername(data.config.offline_username);
       const def =
         data.config.profiles.find((p) => p.is_default) ??
         data.config.profiles[0];
@@ -279,7 +267,9 @@ export function App() {
     try {
       await invoke("open_instance_folder", { profileId });
     } catch (err) {
-      setBannerError(extractIpcError(err).message ?? "No se pudo abrir carpeta");
+      setBannerError(
+        extractIpcError(err).message ?? "No se pudo abrir la carpeta",
+      );
     }
   };
 
@@ -294,7 +284,6 @@ export function App() {
       closeOnLaunch,
     });
     updateConfigState(nextConfig);
-    setDraftUsername(nextConfig.offline_username);
   };
 
   const handlePlayProfile = async (targetProfileId?: string) => {
@@ -350,7 +339,7 @@ export function App() {
         {
           line: `[Launcher] Proceso activo PID ${result.pid} · Fast-Path O(1): ${result.fast_path_hits} · Descargados: ${result.downloaded_files}`,
           is_stderr: false,
-          timestamp: "READY",
+          timestamp_ms: Date.now(),
         },
       ]);
     } catch (err) {
@@ -376,7 +365,9 @@ export function App() {
         return next;
       });
     } catch (err) {
-      setBannerError(extractIpcError(err).message ?? "Error al detener proceso");
+      setBannerError(
+        extractIpcError(err).message ?? "Error al detener proceso",
+      );
     }
   };
 
@@ -416,7 +407,9 @@ export function App() {
   };
 
   const handleCopyReport = async () => {
-    const report = logs.map((l) => `[${l.timestamp}] ${l.line}`).join("\n");
+    const report = logs
+      .map((l) => `[${formatLocalHms(l.timestamp_ms)}] ${l.line}`)
+      .join("\n");
     try {
       await navigator.clipboard.writeText(report || "Sin líneas de log.");
       setCopiedLogs(true);
@@ -429,6 +422,14 @@ export function App() {
   const handleListContent = useCallback(
     async (profileId: string, kind: ContentKind) =>
       invoke<ContentItem[]>("list_profile_content", { profileId, kind }),
+    [],
+  );
+
+  const handleGetRecommendations = useCallback(
+    async (profileId: string) =>
+      invoke<CuratedRecommendation[]>("get_curated_recommendations", {
+        profileId,
+      }),
     [],
   );
 
@@ -458,44 +459,98 @@ export function App() {
     [],
   );
 
-  const handleInjectPerformanceStack = useCallback(
+  const handleInjectPreset = useCallback(
     async (
       profileId: string,
+      preset: PerformancePreset,
       onProgressCb: (ev: LaunchProgressEvent) => void,
     ) => {
       const channel = new Channel<LaunchProgressEvent>();
       channel.onmessage = onProgressCb;
-      return invoke<string[]>("inject_performance_stack", {
+      return invoke<string[]>("inject_performance_preset", {
         profileId,
+        preset,
         onProgress: channel,
       });
     },
     [],
   );
 
+  const handleInstallModrinthItem = useCallback(
+    async (
+      profileId: string,
+      slug: string,
+      kind: ContentKind,
+      onProgressCb: (ev: LaunchProgressEvent) => void,
+    ) => {
+      const channel = new Channel<LaunchProgressEvent>();
+      channel.onmessage = onProgressCb;
+      return invoke<string[]>("install_modrinth_item", {
+        profileId,
+        slug,
+        kind,
+        onProgress: channel,
+      });
+    },
+    [],
+  );
+
+  const filteredProfiles = useMemo(() => {
+    if (!bootstrap) return [];
+    const q = quickQuery.trim().toLowerCase();
+    if (!q) return bootstrap.config.profiles;
+    return bootstrap.config.profiles.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        p.mc_version.toLowerCase().includes(q) ||
+        p.loader.toLowerCase().includes(q),
+    );
+  }, [bootstrap, quickQuery]);
+
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[#0A0C10] text-slate-100 flex flex-col border border-white/[0.06]">
-      {/* Minimal Frameless Titlebar */}
+    <div className="h-screen w-screen overflow-hidden bg-[#080A0F] text-slate-100 flex flex-col border border-[#1E2534]">
+      {/* 36px Frameless Top Titlebar with Quick Search (Ctrl+K) */}
       <header
         data-tauri-drag-region
-        className="h-9 shrink-0 bg-[#0A0C10] border-b border-white/[0.05] px-3 flex items-center justify-between"
+        className="h-9 shrink-0 bg-[#080A0F] border-b border-[#1E2534] px-3 flex items-center justify-between gap-4"
       >
-        <div data-tauri-drag-region className="flex items-center gap-2 pl-1">
-          <span className="h-2 w-2 rounded-sm bg-[#10B981]" />
+        <div data-tauri-drag-region className="flex items-center gap-2 pl-0.5">
+          <span className="h-2.5 w-2.5 rounded-sm bg-[#10B981]" />
           <span
             data-tauri-drag-region
-            className="text-[11px] font-medium tracking-wide text-slate-400"
+            className="text-xs font-semibold tracking-tight text-slate-200"
           >
             MC Launcher
           </span>
+          <span
+            data-tauri-drag-region
+            className="rounded bg-[#11151E] border border-[#1E2534] px-1.5 py-0.5 text-[9px] font-mono text-[#38BDF8]"
+          >
+            RUST
+          </span>
         </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            setQuickQuery("");
+            setQuickSearchOpen(true);
+          }}
+          className="h-6 w-72 max-w-[40vw] rounded-md bg-[#11151E] hover:bg-[#171D2A] border border-[#1E2534] px-2.5 flex items-center justify-between text-[11px] text-slate-500 transition-colors"
+        >
+          <span className="inline-flex items-center gap-1.5 truncate">
+            <Search className="h-3 w-3 text-slate-500" />
+            Buscar instancias, vistas...
+          </span>
+          <span className="font-mono text-[10px] text-slate-600">Ctrl+K</span>
+        </button>
 
         <div className="flex items-center gap-0.5">
           <button
             type="button"
             onClick={handleWindowMinimize}
             title="Minimizar"
-            className="h-6 w-8 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-[#181D28]"
+            className="h-6 w-8 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-[#171D2A]"
           >
             <Minus className="h-3 w-3" />
           </button>
@@ -503,7 +558,7 @@ export function App() {
             type="button"
             onClick={handleWindowToggleMaximize}
             title="Maximizar"
-            className="h-6 w-8 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-[#181D28]"
+            className="h-6 w-8 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-[#171D2A]"
           >
             <Square className="h-2.5 w-2.5" />
           </button>
@@ -518,139 +573,33 @@ export function App() {
         </div>
       </header>
 
-      {/* Main Seamless Desktop Body */}
+      {/* Main Obsidian Forge Body */}
       {!bootstrap || !selectedProfile ? (
         <main className="flex-1 flex items-center justify-center p-6">
           <p className="text-xs font-mono text-slate-400">
-            {bannerError ?? "Inicializando..."}
+            {bannerError ?? "Inicializando Obsidian Forge..."}
           </p>
         </main>
       ) : (
         <div className="relative flex-1 flex min-h-0">
-          {/* 56px Minimalist Left Rail */}
-          <nav className="w-[56px] shrink-0 bg-[#10131A] border-r border-white/[0.05] py-3 flex flex-col items-center justify-between">
-            <div className="flex flex-col items-center gap-2">
-              <button
-                type="button"
-                title="Jugar"
-                onClick={() => setActiveView("play")}
-                className={`h-10 w-10 rounded-xl flex items-center justify-center transition-colors ${
-                  activeView === "play"
-                    ? "bg-[#181D28] text-[#38BDF8] border border-white/[0.06]"
-                    : "text-slate-500 hover:text-slate-200 hover:bg-[#181D28]/60"
-                }`}
-              >
-                <Play className="h-4 w-4" />
-              </button>
-
-              <button
-                type="button"
-                title="Mods y Paquetes"
-                onClick={() => setActiveView("content")}
-                className={`h-10 w-10 rounded-xl flex items-center justify-center transition-colors ${
-                  activeView === "content"
-                    ? "bg-[#181D28] text-[#38BDF8] border border-white/[0.06]"
-                    : "text-slate-500 hover:text-slate-200 hover:bg-[#181D28]/60"
-                }`}
-              >
-                <Layers className="h-4 w-4" />
-              </button>
-
-              <button
-                type="button"
-                title="Ajustes"
-                onClick={() => setActiveView("settings")}
-                className={`h-10 w-10 rounded-xl flex items-center justify-center transition-colors ${
-                  activeView === "settings"
-                    ? "bg-[#181D28] text-[#38BDF8] border border-white/[0.06]"
-                    : "text-slate-500 hover:text-slate-200 hover:bg-[#181D28]/60"
-                }`}
-              >
-                <SlidersHorizontal className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Bottom Fixed: Player Identity Widget + Discreet Terminal Toggle */}
-            <div className="relative flex flex-col items-center gap-2.5">
-              <button
-                type="button"
-                title={`Consola de logs (Ctrl + L)`}
-                onClick={() => setConsoleOpen((v) => !v)}
-                className={`h-9 w-9 rounded-lg flex items-center justify-center transition-colors ${
-                  consoleOpen
-                    ? "bg-[#181D28] text-[#38BDF8] border border-white/[0.06]"
-                    : "text-slate-500 hover:text-slate-200 hover:bg-[#181D28]/60"
-                }`}
-              >
-                <Terminal className="h-4 w-4" />
-              </button>
-
-              <button
-                type="button"
-                title={`Jugador: ${bootstrap.config.offline_username} (clic para editar)`}
-                onClick={() => {
-                  setDraftUsername(bootstrap.config.offline_username);
-                  setIdentityPopoverOpen((v) => !v);
-                }}
-                className="p-1 rounded-lg hover:bg-[#181D28] transition-colors"
-              >
-                <PixelMinecraftAvatar
-                  username={bootstrap.config.offline_username}
-                />
-              </button>
-
-              {identityPopoverOpen && (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (draftUsername.trim()) {
-                      void handleSaveGlobalSettings(
-                        draftUsername.trim(),
-                        bootstrap.config.process_priority,
-                        bootstrap.config.close_on_launch,
-                      );
-                    }
-                    setIdentityPopoverOpen(false);
-                  }}
-                  className="absolute left-14 bottom-1 z-50 w-56 rounded-xl bg-[#181D28] border border-white/[0.08] p-3 shadow-2xl space-y-2"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-medium text-slate-300">
-                      Identidad Offline
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setIdentityPopoverOpen(false)}
-                      className="text-slate-500 hover:text-white"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    autoFocus
-                    value={draftUsername}
-                    onChange={(e) => setDraftUsername(e.target.value)}
-                    className="w-full rounded-md border border-white/[0.08] bg-[#0A0C10] px-2.5 py-1.5 text-xs font-mono text-white focus:border-[#38BDF8] focus:outline-none"
-                  />
-                  <button
-                    type="submit"
-                    className="w-full rounded-md bg-[#10B981] hover:bg-[#059669] py-1.5 text-[11px] font-semibold text-slate-950"
-                  >
-                    Guardar Nick
-                  </button>
-                </form>
-              )}
-            </div>
-          </nav>
-
-          {/* 220px Compact Profile Column */}
           <SidebarProfiles
             profiles={bootstrap.config.profiles}
             selectedProfileId={selectedProfile.id}
             runningProfileIds={runningProfiles}
+            activeView={activeView}
+            consoleOpen={consoleOpen}
+            offlineUsername={bootstrap.config.offline_username}
             hardware={bootstrap.hardware}
             onSelectProfile={setSelectedProfileId}
+            onSelectView={setActiveView}
+            onToggleConsole={() => setConsoleOpen((v) => !v)}
+            onUpdateUsername={(nick) =>
+              handleSaveGlobalSettings(
+                nick,
+                bootstrap.config.process_priority,
+                bootstrap.config.close_on_launch,
+              )
+            }
             onPlayProfile={(id) => handlePlayProfile(id)}
             onStopProfile={(id) => handleStopProfile(id)}
             onOpenFolder={handleOpenFolder}
@@ -660,10 +609,9 @@ export function App() {
             onDeleteProfile={handleDeleteProfile}
           />
 
-          {/* Main Workspace + Slide-Up Log Drawer */}
           <div className="relative flex-1 flex flex-col min-w-0 min-h-0">
             {bannerError && (
-              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 rounded-lg bg-[#181D28] border border-rose-500/40 px-4 py-2 text-xs font-mono text-rose-200 flex items-center gap-3 shadow-xl">
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 rounded-lg bg-[#11151E] border border-rose-500/40 px-4 py-2 text-xs font-mono text-rose-200 flex items-center gap-3 shadow-xl">
                 <span>{bannerError}</span>
                 <button
                   type="button"
@@ -675,9 +623,9 @@ export function App() {
               </div>
             )}
 
-            {/* Smart Crash Toast (Top-Right) */}
+            {/* Smart Crash Toast */}
             {crashToast && (
-              <div className="absolute top-4 right-4 z-40 w-80 rounded-xl bg-[#181D28] border border-rose-500/35 p-3.5 shadow-2xl space-y-2.5">
+              <div className="absolute top-4 right-4 z-40 w-80 rounded-xl bg-[#11151E] border border-rose-500/40 p-3.5 shadow-2xl space-y-2.5">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-start gap-2.5">
                     <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
@@ -707,14 +655,14 @@ export function App() {
                       setConsoleOpen(true);
                       setCrashToast(null);
                     }}
-                    className="flex-1 rounded-lg bg-[#10131A] hover:bg-white/[0.06] border border-white/[0.08] py-1.5 text-[11px] font-medium text-white"
+                    className="flex-1 rounded-lg bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] py-1.5 text-[11px] font-medium text-white"
                   >
                     Ver consola
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleCopyReport()}
-                    className="flex-1 rounded-lg bg-[#10131A] hover:bg-white/[0.06] border border-white/[0.08] py-1.5 text-[11px] font-medium text-[#38BDF8]"
+                    className="flex-1 rounded-lg bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] py-1.5 text-[11px] font-medium text-[#38BDF8]"
                   >
                     {copiedLogs ? "Copiado" : "Copiar reporte"}
                   </button>
@@ -723,9 +671,11 @@ export function App() {
             )}
 
             <div className="flex-1 min-h-0">
-              {activeView === "play" && (
+              {activeView === "home" && (
                 <ProfileDashboard
                   profile={selectedProfile}
+                  config={bootstrap.config}
+                  hardware={bootstrap.hardware}
                   javaStatus={javaStatus}
                   jvmTuning={jvmTuning}
                   launching={launching}
@@ -734,9 +684,12 @@ export function App() {
                   missingJavaMajor={missingJavaMajor}
                   installingJava={installingJava}
                   javaInstallProgress={javaInstallProgress}
+                  onListContent={handleListContent}
                   onPlay={() => handlePlayProfile()}
                   onStop={() => handleStopProfile()}
-                  onOpenSettings={() => setActiveView("settings")}
+                  onOpenFolder={() => handleOpenFolder(selectedProfile.id)}
+                  onOpenMods={() => setActiveView("content")}
+                  onOpenPerformance={() => setActiveView("performance")}
                   onConfirmInstallJava={handleConfirmInstallJava}
                   onDismissJavaModal={() => {
                     setMissingJavaMajor(null);
@@ -749,13 +702,15 @@ export function App() {
                 <ContentManagerPanel
                   profile={selectedProfile}
                   onListContent={handleListContent}
+                  onGetRecommendations={handleGetRecommendations}
                   onToggleContent={handleToggleContent}
                   onImportContent={handleImportContent}
-                  onInjectPerformanceStack={handleInjectPerformanceStack}
+                  onInjectPreset={handleInjectPreset}
+                  onInstallItem={handleInstallModrinthItem}
                 />
               )}
 
-              {activeView === "settings" && (
+              {activeView === "performance" && (
                 <SettingsPerformancePanel
                   profile={selectedProfile}
                   config={bootstrap.config}
@@ -767,14 +722,14 @@ export function App() {
               )}
             </div>
 
-            {/* Slide-Up Bottom Console Drawer (Hidden by Default, Ctrl + L) */}
+            {/* Slide-Up Console Drawer (Ctrl+L) with Local System Time */}
             {consoleOpen && (
-              <section className="h-56 shrink-0 border-t border-white/[0.08] bg-[#07090D] flex flex-col">
-                <div className="h-9 px-4 bg-[#10131A] border-b border-white/[0.06] flex items-center justify-between">
+              <section className="h-56 shrink-0 border-t border-[#1E2534] bg-[#06080C] flex flex-col">
+                <div className="h-9 px-4 bg-[#11151E] border-b border-[#1E2534] flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Terminal className="h-3.5 w-3.5 text-[#38BDF8]" />
                     <span className="text-[11px] font-medium text-slate-200">
-                      Consola de Ejecución
+                      Consola de Ejecución (Hora Local)
                     </span>
                     <span className="text-[10px] font-mono text-slate-500">
                       ({logs.length})
@@ -788,7 +743,7 @@ export function App() {
                       className={`rounded px-2 py-0.5 text-[10px] font-mono border ${
                         autoScroll
                           ? "border-[#38BDF8]/30 text-[#38BDF8]"
-                          : "border-white/[0.06] text-slate-500"
+                          : "border-[#1E2534] text-slate-500"
                       }`}
                     >
                       auto-scroll
@@ -796,7 +751,7 @@ export function App() {
                     <button
                       type="button"
                       onClick={() => void handleCopyReport()}
-                      className="inline-flex items-center gap-1 rounded border border-white/[0.06] px-2 py-0.5 text-[10px] font-mono text-slate-300 hover:bg-[#181D28]"
+                      className="inline-flex items-center gap-1 rounded border border-[#1E2534] px-2 py-0.5 text-[10px] font-mono text-slate-300 hover:bg-[#171D2A]"
                     >
                       {copiedLogs ? (
                         <Check className="h-3 w-3 text-[#10B981]" />
@@ -809,15 +764,15 @@ export function App() {
                       type="button"
                       onClick={() => setLogs([])}
                       title="Limpiar"
-                      className="p-1 rounded text-slate-400 hover:text-white hover:bg-[#181D28]"
+                      className="p-1 rounded text-slate-400 hover:text-white hover:bg-[#171D2A]"
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
                     <button
                       type="button"
                       onClick={() => setConsoleOpen(false)}
-                      title="Ocultar (Ctrl + L)"
-                      className="p-1 rounded text-slate-400 hover:text-white hover:bg-[#181D28]"
+                      title="Ocultar (Ctrl+L)"
+                      className="p-1 rounded text-slate-400 hover:text-white hover:bg-[#171D2A]"
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
@@ -841,11 +796,11 @@ export function App() {
                   ) : (
                     logs.map((entry, idx) => (
                       <div
-                        key={`${entry.timestamp}-${idx}`}
+                        key={`${entry.timestamp_ms}-${idx}`}
                         className="break-all"
                       >
                         <span className="text-slate-600 mr-2">
-                          {entry.timestamp}
+                          {formatLocalHms(entry.timestamp_ms)}
                         </span>
                         <span className={classifyLogLine(entry)}>
                           {entry.line}
@@ -856,6 +811,52 @@ export function App() {
                 </div>
               </section>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Ctrl+K Quick Search Palette */}
+      {quickSearchOpen && bootstrap && (
+        <div
+          onClick={() => setQuickSearchOpen(false)}
+          className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-black/70 backdrop-blur-sm p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-xl bg-[#11151E] border border-[#1E2534] overflow-hidden shadow-2xl"
+          >
+            <div className="px-3.5 py-2.5 border-b border-[#1E2534] flex items-center gap-2">
+              <Search className="h-4 w-4 text-[#38BDF8]" />
+              <input
+                type="text"
+                autoFocus
+                value={quickQuery}
+                onChange={(e) => setQuickQuery(e.target.value)}
+                placeholder="Cambiar instancia por nombre, versión o loader..."
+                className="flex-1 bg-transparent text-xs text-white placeholder:text-slate-500 focus:outline-none"
+              />
+              <span className="text-[10px] font-mono text-slate-600">ESC</span>
+            </div>
+
+            <div className="max-h-64 overflow-y-auto p-1.5 space-y-0.5">
+              {filteredProfiles.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedProfileId(p.id);
+                    setActiveView("home");
+                    setQuickSearchOpen(false);
+                  }}
+                  className="w-full rounded-lg px-3 py-2 flex items-center justify-between text-left hover:bg-[#171D2A] text-xs"
+                >
+                  <span className="text-slate-200 font-medium">{p.name}</span>
+                  <span className="font-mono text-[10px] text-slate-500">
+                    {p.mc_version} · {p.loader}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}

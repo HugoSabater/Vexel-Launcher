@@ -1,12 +1,18 @@
 import { useEffect, useState } from "react";
 import {
+  Check,
   Copy,
   FolderOpen,
+  Gauge,
   Globe,
+  Home,
+  Layers,
+  Pencil,
   Play,
   Plus,
   Square,
   Star,
+  Terminal,
   Trash2,
   X,
 } from "lucide-react";
@@ -17,12 +23,20 @@ import type {
   Profile,
 } from "../types/launcher";
 
+export type MainView = "home" | "content" | "performance";
+
 interface SidebarProfilesProps {
   profiles: Profile[];
   selectedProfileId: string;
   runningProfileIds: Record<string, boolean>;
+  activeView: MainView;
+  consoleOpen: boolean;
+  offlineUsername: string;
   hardware: HardwareInfo;
   onSelectProfile: (profileId: string) => void;
+  onSelectView: (view: MainView) => void;
+  onToggleConsole: () => void;
+  onUpdateUsername: (username: string) => Promise<void>;
   onPlayProfile: (profileId: string) => Promise<void>;
   onStopProfile: (profileId: string) => Promise<void>;
   onOpenFolder: (profileId: string) => Promise<void>;
@@ -33,7 +47,7 @@ interface SidebarProfilesProps {
 }
 
 const LOADER_DOT: Record<ModLoaderKind, string> = {
-  vanilla: "bg-emerald-400",
+  vanilla: "bg-[#10B981]",
   fabric: "bg-[#38BDF8]",
   forge: "bg-amber-400",
   neo_forge: "bg-orange-400",
@@ -53,12 +67,47 @@ function slugifyProfileId(name: string): string {
   return `${clean || "profile"}-${Date.now().toString(36).slice(-4)}`;
 }
 
+function PixelMinecraftAvatar({ username }: { username: string }) {
+  const hash = Array.from(username || "Player").reduce(
+    (acc, ch) => (acc * 31 + ch.charCodeAt(0)) % 360,
+    17,
+  );
+  const skinBase = `hsl(${((hash + 25) % 45) + 18}, 42%, 56%)`;
+  const hairColor = `hsl(${hash}, 38%, 22%)`;
+  const eyeColor = `hsl(${(hash + 180) % 360}, 65%, 52%)`;
+
+  return (
+    <svg
+      viewBox="0 0 8 8"
+      className="h-9 w-9 rounded-lg shrink-0 border border-[#1E2534]"
+      style={{ imageRendering: "pixelated" }}
+    >
+      <rect width="8" height="8" fill={skinBase} />
+      <rect x="0" y="0" width="8" height="2" fill={hairColor} />
+      <rect x="0" y="2" width="1" height="1" fill={hairColor} />
+      <rect x="7" y="2" width="1" height="1" fill={hairColor} />
+      <rect x="1" y="4" width="1" height="1" fill="#f8fafc" />
+      <rect x="2" y="4" width="1" height="1" fill={eyeColor} />
+      <rect x="5" y="4" width="1" height="1" fill={eyeColor} />
+      <rect x="6" y="4" width="1" height="1" fill="#f8fafc" />
+      <rect x="3" y="5" width="2" height="1" fill="rgba(0,0,0,0.18)" />
+      <rect x="2" y="6" width="4" height="1" fill="rgba(0,0,0,0.28)" />
+    </svg>
+  );
+}
+
 export function SidebarProfiles({
   profiles,
   selectedProfileId,
   runningProfileIds,
+  activeView,
+  consoleOpen,
+  offlineUsername,
   hardware,
   onSelectProfile,
+  onSelectView,
+  onToggleConsole,
+  onUpdateUsername,
   onPlayProfile,
   onStopProfile,
   onOpenFolder,
@@ -69,6 +118,9 @@ export function SidebarProfiles({
 }: SidebarProfilesProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [editingNick, setEditingNick] = useState(false);
+  const [nickDraft, setNickDraft] = useState(offlineUsername);
+
   const [name, setName] = useState("");
   const [mcVersion, setMcVersion] = useState("1.21.4");
   const [loader, setLoader] = useState<ModLoaderKind>("fabric");
@@ -76,6 +128,10 @@ export function SidebarProfiles({
   const [gcPreset, setGcPreset] = useState<GcPreset>("generational_zgc");
   const [serverAddress, setServerAddress] = useState("");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setNickDraft(offlineUsername);
+  }, [offlineUsername]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -133,23 +189,83 @@ export function SidebarProfiles({
     }
   };
 
+  const handleCommitNick = async () => {
+    setEditingNick(false);
+    const trimmed = nickDraft.trim();
+    if (trimmed && trimmed !== offlineUsername) {
+      await onUpdateUsername(trimmed);
+    } else {
+      setNickDraft(offlineUsername);
+    }
+  };
+
   return (
-    <aside className="w-[220px] shrink-0 bg-[#10131A] border-r border-white/[0.05] flex flex-col">
-      <div className="h-11 px-3 flex items-center justify-between">
-        <span className="text-[11px] font-medium tracking-wide text-slate-400">
-          Perfiles
+    <aside className="w-[240px] shrink-0 bg-[#11151E] border-r border-[#1E2534] flex flex-col">
+      {/* Top: Player Identity Card */}
+      <div className="p-3 border-b border-[#1E2534]">
+        <div className="rounded-xl bg-[#080A0F] border border-[#1E2534] p-2.5 flex items-center gap-2.5">
+          <PixelMinecraftAvatar username={offlineUsername} />
+          <div className="min-w-0 flex-1">
+            {editingNick ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void handleCommitNick();
+                }}
+                className="flex items-center gap-1"
+              >
+                <input
+                  type="text"
+                  autoFocus
+                  value={nickDraft}
+                  onChange={(e) => setNickDraft(e.target.value)}
+                  onBlur={() => void handleCommitNick()}
+                  className="w-full rounded bg-[#11151E] border border-[#38BDF8] px-1.5 py-0.5 text-xs font-mono text-white focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  className="p-0.5 text-[#10B981] hover:text-emerald-300"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </button>
+              </form>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setEditingNick(true)}
+                title="Clic para editar nombre offline"
+                className="group w-full flex items-center justify-between gap-1 text-left"
+              >
+                <span className="truncate text-xs font-semibold text-white">
+                  {offlineUsername}
+                </span>
+                <Pencil className="h-3 w-3 text-slate-600 group-hover:text-[#38BDF8] shrink-0 transition-colors" />
+              </button>
+            )}
+            <div className="mt-0.5 flex items-center gap-1.5 text-[10px] font-mono text-slate-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#10B981]" />
+              <span>Offline Ready</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Center: Compact Instance List */}
+      <div className="px-3 pt-3 pb-1.5 flex items-center justify-between">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+          Instancias ({profiles.length})
         </span>
         <button
           type="button"
           onClick={openModal}
-          title="Nuevo perfil"
-          className="h-6 w-6 rounded-md flex items-center justify-center text-slate-400 hover:text-white hover:bg-[#181D28] transition-colors"
+          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[#38BDF8] hover:bg-[#171D2A] transition-colors"
         >
-          <Plus className="h-3.5 w-3.5" />
+          <Plus className="h-3 w-3" />
+          Nueva
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
+      <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
         {profiles.map((profile) => {
           const isSelected = profile.id === selectedProfileId;
           const isRunning = Boolean(runningProfileIds[profile.id]);
@@ -171,12 +287,12 @@ export function SidebarProfiles({
               }}
               className={`relative w-full text-left rounded-lg px-2.5 py-2 flex items-center gap-2.5 transition-colors ${
                 isSelected
-                  ? "bg-[#181D28] border border-white/[0.06] text-white"
-                  : "border border-transparent text-slate-400 hover:text-slate-200 hover:bg-[#181D28]/50"
+                  ? "bg-[#171D2A] border border-[#1E2534] text-white"
+                  : "border border-transparent text-slate-400 hover:text-slate-200 hover:bg-[#171D2A]/50"
               }`}
             >
               {isSelected && (
-                <span className="absolute left-0 top-2 bottom-2 w-[2px] rounded-r-full bg-[#38BDF8]" />
+                <span className="absolute left-0 top-2 bottom-2 w-[2.5px] rounded-r-full bg-[#38BDF8]" />
               )}
 
               <span
@@ -188,8 +304,8 @@ export function SidebarProfiles({
               />
 
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="truncate text-[12.5px] font-medium leading-tight">
+                <div className="flex items-center gap-1">
+                  <span className="truncate text-xs font-medium">
                     {profile.name}
                   </span>
                   {profile.is_default && (
@@ -210,12 +326,78 @@ export function SidebarProfiles({
         })}
       </div>
 
+      {/* Bottom Pinned: Navigation + Console Trigger */}
+      <div className="p-2 border-t border-[#1E2534] space-y-0.5">
+        <button
+          type="button"
+          onClick={() => onSelectView("home")}
+          className={`w-full rounded-lg px-2.5 py-2 flex items-center gap-2.5 text-xs font-medium transition-colors ${
+            activeView === "home"
+              ? "bg-[#171D2A] text-white border border-[#1E2534]"
+              : "text-slate-400 hover:text-slate-200 hover:bg-[#171D2A]/50 border border-transparent"
+          }`}
+        >
+          <Home
+            className={`h-3.5 w-3.5 ${activeView === "home" ? "text-[#38BDF8]" : ""}`}
+          />
+          Inicio
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onSelectView("content")}
+          className={`w-full rounded-lg px-2.5 py-2 flex items-center gap-2.5 text-xs font-medium transition-colors ${
+            activeView === "content"
+              ? "bg-[#171D2A] text-white border border-[#1E2534]"
+              : "text-slate-400 hover:text-slate-200 hover:bg-[#171D2A]/50 border border-transparent"
+          }`}
+        >
+          <Layers
+            className={`h-3.5 w-3.5 ${activeView === "content" ? "text-[#38BDF8]" : ""}`}
+          />
+          Mods y Packs
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onSelectView("performance")}
+          className={`w-full rounded-lg px-2.5 py-2 flex items-center gap-2.5 text-xs font-medium transition-colors ${
+            activeView === "performance"
+              ? "bg-[#171D2A] text-white border border-[#1E2534]"
+              : "text-slate-400 hover:text-slate-200 hover:bg-[#171D2A]/50 border border-transparent"
+          }`}
+        >
+          <Gauge
+            className={`h-3.5 w-3.5 ${activeView === "performance" ? "text-[#38BDF8]" : ""}`}
+          />
+          Rendimiento
+        </button>
+
+        <div className="pt-1 mt-1 border-t border-[#1E2534]">
+          <button
+            type="button"
+            onClick={onToggleConsole}
+            className={`w-full rounded-lg px-2.5 py-1.5 flex items-center justify-between text-[11px] font-mono transition-colors ${
+              consoleOpen
+                ? "bg-[#171D2A] text-[#38BDF8] border border-[#1E2534]"
+                : "text-slate-500 hover:text-slate-200 hover:bg-[#171D2A]/50 border border-transparent"
+            }`}
+          >
+            <span className="inline-flex items-center gap-2">
+              <Terminal className="h-3.5 w-3.5" />
+              Consola
+            </span>
+            <span className="text-[10px] text-slate-600">Ctrl+L</span>
+          </button>
+        </div>
+      </div>
+
       {/* Native Right-Click Context Menu */}
       {contextMenu && (
         <div
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
-          className="fixed z-50 w-52 rounded-xl bg-[#181D28] border border-white/[0.08] py-1.5 shadow-2xl"
+          className="fixed z-50 w-52 rounded-xl bg-[#11151E] border border-[#1E2534] py-1.5 shadow-2xl"
         >
           {runningProfileIds[contextMenu.profile.id] ? (
             <button
@@ -225,7 +407,7 @@ export function SidebarProfiles({
                 setContextMenu(null);
                 void onStopProfile(id);
               }}
-              className="w-full px-3 py-1.5 text-left text-xs text-rose-300 hover:bg-white/[0.06] flex items-center gap-2.5"
+              className="w-full px-3 py-1.5 text-left text-xs text-rose-300 hover:bg-[#171D2A] flex items-center gap-2.5"
             >
               <Square className="h-3.5 w-3.5 fill-current" />
               Detener instancia
@@ -238,7 +420,7 @@ export function SidebarProfiles({
                 setContextMenu(null);
                 void onPlayProfile(id);
               }}
-              className="w-full px-3 py-1.5 text-left text-xs text-emerald-300 hover:bg-white/[0.06] flex items-center gap-2.5"
+              className="w-full px-3 py-1.5 text-left text-xs text-[#10B981] hover:bg-[#171D2A] flex items-center gap-2.5"
             >
               <Play className="h-3.5 w-3.5 fill-current" />
               Jugar
@@ -252,7 +434,7 @@ export function SidebarProfiles({
               setContextMenu(null);
               void onOpenFolder(id);
             }}
-            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-white/[0.06] flex items-center gap-2.5"
+            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-[#171D2A] flex items-center gap-2.5"
           >
             <FolderOpen className="h-3.5 w-3.5 text-slate-400" />
             Abrir carpeta de la instancia
@@ -265,7 +447,7 @@ export function SidebarProfiles({
               setContextMenu(null);
               void onDuplicateProfile(target);
             }}
-            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-white/[0.06] flex items-center gap-2.5"
+            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-[#171D2A] flex items-center gap-2.5"
           >
             <Copy className="h-3.5 w-3.5 text-slate-400" />
             Duplicar perfil
@@ -278,7 +460,7 @@ export function SidebarProfiles({
               setContextMenu(null);
               void onSetDefault(id);
             }}
-            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-white/[0.06] flex items-center gap-2.5"
+            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-[#171D2A] flex items-center gap-2.5"
           >
             <Star className="h-3.5 w-3.5 text-slate-400" />
             Fijar como predeterminado
@@ -286,7 +468,7 @@ export function SidebarProfiles({
 
           {profiles.length > 1 && (
             <>
-              <div className="my-1 border-t border-white/[0.06]" />
+              <div className="my-1 border-t border-[#1E2534]" />
               <button
                 type="button"
                 onClick={() => {
@@ -309,16 +491,16 @@ export function SidebarProfiles({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
           <form
             onSubmit={handleCreate}
-            className="w-full max-w-md rounded-xl bg-[#10131A] border border-white/[0.08] p-5 space-y-4"
+            className="w-full max-w-md rounded-xl bg-[#11151E] border border-[#1E2534] p-5 space-y-4"
           >
-            <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
+            <div className="flex items-center justify-between border-b border-[#1E2534] pb-3">
               <h2 className="text-sm font-semibold text-white">
-                Nuevo Perfil
+                Nueva Instancia
               </h2>
               <button
                 type="button"
                 onClick={() => setModalOpen(false)}
-                className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-[#181D28]"
+                className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-[#171D2A]"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -335,21 +517,21 @@ export function SidebarProfiles({
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Survival 1.21.4 Fabric"
-                  className="w-full rounded-lg border border-white/[0.07] bg-[#0A0C10] px-3 py-2 text-xs text-white focus:border-[#38BDF8] focus:outline-none"
+                  className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-2 text-xs text-white focus:border-[#38BDF8] focus:outline-none"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] text-slate-400 mb-1">
-                    Versión
+                    Versión MC
                   </label>
                   <input
                     type="text"
                     required
                     value={mcVersion}
                     onChange={(e) => setMcVersion(e.target.value)}
-                    className="w-full rounded-lg border border-white/[0.07] bg-[#0A0C10] px-3 py-2 text-xs font-mono text-white focus:border-[#38BDF8] focus:outline-none"
+                    className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-2 text-xs font-mono text-white focus:border-[#38BDF8] focus:outline-none"
                   />
                 </div>
                 <div>
@@ -361,7 +543,7 @@ export function SidebarProfiles({
                     onChange={(e) =>
                       handleLoaderChange(e.target.value as ModLoaderKind)
                     }
-                    className="w-full rounded-lg border border-white/[0.07] bg-[#0A0C10] px-3 py-2 text-xs text-white focus:border-[#38BDF8] focus:outline-none"
+                    className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-2 text-xs text-white focus:border-[#38BDF8] focus:outline-none"
                   >
                     <option value="vanilla">Vanilla</option>
                     <option value="fabric">Fabric</option>
@@ -386,20 +568,20 @@ export function SidebarProfiles({
                     step={512}
                     value={ramMb}
                     onChange={(e) => setRamMb(Number(e.target.value))}
-                    className="w-full native-slider"
+                    className="w-full forge-slider"
                   />
                 </div>
                 <div>
                   <label className="block text-[11px] text-slate-400 mb-1">
-                    GC
+                    Garbage Collector
                   </label>
                   <select
                     value={gcPreset}
                     onChange={(e) => setGcPreset(e.target.value as GcPreset)}
-                    className="w-full rounded-lg border border-white/[0.07] bg-[#0A0C10] px-3 py-2 text-xs text-white focus:border-[#38BDF8] focus:outline-none"
+                    className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-2 text-xs text-white focus:border-[#38BDF8] focus:outline-none"
                   >
-                    <option value="generational_zgc">ZGC</option>
-                    <option value="aikar_g1_gc">G1GC</option>
+                    <option value="generational_zgc">Generational ZGC</option>
+                    <option value="aikar_g1_gc">Aikar&apos;s G1GC</option>
                   </select>
                 </div>
               </div>
@@ -414,16 +596,16 @@ export function SidebarProfiles({
                   value={serverAddress}
                   onChange={(e) => setServerAddress(e.target.value)}
                   placeholder="play.servidor.net:25565"
-                  className="w-full rounded-lg border border-white/[0.07] bg-[#0A0C10] px-3 py-2 text-xs font-mono text-white focus:border-[#38BDF8] focus:outline-none"
+                  className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-2 text-xs font-mono text-white focus:border-[#38BDF8] focus:outline-none"
                 />
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-white/[0.06]">
+            <div className="flex justify-end gap-2 pt-2 border-t border-[#1E2534]">
               <button
                 type="button"
                 onClick={() => setModalOpen(false)}
-                className="rounded-lg border border-white/[0.06] px-3.5 py-1.5 text-xs text-slate-300 hover:bg-[#181D28]"
+                className="rounded-lg border border-[#1E2534] px-3.5 py-1.5 text-xs text-slate-300 hover:bg-[#171D2A]"
               >
                 Cancelar
               </button>

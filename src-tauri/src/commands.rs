@@ -9,8 +9,9 @@ use tauri::{State, Window};
 use tokio::sync::Mutex;
 
 use crate::core::content::{
-    import_content_file, inject_modrinth_performance_stack, list_instance_content,
-    toggle_content_item, ContentItem, ContentKind,
+    import_content_file, inject_modrinth_preset, install_single_modrinth_item,
+    list_curated_recommendations, list_instance_content, toggle_content_item, ContentItem,
+    ContentKind, CuratedRecommendation, PerformancePreset,
 };
 use crate::core::downloader::{verify_and_download_all, DownloadProgress};
 use crate::core::hardware::HardwareInfo;
@@ -57,7 +58,7 @@ pub struct LaunchProgressEvent {
 pub struct LogLineEvent {
     pub line: String,
     pub is_stderr: bool,
-    pub timestamp: String,
+    pub timestamp_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -75,14 +76,10 @@ pub struct LaunchResult {
     pub java_major: u32,
 }
 
-fn current_hms_timestamp() -> String {
-    let secs = SystemTime::now()
+fn current_epoch_ms() -> u64 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() % 86_400);
-    let hours = secs / 3_600;
-    let mins = (secs % 3_600) / 60;
-    let rem_secs = secs % 60;
-    format!("{hours:02}:{mins:02}:{rem_secs:02}")
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 impl From<DownloadProgress> for LaunchProgressEvent {
@@ -216,9 +213,10 @@ pub async fn import_profile_content(
 }
 
 #[tauri::command]
-pub async fn inject_performance_stack(
+pub async fn inject_performance_preset(
     state: State<'_, AppState>,
     profile_id: String,
+    preset: PerformancePreset,
     on_progress: Channel<LaunchProgressEvent>,
 ) -> AppResult<Vec<String>> {
     let profile = {
@@ -231,11 +229,52 @@ pub async fn inject_performance_stack(
             .ok_or_else(|| AppError::ConfigError(format!("Profile '{profile_id}' not found")))?
     };
 
-    inject_modrinth_performance_stack(
+    inject_modrinth_preset(
         &state.client,
         &state.paths,
         &profile.id,
         &profile.mc_version,
+        preset,
+        move |progress| {
+            let _ = on_progress.send(progress.into());
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn get_curated_recommendations(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> AppResult<Vec<CuratedRecommendation>> {
+    list_curated_recommendations(&state.paths, &profile_id).await
+}
+
+#[tauri::command]
+pub async fn install_modrinth_item(
+    state: State<'_, AppState>,
+    profile_id: String,
+    slug: String,
+    kind: ContentKind,
+    on_progress: Channel<LaunchProgressEvent>,
+) -> AppResult<Vec<String>> {
+    let profile = {
+        let guard = state.config.lock().await;
+        guard
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .cloned()
+            .ok_or_else(|| AppError::ConfigError(format!("Profile '{profile_id}' not found")))?
+    };
+
+    install_single_modrinth_item(
+        &state.client,
+        &state.paths,
+        &profile.id,
+        &profile.mc_version,
+        &slug,
+        kind,
         move |progress| {
             let _ = on_progress.send(progress.into());
         },
@@ -511,7 +550,7 @@ pub async fn launch_profile(
             let _ = log_channel.send(LogLineEvent {
                 line,
                 is_stderr,
-                timestamp: current_hms_timestamp(),
+                timestamp_ms: current_epoch_ms(),
             });
         },
         move |exit_code| {

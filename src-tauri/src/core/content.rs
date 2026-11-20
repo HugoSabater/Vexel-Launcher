@@ -8,14 +8,22 @@ use crate::core::instance::validate_profile_id;
 use crate::core::paths::LauncherPaths;
 use crate::error::{AppError, AppResult};
 
-pub const PERFORMANCE_STACK_MODS: &[(&str, &str)] = &[
+pub const FPS_PURE_STACK_MODS: &[(&str, &str)] = &[
     ("sodium", "Sodium"),
     ("lithium", "Lithium"),
     ("ferrite-core", "FerriteCore"),
     ("immediatelyfast", "ImmediatelyFast"),
     ("c2me-fabric", "C2ME"),
-    ("distanthorizons", "Distant Horizons"),
 ];
+
+pub const DISTANT_HORIZONS_MOD: &[(&str, &str)] = &[("distanthorizons", "Distant Horizons")];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PerformancePreset {
+    FpsPure,
+    DistantHorizons,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -32,6 +40,120 @@ pub struct ContentItem {
     pub size_bytes: u64,
     pub kind: ContentKind,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CuratedRecommendation {
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub category: String,
+    pub badge: String,
+    pub kind: ContentKind,
+    pub installed: bool,
+}
+
+struct CuratedCatalogEntry {
+    slug: &'static str,
+    name: &'static str,
+    description: &'static str,
+    category: &'static str,
+    badge: &'static str,
+    kind: ContentKind,
+    match_tokens: &'static [&'static str],
+}
+
+const CURATED_CATALOG: &[CuratedCatalogEntry] = &[
+    CuratedCatalogEntry {
+        slug: "sodium",
+        name: "Sodium",
+        description: "Motor de renderizado moderno para OpenGL con ganancias masivas de FPS.",
+        category: "FPS Puros",
+        badge: "Core Render",
+        kind: ContentKind::Mod,
+        match_tokens: &["sodium"],
+    },
+    CuratedCatalogEntry {
+        slug: "lithium",
+        name: "Lithium",
+        description: "Optimiza física, IA de mobs y ticks de chunks sin alterar mecánicas vanilla.",
+        category: "FPS Puros",
+        badge: "Server/Tick",
+        kind: ContentKind::Mod,
+        match_tokens: &["lithium"],
+    },
+    CuratedCatalogEntry {
+        slug: "ferrite-core",
+        name: "FerriteCore",
+        description: "Reduce drásticamente el consumo de memoria RAM en modelos y BlockStates.",
+        category: "FPS Puros",
+        badge: "RAM -40%",
+        kind: ContentKind::Mod,
+        match_tokens: &["ferritecore", "ferrite-core"],
+    },
+    CuratedCatalogEntry {
+        slug: "immediatelyfast",
+        name: "ImmediatelyFast",
+        description: "Acelera el renderizado de entidades, UI, texto y partículas en tiempo real.",
+        category: "FPS Puros",
+        badge: "HUD & Entities",
+        kind: ContentKind::Mod,
+        match_tokens: &["immediatelyfast"],
+    },
+    CuratedCatalogEntry {
+        slug: "c2me-fabric",
+        name: "C2ME",
+        description: "Generación y carga multihilo de chunks aprovechando todos los núcleos de CPU.",
+        category: "FPS Puros",
+        badge: "Multithread",
+        kind: ContentKind::Mod,
+        match_tokens: &["c2me"],
+    },
+    CuratedCatalogEntry {
+        slug: "distanthorizons",
+        name: "Distant Horizons",
+        description: "LODs de distancia extrema (64+ chunks) con coste controlado de GPU.",
+        category: "Horizonte",
+        badge: "Opcional · LOD",
+        kind: ContentKind::Mod,
+        match_tokens: &["distanthorizons", "distant-horizons"],
+    },
+    CuratedCatalogEntry {
+        slug: "iris",
+        name: "Iris Shaders",
+        description: "Soporte de shaders modernos totalmente compatible con Sodium.",
+        category: "Visual",
+        badge: "Shaders",
+        kind: ContentKind::Mod,
+        match_tokens: &["iris"],
+    },
+    CuratedCatalogEntry {
+        slug: "entityculling",
+        name: "Entity Culling",
+        description: "Evita renderizar entidades y bloques ocultos detrás de muros usando ray-tracing asíncrono.",
+        category: "Optimización",
+        badge: "GPU Culling",
+        kind: ContentKind::Mod,
+        match_tokens: &["entityculling"],
+    },
+    CuratedCatalogEntry {
+        slug: "fresh-animations",
+        name: "Fresh Animations",
+        description: "Animaciones fluidas y expresivas para todos los mobs manteniendo estética vanilla.",
+        category: "Resource Pack",
+        badge: "Animaciones",
+        kind: ContentKind::ResourcePack,
+        match_tokens: &["freshanimations", "fresh-animations", "fresh_animations"],
+    },
+    CuratedCatalogEntry {
+        slug: "bare-bones",
+        name: "Bare Bones",
+        description: "Texturas limpias estilo tráiler oficial de Minecraft con gran claridad visual.",
+        category: "Resource Pack",
+        badge: "Minimal",
+        kind: ContentKind::ResourcePack,
+        match_tokens: &["barebones", "bare-bones", "bare_bones"],
+    },
+];
 
 #[derive(Debug, Clone, Deserialize)]
 struct ModrinthVersion {
@@ -67,6 +189,14 @@ struct ModrinthHashes {
 enum PendingModrinthTarget {
     Project(String, String),
     Version(String),
+}
+
+#[must_use]
+pub fn preset_mod_list(preset: PerformancePreset) -> &'static [(&'static str, &'static str)] {
+    match preset {
+        PerformancePreset::FpsPure => FPS_PURE_STACK_MODS,
+        PerformancePreset::DistantHorizons => DISTANT_HORIZONS_MOD,
+    }
 }
 
 fn extract_required_dependencies(deps: &[ModrinthDependency]) -> Vec<PendingModrinthTarget> {
@@ -167,6 +297,51 @@ pub async fn list_instance_content(
     Ok(items)
 }
 
+pub async fn list_curated_recommendations(
+    paths: &LauncherPaths,
+    profile_id: &str,
+) -> AppResult<Vec<CuratedRecommendation>> {
+    let installed_mods = list_instance_content(paths, profile_id, ContentKind::Mod).await?;
+    let installed_packs =
+        list_instance_content(paths, profile_id, ContentKind::ResourcePack).await?;
+
+    let mod_names: Vec<String> = installed_mods
+        .iter()
+        .map(|m| m.file_name.to_lowercase())
+        .collect();
+    let pack_names: Vec<String> = installed_packs
+        .iter()
+        .map(|p| p.file_name.to_lowercase())
+        .collect();
+
+    let results = CURATED_CATALOG
+        .iter()
+        .map(|entry| {
+            let pool = match entry.kind {
+                ContentKind::Mod => &mod_names,
+                ContentKind::ResourcePack => &pack_names,
+            };
+            let installed = pool.iter().any(|name| {
+                entry
+                    .match_tokens
+                    .iter()
+                    .any(|token| name.contains(token))
+            });
+            CuratedRecommendation {
+                slug: entry.slug.to_string(),
+                name: entry.name.to_string(),
+                description: entry.description.to_string(),
+                category: entry.category.to_string(),
+                badge: entry.badge.to_string(),
+                kind: entry.kind,
+                installed,
+            }
+        })
+        .collect();
+
+    Ok(results)
+}
+
 pub async fn toggle_content_item(
     paths: &LauncherPaths,
     profile_id: &str,
@@ -242,11 +417,13 @@ pub async fn import_content_file(
     })
 }
 
-pub async fn inject_modrinth_performance_stack<F>(
+async fn install_modrinth_targets<F>(
     client: &reqwest::Client,
     paths: &LauncherPaths,
     profile_id: &str,
     mc_version: &str,
+    kind: ContentKind,
+    initial_targets: Vec<(String, String)>,
     on_progress: F,
 ) -> AppResult<Vec<String>>
 where
@@ -255,12 +432,17 @@ where
     validate_profile_id(profile_id)?;
     paths.ensure_instance_dirs(profile_id).await?;
 
-    let mods_dir = paths.instance_mods_dir(profile_id);
+    let target_dir = content_dir(paths, profile_id, kind);
+    let rel_prefix = match kind {
+        ContentKind::Mod => format!("instances/{profile_id}/mods"),
+        ContentKind::ResourcePack => format!("instances/{profile_id}/resourcepacks"),
+    };
+
     let mut artifacts = Vec::new();
     let mut installed_names = Vec::new();
-    let mut queue: VecDeque<PendingModrinthTarget> = PERFORMANCE_STACK_MODS
-        .iter()
-        .map(|(slug, label)| PendingModrinthTarget::Project((*slug).to_string(), (*label).to_string()))
+    let mut queue: VecDeque<PendingModrinthTarget> = initial_targets
+        .into_iter()
+        .map(|(slug, label)| PendingModrinthTarget::Project(slug, label))
         .collect();
 
     let mut visited_projects: HashSet<String> = HashSet::new();
@@ -283,9 +465,15 @@ where
                     fast_path_hits: 0,
                 });
 
-                let url = format!(
-                    "https://api.modrinth.com/v2/project/{slug_or_id}/version?loaders=%5B%22fabric%22%5D&game_versions=%5B%22{mc_version}%22%5D"
-                );
+                let url = match kind {
+                    ContentKind::Mod => format!(
+                        "https://api.modrinth.com/v2/project/{slug_or_id}/version?loaders=%5B%22fabric%22%5D&game_versions=%5B%22{mc_version}%22%5D"
+                    ),
+                    ContentKind::ResourcePack => format!(
+                        "https://api.modrinth.com/v2/project/{slug_or_id}/version?game_versions=%5B%22{mc_version}%22%5D"
+                    ),
+                };
+
                 let resp = client.get(&url).send().await?;
                 if !resp.status().is_success() {
                     continue;
@@ -324,9 +512,10 @@ where
             visited_projects.insert(version.project_id.clone());
         }
 
-        // Enqueue required dependencies (e.g. fabric-api) before downloading
-        for req_dep in extract_required_dependencies(&version.dependencies) {
-            queue.push_back(req_dep);
+        if kind == ContentKind::Mod {
+            for req_dep in extract_required_dependencies(&version.dependencies) {
+                queue.push_back(req_dep);
+            }
         }
 
         let selected_file = version
@@ -346,9 +535,9 @@ where
         resolved_count += 1;
         installed_names.push(format!("{label} ({})", file.filename));
         artifacts.push(DownloadArtifact {
-            relative_key: format!("instances/{profile_id}/mods/{}", file.filename),
+            relative_key: format!("{rel_prefix}/{}", file.filename),
             url: file.url.clone(),
-            destination: mods_dir.join(&file.filename),
+            destination: target_dir.join(&file.filename),
             expected_sha1: Some(file.hashes.sha1.clone()),
             expected_size: Some(file.size),
         });
@@ -356,7 +545,7 @@ where
 
     if artifacts.is_empty() {
         return Err(AppError::ContentError(format!(
-            "No compatible Fabric performance mods found on Modrinth for Minecraft {mc_version}"
+            "No se encontraron archivos compatibles en Modrinth para Minecraft {mc_version}"
         )));
     }
 
@@ -364,9 +553,68 @@ where
     Ok(installed_names)
 }
 
+pub async fn inject_modrinth_preset<F>(
+    client: &reqwest::Client,
+    paths: &LauncherPaths,
+    profile_id: &str,
+    mc_version: &str,
+    preset: PerformancePreset,
+    on_progress: F,
+) -> AppResult<Vec<String>>
+where
+    F: Fn(DownloadProgress) + Send + Sync + 'static,
+{
+    let targets = preset_mod_list(preset)
+        .iter()
+        .map(|(slug, label)| ((*slug).to_string(), (*label).to_string()))
+        .collect();
+    install_modrinth_targets(
+        client,
+        paths,
+        profile_id,
+        mc_version,
+        ContentKind::Mod,
+        targets,
+        on_progress,
+    )
+    .await
+}
+
+pub async fn install_single_modrinth_item<F>(
+    client: &reqwest::Client,
+    paths: &LauncherPaths,
+    profile_id: &str,
+    mc_version: &str,
+    slug: &str,
+    kind: ContentKind,
+    on_progress: F,
+) -> AppResult<Vec<String>>
+where
+    F: Fn(DownloadProgress) + Send + Sync + 'static,
+{
+    let label = CURATED_CATALOG
+        .iter()
+        .find(|e| e.slug == slug)
+        .map_or_else(|| slug.to_string(), |e| e.name.to_string());
+
+    install_modrinth_targets(
+        client,
+        paths,
+        profile_id,
+        mc_version,
+        kind,
+        vec![(slug.to_string(), label)],
+        on_progress,
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{extract_required_dependencies, ModrinthDependency, PendingModrinthTarget};
+    use super::{
+        extract_required_dependencies, preset_mod_list, ModrinthDependency, PendingModrinthTarget,
+        PerformancePreset,
+    };
 
     #[test]
     fn test_extract_required_modrinth_dependencies_filters_optional() {
@@ -406,5 +654,17 @@ mod tests {
             extracted[1],
             PendingModrinthTarget::Version("v12345".to_string())
         );
+    }
+
+    #[test]
+    fn test_performance_presets_split_fps_pure_and_distant_horizons() {
+        let fps = preset_mod_list(PerformancePreset::FpsPure);
+        assert_eq!(fps.len(), 5);
+        assert!(fps.iter().any(|(slug, _)| *slug == "sodium"));
+        assert!(!fps.iter().any(|(slug, _)| *slug == "distanthorizons"));
+
+        let dh = preset_mod_list(PerformancePreset::DistantHorizons);
+        assert_eq!(dh.len(), 1);
+        assert_eq!(dh[0].0, "distanthorizons");
     }
 }

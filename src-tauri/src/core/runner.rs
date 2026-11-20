@@ -340,7 +340,7 @@ where
 {
     paths.ensure_instance_dirs(&req.profile_id).await?;
     let game_dir = paths.instance_dir(&req.profile_id);
-    let natives_dir = paths.instance_natives_dir(&req.profile_id);
+    let natives_dir = paths.instance_natives_version_dir(&req.profile_id, &req.mc_version);
     extract_natives(&req.native_archives, &natives_dir).await?;
 
     let tuning = generate_jvm_flags(&JvmTuningInput {

@@ -4,19 +4,20 @@
 
 :root {
   color-scheme: dark;
-  --bg-canvas: #0a0c10;
-  --bg-chrome: #10131a;
-  --bg-interactive: #181d28;
-  --hairline: rgba(255, 255, 255, 0.06);
-  --accent-play: #10b981;
-  --accent-play-hover: #059669;
-  --accent-tech: #38bdf8;
+  --forge-bg: #080a0f;
+  --forge-surface: #11151e;
+  --forge-hover: #171d2a;
+  --forge-border: #1e2534;
+  --forge-emerald: #10b981;
+  --forge-emerald-hover: #059669;
+  --forge-cyan: #38bdf8;
+  --forge-amber: #f59e0b;
 }
 
 * {
   box-sizing: border-box;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+  scrollbar-color: #1e2534 transparent;
 }
 
 *::-webkit-scrollbar {
@@ -29,12 +30,12 @@
 }
 
 *::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: #1e2534;
   border-radius: 999px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.2);
+  background-color: #2d374d;
 }
 
 html,
@@ -42,7 +43,7 @@ body,
 #root {
   height: 100%;
   margin: 0;
-  background-color: var(--bg-canvas);
+  background-color: var(--forge-bg);
   color: #e2e8f0;
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
   overflow: hidden;
@@ -63,28 +64,22 @@ pre,
   font-family: "JetBrains Mono", "Consolas", "Cascadia Code", ui-monospace, monospace;
 }
 
-@layer utilities {
-  .surface-hairline {
-    border: 1px solid var(--hairline);
-  }
-}
-
-input[type="range"].native-slider {
+input[type="range"].forge-slider {
   -webkit-appearance: none;
   appearance: none;
   height: 4px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
+  background: #1e2534;
   outline: none;
 }
 
-input[type="range"].native-slider::-webkit-slider-thumb {
+input[type="range"].forge-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
   border-radius: 999px;
   background: #38bdf8;
-  border: 2px solid #0a0c10;
+  border: 2px solid #080a0f;
   cursor: pointer;
 }

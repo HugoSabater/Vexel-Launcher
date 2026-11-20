@@ -135,6 +135,11 @@ impl LauncherPaths {
     }
 
     #[must_use]
+    pub fn instance_natives_version_dir(&self, profile_id: &str, mc_version: &str) -> PathBuf {
+        self.instance_natives_dir(profile_id).join(mc_version)
+    }
+
+    #[must_use]
     pub fn config_path(&self) -> PathBuf {
         self.root.join("config.json")
     }
