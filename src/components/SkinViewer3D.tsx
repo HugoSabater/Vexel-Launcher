@@ -146,7 +146,7 @@ export function SkinViewer3D({
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onBlur={() => void commitName()}
-                className="w-32 rounded bg-black/80 border border-[#38BDF8] px-2 py-0.5 text-center text-xs font-mono text-white focus:outline-none"
+                className="w-32 rounded bg-black/80 border border-[var(--accent-primary)] px-2 py-0.5 text-center text-xs font-mono text-white focus:outline-none"
               />
             </form>
           ) : (
@@ -178,7 +178,7 @@ export function SkinViewer3D({
           onClick={onChangeSkinClick}
           className="absolute bottom-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1.5 rounded-full bg-black/70 hover:bg-black/90 border border-white/10 px-3 py-1 text-[11px] font-medium text-slate-200 backdrop-blur-sm"
         >
-          <Shirt className="h-3 w-3 text-[#38BDF8]" />
+          <Shirt className="h-3 w-3 text-[var(--accent-primary)]" />
           Cambiar skin
         </button>
       )}

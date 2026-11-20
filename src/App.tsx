@@ -49,12 +49,51 @@ interface CrashToastState {
   exitCode: number;
 }
 
-const ACCENT_PALETTE: Record<string, { main: string; hover: string }> = {
-  emerald: { main: "#10b981", hover: "#059669" },
-  cyan: { main: "#38bdf8", hover: "#0284c7" },
-  indigo: { main: "#6366f1", hover: "#4f46e5" },
-  amber: { main: "#f59e0b", hover: "#d97706" },
-  crimson: { main: "#f43f5e", hover: "#e11d48" },
+const ACCENT_PALETTE: Record<
+  string,
+  {
+    main: string;
+    hover: string;
+    soft: string;
+    border: string;
+    foreground: string;
+  }
+> = {
+  emerald: {
+    main: "#10b981",
+    hover: "#059669",
+    soft: "rgba(16, 185, 129, 0.15)",
+    border: "rgba(16, 185, 129, 0.35)",
+    foreground: "#090b10",
+  },
+  cyan: {
+    main: "#38bdf8",
+    hover: "#0284c7",
+    soft: "rgba(56, 189, 248, 0.15)",
+    border: "rgba(56, 189, 248, 0.35)",
+    foreground: "#090b10",
+  },
+  indigo: {
+    main: "#6366f1",
+    hover: "#4f46e5",
+    soft: "rgba(99, 102, 241, 0.15)",
+    border: "rgba(99, 102, 241, 0.35)",
+    foreground: "#ffffff",
+  },
+  amber: {
+    main: "#f59e0b",
+    hover: "#d97706",
+    soft: "rgba(245, 158, 11, 0.15)",
+    border: "rgba(245, 158, 11, 0.35)",
+    foreground: "#090b10",
+  },
+  crimson: {
+    main: "#f43f5e",
+    hover: "#e11d48",
+    soft: "rgba(244, 63, 94, 0.15)",
+    border: "rgba(244, 63, 94, 0.35)",
+    foreground: "#ffffff",
+  },
 };
 
 function extractIpcError(err: unknown): IpcErrorPayload {
@@ -154,11 +193,12 @@ export function App() {
   useEffect(() => {
     const key = bootstrap?.config.accent_color ?? "emerald";
     const theme = ACCENT_PALETTE[key] ?? ACCENT_PALETTE.emerald;
-    document.documentElement.style.setProperty("--accent-primary", theme.main);
-    document.documentElement.style.setProperty(
-      "--accent-primary-hover",
-      theme.hover,
-    );
+    const root = document.documentElement.style;
+    root.setProperty("--accent-primary", theme.main);
+    root.setProperty("--accent-primary-hover", theme.hover);
+    root.setProperty("--accent-soft", theme.soft);
+    root.setProperty("--accent-border", theme.border);
+    root.setProperty("--accent-foreground", theme.foreground);
   }, [bootstrap?.config.accent_color]);
 
   useEffect(() => {
@@ -690,7 +730,7 @@ export function App() {
           </span>
           <span
             data-tauri-drag-region
-            className="rounded bg-[#11151E] border border-[#1E2534] px-1.5 py-0.5 text-[9px] font-mono text-[#38BDF8]"
+            className="rounded bg-[var(--accent-soft)] border border-[var(--accent-border)] px-1.5 py-0.5 text-[9px] font-mono text-[var(--accent-primary)]"
           >
             RUST
           </span>
@@ -825,7 +865,7 @@ export function App() {
                   <button
                     type="button"
                     onClick={() => void handleCopyReport()}
-                    className="flex-1 rounded-lg bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] py-1.5 text-[11px] font-medium text-[#38BDF8]"
+                    className="flex-1 rounded-lg bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] py-1.5 text-[11px] font-medium text-[var(--accent-primary)]"
                   >
                     {copiedLogs ? "Copiado" : "Copiar reporte"}
                   </button>
@@ -911,7 +951,7 @@ export function App() {
               <section className="h-56 shrink-0 border-t border-[#1E2534] bg-[#06080C] flex flex-col">
                 <div className="h-9 px-4 bg-[#11151E] border-b border-[#1E2534] flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Terminal className="h-3.5 w-3.5 text-[#38BDF8]" />
+                    <Terminal className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                     <span className="text-[11px] font-medium text-slate-200">
                       Consola de Ejecución (Hora Local)
                     </span>
@@ -926,7 +966,7 @@ export function App() {
                       onClick={() => setAutoScroll((v) => !v)}
                       className={`rounded px-2 py-0.5 text-[10px] font-mono border ${
                         autoScroll
-                          ? "border-[#38BDF8]/30 text-[#38BDF8]"
+                          ? "bg-[var(--accent-soft)] border-[var(--accent-border)] text-[var(--accent-primary)]"
                           : "border-[#1E2534] text-slate-500"
                       }`}
                     >
@@ -938,7 +978,7 @@ export function App() {
                       className="inline-flex items-center gap-1 rounded border border-[#1E2534] px-2 py-0.5 text-[10px] font-mono text-slate-300 hover:bg-[#171D2A]"
                     >
                       {copiedLogs ? (
-                        <Check className="h-3 w-3 text-[#10B981]" />
+                        <Check className="h-3 w-3 text-[var(--accent-primary)]" />
                       ) : (
                         <Copy className="h-3 w-3" />
                       )}
@@ -1010,7 +1050,7 @@ export function App() {
             className="w-full max-w-md rounded-xl bg-[#11151E] border border-[#1E2534] overflow-hidden shadow-2xl"
           >
             <div className="px-3.5 py-2.5 border-b border-[#1E2534] flex items-center gap-2">
-              <Search className="h-4 w-4 text-[#38BDF8]" />
+              <Search className="h-4 w-4 text-[var(--accent-primary)]" />
               <input
                 type="text"
                 autoFocus

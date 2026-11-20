@@ -181,7 +181,7 @@ export function SidebarProfiles({
       {/* Compact Player Identity Strip (3D Avatar lives in Home & Skin tab) */}
       <div className="p-3 border-b border-[#1E2534]">
         <div className="rounded-lg bg-[#080A0F] border border-[#1E2534] px-2.5 py-2 flex items-center gap-2.5">
-          <div className="h-7 w-7 rounded-md bg-[#11151E] border border-[#1E2534] flex items-center justify-center text-[#38BDF8] shrink-0">
+          <div className="h-7 w-7 rounded-md bg-[var(--accent-soft)] border border-[var(--accent-border)] flex items-center justify-center text-[var(--accent-primary)] shrink-0">
             <User className="h-3.5 w-3.5" />
           </div>
           <div className="min-w-0 flex-1">
@@ -199,11 +199,11 @@ export function SidebarProfiles({
                   value={nickDraft}
                   onChange={(e) => setNickDraft(e.target.value)}
                   onBlur={() => void handleCommitNick()}
-                  className="w-full rounded bg-[#11151E] border border-[#38BDF8] px-1.5 py-0.5 text-xs font-mono text-white focus:outline-none"
+                  className="w-full rounded bg-[#11151E] border border-[var(--accent-primary)] px-1.5 py-0.5 text-xs font-mono text-white focus:outline-none"
                 />
                 <button
                   type="submit"
-                  className="p-0.5 text-[#10B981] hover:text-emerald-300"
+                  className="p-0.5 text-[var(--accent-primary)]"
                 >
                   <Check className="h-3.5 w-3.5" />
                 </button>
@@ -218,11 +218,11 @@ export function SidebarProfiles({
                 <span className="truncate text-xs font-semibold text-white">
                   {offlineUsername}
                 </span>
-                <Pencil className="h-3 w-3 text-slate-600 group-hover:text-[#38BDF8] shrink-0 transition-colors" />
+                <Pencil className="h-3 w-3 text-slate-600 group-hover:text-[var(--accent-primary)] shrink-0 transition-colors" />
               </button>
             )}
             <div className="mt-0.5 flex items-center gap-1.5 text-[10px] font-mono text-slate-500">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#10B981]" />
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent-primary)]" />
               <span>Offline</span>
             </div>
           </div>
@@ -237,7 +237,7 @@ export function SidebarProfiles({
         <button
           type="button"
           onClick={openModal}
-          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[#38BDF8] hover:bg-[#171D2A] transition-colors"
+          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] transition-colors"
         >
           <Plus className="h-3 w-3" />
           Nueva
@@ -266,18 +266,18 @@ export function SidebarProfiles({
               }}
               className={`relative w-full text-left rounded-lg px-2.5 py-2 flex items-center gap-2.5 transition-colors ${
                 isSelected
-                  ? "bg-[#171D2A] border border-[#1E2534] text-white"
+                  ? "bg-[#171D2A] border border-[var(--accent-border)] text-white"
                   : "border border-transparent text-slate-400 hover:text-slate-200 hover:bg-[#171D2A]/50"
               }`}
             >
               {isSelected && (
-                <span className="absolute left-0 top-2 bottom-2 w-[2.5px] rounded-r-full bg-[#38BDF8]" />
+                <span className="absolute left-0 top-2 bottom-2 w-[2.5px] rounded-r-full bg-[var(--accent-primary)]" />
               )}
 
               <span
                 className={`h-2 w-2 rounded-full shrink-0 ${
                   isRunning
-                    ? "bg-[#10B981] animate-pulse"
+                    ? "bg-[var(--accent-primary)] animate-pulse"
                     : LOADER_DOT[profile.loader]
                 }`}
               />
@@ -312,12 +312,12 @@ export function SidebarProfiles({
           onClick={() => onSelectView("home")}
           className={`w-full rounded-lg px-2.5 py-2 flex items-center gap-2.5 text-xs font-medium transition-colors ${
             activeView === "home"
-              ? "bg-[#171D2A] text-white border border-[#1E2534]"
+              ? "bg-[var(--accent-soft)] text-white border border-[var(--accent-border)]"
               : "text-slate-400 hover:text-slate-200 hover:bg-[#171D2A]/50 border border-transparent"
           }`}
         >
           <Home
-            className={`h-3.5 w-3.5 ${activeView === "home" ? "text-[#38BDF8]" : ""}`}
+            className={`h-3.5 w-3.5 ${activeView === "home" ? "text-[var(--accent-primary)]" : ""}`}
           />
           Inicio
         </button>
@@ -327,12 +327,12 @@ export function SidebarProfiles({
           onClick={() => onSelectView("content")}
           className={`w-full rounded-lg px-2.5 py-2 flex items-center gap-2.5 text-xs font-medium transition-colors ${
             activeView === "content"
-              ? "bg-[#171D2A] text-white border border-[#1E2534]"
+              ? "bg-[var(--accent-soft)] text-white border border-[var(--accent-border)]"
               : "text-slate-400 hover:text-slate-200 hover:bg-[#171D2A]/50 border border-transparent"
           }`}
         >
           <Layers
-            className={`h-3.5 w-3.5 ${activeView === "content" ? "text-[#38BDF8]" : ""}`}
+            className={`h-3.5 w-3.5 ${activeView === "content" ? "text-[var(--accent-primary)]" : ""}`}
           />
           Mods y Packs
         </button>
@@ -342,12 +342,12 @@ export function SidebarProfiles({
           onClick={() => onSelectView("performance")}
           className={`w-full rounded-lg px-2.5 py-2 flex items-center gap-2.5 text-xs font-medium transition-colors ${
             activeView === "performance"
-              ? "bg-[#171D2A] text-white border border-[#1E2534]"
+              ? "bg-[var(--accent-soft)] text-white border border-[var(--accent-border)]"
               : "text-slate-400 hover:text-slate-200 hover:bg-[#171D2A]/50 border border-transparent"
           }`}
         >
           <Gauge
-            className={`h-3.5 w-3.5 ${activeView === "performance" ? "text-[#38BDF8]" : ""}`}
+            className={`h-3.5 w-3.5 ${activeView === "performance" ? "text-[var(--accent-primary)]" : ""}`}
           />
           Ajustes
         </button>
@@ -358,7 +358,7 @@ export function SidebarProfiles({
             onClick={onToggleConsole}
             className={`w-full rounded-lg px-2.5 py-1.5 flex items-center justify-between text-[11px] font-mono transition-colors ${
               consoleOpen
-                ? "bg-[#171D2A] text-[#38BDF8] border border-[#1E2534]"
+                ? "bg-[var(--accent-soft)] text-[var(--accent-primary)] border border-[var(--accent-border)]"
                 : "text-slate-500 hover:text-slate-200 hover:bg-[#171D2A]/50 border border-transparent"
             }`}
           >
@@ -399,7 +399,7 @@ export function SidebarProfiles({
                 setContextMenu(null);
                 void onPlayProfile(id);
               }}
-              className="w-full px-3 py-1.5 text-left text-xs text-[#10B981] hover:bg-[#171D2A] flex items-center gap-2.5"
+              className="w-full px-3 py-1.5 text-left text-xs text-[var(--accent-primary)] hover:bg-[#171D2A] flex items-center gap-2.5"
             >
               <Play className="h-3.5 w-3.5 fill-current" />
               Jugar
@@ -496,7 +496,7 @@ export function SidebarProfiles({
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Survival 1.21.4 Fabric"
-                  className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-2 text-xs text-white focus:border-[#38BDF8] focus:outline-none"
+                  className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-2 text-xs text-white focus:border-[var(--accent-primary)] focus:outline-none"
                 />
               </div>
 
@@ -510,7 +510,7 @@ export function SidebarProfiles({
                     required
                     value={mcVersion}
                     onChange={(e) => setMcVersion(e.target.value)}
-                    className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-2 text-xs font-mono text-white focus:border-[#38BDF8] focus:outline-none"
+                    className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-2 text-xs font-mono text-white focus:border-[var(--accent-primary)] focus:outline-none"
                   />
                 </div>
                 <div>
@@ -522,7 +522,7 @@ export function SidebarProfiles({
                     onChange={(e) =>
                       handleLoaderChange(e.target.value as ModLoaderKind)
                     }
-                    className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-2 text-xs text-white focus:border-[#38BDF8] focus:outline-none"
+                    className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-2 text-xs text-white focus:border-[var(--accent-primary)] focus:outline-none"
                   >
                     <option value="vanilla">Vanilla</option>
                     <option value="fabric">Fabric</option>
@@ -536,7 +536,7 @@ export function SidebarProfiles({
                 <div>
                   <label className="block text-[11px] text-slate-400 mb-1.5">
                     RAM{" "}
-                    <span className="font-mono text-[#38BDF8]">
+                    <span className="font-mono text-[var(--accent-primary)]">
                       {(ramMb / 1024).toFixed(1)} GB
                     </span>
                   </label>
@@ -557,7 +557,7 @@ export function SidebarProfiles({
                   <select
                     value={gcPreset}
                     onChange={(e) => setGcPreset(e.target.value as GcPreset)}
-                    className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-2 text-xs text-white focus:border-[#38BDF8] focus:outline-none"
+                    className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-2 text-xs text-white focus:border-[var(--accent-primary)] focus:outline-none"
                   >
                     <option value="generational_zgc">Generational ZGC</option>
                     <option value="aikar_g1_gc">Aikar&apos;s G1GC</option>
@@ -567,7 +567,7 @@ export function SidebarProfiles({
 
               <div>
                 <label className="flex items-center gap-1.5 text-[11px] text-slate-400 mb-1">
-                  <Globe className="h-3 w-3 text-[#38BDF8]" />
+                  <Globe className="h-3 w-3 text-[var(--accent-primary)]" />
                   Servidor QuickPlay (Opcional)
                 </label>
                 <input
@@ -575,7 +575,7 @@ export function SidebarProfiles({
                   value={serverAddress}
                   onChange={(e) => setServerAddress(e.target.value)}
                   placeholder="play.servidor.net:25565"
-                  className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-2 text-xs font-mono text-white focus:border-[#38BDF8] focus:outline-none"
+                  className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-2 text-xs font-mono text-white focus:border-[var(--accent-primary)] focus:outline-none"
                 />
               </div>
             </div>
@@ -591,7 +591,7 @@ export function SidebarProfiles({
               <button
                 type="submit"
                 disabled={saving}
-                className="rounded-lg bg-[#10B981] hover:bg-[#059669] px-4 py-1.5 text-xs font-semibold text-slate-950 disabled:opacity-50"
+                className="btn-accent rounded-lg px-4 py-1.5 text-xs font-semibold disabled:opacity-50"
               >
                 {saving ? "Creando..." : "Crear"}
               </button>

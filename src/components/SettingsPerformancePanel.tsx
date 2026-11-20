@@ -294,7 +294,7 @@ export function SettingsPerformancePanel({
             onClick={() => setSection(item.id)}
             className={`w-full rounded-lg px-2.5 py-2 flex items-center gap-2 text-xs font-medium transition-colors ${
               section === item.id
-                ? "bg-[#171D2A] text-[#38BDF8] border border-[#1E2534]"
+                ? "bg-[var(--accent-soft)] text-[var(--accent-primary)] border border-[var(--accent-border)]"
                 : "text-slate-400 hover:text-slate-200 hover:bg-[#11151E] border border-transparent"
             }`}
           >
@@ -337,7 +337,7 @@ export function SettingsPerformancePanel({
                         });
                       }
                     }}
-                    className="col-span-8 rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs text-white focus:border-[#38BDF8] focus:outline-none"
+                    className="col-span-8 rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs text-white focus:border-[var(--accent-primary)] focus:outline-none"
                   />
                 </div>
 
@@ -361,7 +361,7 @@ export function SettingsPerformancePanel({
                           });
                         }
                       }}
-                      className="rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs font-mono text-white focus:border-[#38BDF8] focus:outline-none"
+                      className="rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs font-mono text-white focus:border-[var(--accent-primary)] focus:outline-none"
                     />
                     <select
                       value={profile.loader}
@@ -371,7 +371,7 @@ export function SettingsPerformancePanel({
                           loader: e.target.value as ModLoaderKind,
                         })
                       }
-                      className="rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs text-white focus:border-[#38BDF8] focus:outline-none"
+                      className="rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs text-white focus:border-[var(--accent-primary)] focus:outline-none"
                     >
                       <option value="vanilla">Vanilla</option>
                       <option value="fabric">Fabric</option>
@@ -392,7 +392,7 @@ export function SettingsPerformancePanel({
                         onClick={() => applyResolutionPreset(1280, 720, false)}
                         className={`rounded-md px-2.5 py-1 text-[11px] font-mono border ${
                           !profile.fullscreen && profile.window_width === 1280
-                            ? "bg-[#171D2A] text-[#38BDF8] border-[#38BDF8]/40"
+                            ? "bg-[var(--accent-soft)] text-[var(--accent-primary)] border-[var(--accent-border)]"
                             : "bg-[#080A0F] text-slate-400 border-[#1E2534]"
                         }`}
                       >
@@ -403,7 +403,7 @@ export function SettingsPerformancePanel({
                         onClick={() => applyResolutionPreset(1920, 1080, false)}
                         className={`rounded-md px-2.5 py-1 text-[11px] font-mono border ${
                           !profile.fullscreen && profile.window_width === 1920
-                            ? "bg-[#171D2A] text-[#38BDF8] border-[#38BDF8]/40"
+                            ? "bg-[var(--accent-soft)] text-[var(--accent-primary)] border-[var(--accent-border)]"
                             : "bg-[#080A0F] text-slate-400 border-[#1E2534]"
                         }`}
                       >
@@ -414,7 +414,7 @@ export function SettingsPerformancePanel({
                         onClick={() => applyResolutionPreset(null, null, true)}
                         className={`rounded-md px-2.5 py-1 text-[11px] font-mono border ${
                           profile.fullscreen
-                            ? "bg-[#171D2A] text-[#38BDF8] border-[#38BDF8]/40"
+                            ? "bg-[var(--accent-soft)] text-[var(--accent-primary)] border-[var(--accent-border)]"
                             : "bg-[#080A0F] text-slate-400 border-[#1E2534]"
                         }`}
                       >
@@ -439,7 +439,7 @@ export function SettingsPerformancePanel({
                           })
                         }
                         placeholder="Ancho"
-                        className="rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs font-mono text-white focus:border-[#38BDF8] focus:outline-none"
+                        className="rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs font-mono text-white focus:border-[var(--accent-primary)] focus:outline-none"
                       />
                       <input
                         type="number"
@@ -455,7 +455,7 @@ export function SettingsPerformancePanel({
                           })
                         }
                         placeholder="Alto"
-                        className="rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs font-mono text-white focus:border-[#38BDF8] focus:outline-none"
+                        className="rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs font-mono text-white focus:border-[var(--accent-primary)] focus:outline-none"
                       />
                     </div>
                   )}
@@ -474,7 +474,7 @@ export function SettingsPerformancePanel({
                       if (e.key === "Enter") commitServer(serverDraft);
                     }}
                     placeholder="play.servidor.net:25565"
-                    className="col-span-8 rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs font-mono text-white focus:border-[#38BDF8] focus:outline-none"
+                    className="col-span-8 rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs font-mono text-white focus:border-[var(--accent-primary)] focus:outline-none"
                   />
                 </div>
               </div>
@@ -526,14 +526,14 @@ export function SettingsPerformancePanel({
                     }}
                     className={`rounded-xl p-3.5 text-left border transition-colors ${
                       ramDraft === p.ram && config.process_priority === p.prio
-                        ? "bg-[#171D2A] border-[#38BDF8]"
+                        ? "bg-[var(--accent-soft)] border-[var(--accent-primary)]"
                         : "bg-[#11151E] border-[#1E2534] hover:border-slate-700"
                     }`}
                   >
                     <div className="text-xs font-semibold text-white">
                       {p.title}
                     </div>
-                    <div className="mt-1 text-[10px] font-mono text-[#38BDF8]">
+                    <div className="mt-1 text-[10px] font-mono text-[var(--accent-primary)]">
                       {p.badge}
                     </div>
                   </button>
@@ -546,7 +546,13 @@ export function SettingsPerformancePanel({
                   <span className="font-medium text-slate-300">
                     Memoria RAM Asignada
                   </span>
-                  <span className="font-mono font-semibold text-[#38BDF8]">
+                  <span
+                    className={`font-mono font-semibold ${
+                      overSafeThreshold
+                        ? "text-[#F59E0B]"
+                        : "text-[var(--accent-primary)]"
+                    }`}
+                  >
                     {ramDraft} MB ({(ramDraft / 1024).toFixed(1)} GB)
                   </span>
                 </div>
@@ -559,7 +565,9 @@ export function SettingsPerformancePanel({
                   <div
                     style={{ width: `${mcPct}%` }}
                     className={`h-full border-r border-[#080A0F] ${
-                      overSafeThreshold ? "bg-[#F59E0B]" : "bg-[#38BDF8]"
+                      overSafeThreshold
+                        ? "bg-[#F59E0B]"
+                        : "bg-[var(--accent-primary)]"
                     }`}
                   />
                   <div style={{ width: `${freePct}%` }} className="h-full" />
@@ -569,7 +577,9 @@ export function SettingsPerformancePanel({
                   <span>Sistema: {(systemUsedMb / 1024).toFixed(1)} GB</span>
                   <span
                     className={
-                      overSafeThreshold ? "text-[#F59E0B]" : "text-[#38BDF8]"
+                      overSafeThreshold
+                        ? "text-[#F59E0B]"
+                        : "text-[var(--accent-primary)]"
                     }
                   >
                     Minecraft: {(ramDraft / 1024).toFixed(1)} GB
@@ -601,8 +611,8 @@ export function SettingsPerformancePanel({
                     className="absolute top-6 -translate-x-1/2 flex flex-col items-center pointer-events-none"
                     style={{ left: `${recommendedTickPct}%` }}
                   >
-                    <span className="h-1.5 w-px bg-[#38BDF8]" />
-                    <span className="text-[10px] font-mono text-[#38BDF8] whitespace-nowrap">
+                    <span className="h-1.5 w-px bg-[var(--accent-primary)]" />
+                    <span className="text-[10px] font-mono text-[var(--accent-primary)] whitespace-nowrap">
                       Óptimo: {recommendedMb} MB
                     </span>
                   </div>
@@ -621,7 +631,7 @@ export function SettingsPerformancePanel({
               <section className="rounded-xl bg-[#11151E] border border-[#1E2534] p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-                    <Coffee className="h-3.5 w-3.5 text-[#38BDF8]" />
+                    <Coffee className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                     Gestor de Runtimes Java (Eclipse Temurin)
                   </span>
                   <div className="flex items-center gap-1.5">
@@ -643,9 +653,9 @@ export function SettingsPerformancePanel({
                           className="rounded-md bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] disabled:opacity-45 px-2 py-1 text-[10px] font-mono text-slate-300 inline-flex items-center gap-1"
                         >
                           {already ? (
-                            <Check className="h-2.5 w-2.5 text-[#10B981]" />
+                            <Check className="h-2.5 w-2.5 text-[var(--accent-primary)]" />
                           ) : (
-                            <Download className="h-2.5 w-2.5 text-[#38BDF8]" />
+                            <Download className="h-2.5 w-2.5 text-[var(--accent-primary)]" />
                           )}
                           {installingMajor === major ? "..." : `JDK ${major}`}
                         </button>
@@ -669,7 +679,7 @@ export function SettingsPerformancePanel({
                           Java {rt.major} ·{" "}
                           <span className="text-slate-500">{rt.path}</span>
                         </span>
-                        <span className="text-[#38BDF8] shrink-0 ml-2">
+                        <span className="text-[var(--accent-primary)] shrink-0 ml-2">
                           {formatSize(rt.size_bytes)}
                         </span>
                       </div>
@@ -693,7 +703,7 @@ export function SettingsPerformancePanel({
                       })
                     }
                     placeholder="C:\Program Files\Eclipse Adoptium\...\bin\javaw.exe"
-                    className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs font-mono text-white focus:border-[#38BDF8] focus:outline-none"
+                    className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs font-mono text-white focus:border-[var(--accent-primary)] focus:outline-none"
                   />
                 </div>
               </section>
@@ -735,7 +745,7 @@ export function SettingsPerformancePanel({
                           }
                           className={`rounded-lg py-2 px-3 text-xs font-medium border ${
                             profile.gc_preset === gc.id
-                              ? "bg-[#171D2A] text-[#38BDF8] border-[#38BDF8]"
+                              ? "bg-[var(--accent-soft)] text-[var(--accent-primary)] border-[var(--accent-primary)]"
                               : "bg-[#080A0F] text-slate-400 border-[#1E2534]"
                           }`}
                         >
@@ -760,7 +770,7 @@ export function SettingsPerformancePanel({
                           }
                           className={`rounded-md py-1.5 text-[11px] font-medium ${
                             config.process_priority === opt.id
-                              ? "bg-[#171D2A] text-[#38BDF8]"
+                              ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
                               : "text-slate-400"
                           }`}
                         >
@@ -784,7 +794,7 @@ export function SettingsPerformancePanel({
                           })
                         }
                         placeholder="-XX:+UnlockDiagnosticVMOptions ..."
-                        className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs font-mono text-white focus:border-[#38BDF8] focus:outline-none"
+                        className="w-full rounded-lg border border-[#1E2534] bg-[#080A0F] px-3 py-1.5 text-xs font-mono text-white focus:border-[var(--accent-primary)] focus:outline-none"
                       />
                     </div>
 
@@ -800,9 +810,9 @@ export function SettingsPerformancePanel({
                       className="inline-flex items-center gap-1.5 rounded-lg bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-3 py-1.5 text-xs text-slate-200"
                     >
                       {copiedCmd ? (
-                        <Check className="h-3.5 w-3.5 text-[#10B981]" />
+                        <Check className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                       ) : (
-                        <Copy className="h-3.5 w-3.5 text-[#38BDF8]" />
+                        <Copy className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                       )}
                       {copiedCmd
                         ? "Comando copiado"
@@ -898,7 +908,7 @@ export function SettingsPerformancePanel({
                     }}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-3 py-1.5 text-xs text-slate-200"
                   >
-                    <RefreshCw className="h-3.5 w-3.5 text-[#38BDF8]" />
+                    <RefreshCw className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                     Revalidar índice de caché
                   </button>
 
@@ -923,13 +933,13 @@ export function SettingsPerformancePanel({
                     onClick={() => void onOpenDataRoot()}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-3 py-1.5 text-xs text-slate-200"
                   >
-                    <FolderOpen className="h-3.5 w-3.5 text-[#10B981]" />
+                    <FolderOpen className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                     Abrir carpeta raíz
                   </button>
                 </div>
 
                 {storageFeedback && (
-                  <p className="text-xs font-mono text-[#38BDF8]">
+                  <p className="text-xs font-mono text-[var(--accent-primary)]">
                     {storageFeedback}
                   </p>
                 )}
@@ -965,7 +975,7 @@ export function SettingsPerformancePanel({
                       onClick={() => void onSetSkinModel("classic")}
                       className={`rounded-lg py-2 px-3 text-xs font-medium border ${
                         config.skin_model !== "slim"
-                          ? "bg-[#171D2A] text-[#38BDF8] border-[#38BDF8]"
+                          ? "bg-[var(--accent-soft)] text-[var(--accent-primary)] border-[var(--accent-primary)]"
                           : "bg-[#080A0F] text-slate-400 border-[#1E2534]"
                       }`}
                     >
@@ -976,7 +986,7 @@ export function SettingsPerformancePanel({
                       onClick={() => void onSetSkinModel("slim")}
                       className={`rounded-lg py-2 px-3 text-xs font-medium border ${
                         config.skin_model === "slim"
-                          ? "bg-[#171D2A] text-[#38BDF8] border-[#38BDF8]"
+                          ? "bg-[var(--accent-soft)] text-[var(--accent-primary)] border-[var(--accent-primary)]"
                           : "bg-[#080A0F] text-slate-400 border-[#1E2534]"
                       }`}
                     >
@@ -1001,7 +1011,7 @@ export function SettingsPerformancePanel({
                     onChange={(e) =>
                       void saveGlobal({ apply_skin_ingame: e.target.checked })
                     }
-                    className="h-4 w-4 accent-[#10B981]"
+                    className="h-4 w-4 accent-[var(--accent-primary)]"
                   />
                 </label>
 
@@ -1016,7 +1026,7 @@ export function SettingsPerformancePanel({
                   type="button"
                   disabled={uploadingSkin}
                   onClick={() => skinInputRef.current?.click()}
-                  className="btn-accent w-full inline-flex items-center justify-center gap-2 rounded-lg disabled:opacity-50 py-2.5 text-xs font-semibold text-slate-950"
+                  className="btn-accent w-full inline-flex items-center justify-center gap-2 rounded-lg disabled:opacity-50 py-2.5 text-xs font-semibold"
                 >
                   <Upload className="h-3.5 w-3.5" />
                   {uploadingSkin
@@ -1042,7 +1052,7 @@ export function SettingsPerformancePanel({
                       onClick={() => void saveGlobal({ accent_color: opt.id })}
                       className={`rounded-lg py-2 px-2 flex flex-col items-center gap-1.5 border text-[11px] ${
                         config.accent_color === opt.id
-                          ? "bg-[#171D2A] border-white/30 text-white"
+                          ? "bg-[var(--accent-soft)] border-[var(--accent-primary)] text-white"
                           : "bg-[#080A0F] border-[#1E2534] text-slate-400"
                       }`}
                     >
@@ -1082,7 +1092,7 @@ export function SettingsPerformancePanel({
                       }
                       className={`rounded-lg py-2 px-2.5 text-xs font-medium border ${
                         config.launch_behavior === opt.id
-                          ? "bg-[#171D2A] text-[#38BDF8] border-[#38BDF8]"
+                          ? "bg-[var(--accent-soft)] text-[var(--accent-primary)] border-[var(--accent-primary)]"
                           : "bg-[#080A0F] text-slate-400 border-[#1E2534]"
                       }`}
                     >
@@ -1110,7 +1120,7 @@ export function SettingsPerformancePanel({
                       auto_open_console_on_crash: e.target.checked,
                     })
                   }
-                  className="h-4 w-4 accent-[#10B981]"
+                  className="h-4 w-4 accent-[var(--accent-primary)]"
                 />
               </label>
             </section>

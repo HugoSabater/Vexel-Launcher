@@ -393,7 +393,7 @@ export function ContentManagerPanel({
                 onClick={() => setActiveTab("installed")}
                 className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                   activeTab === "installed"
-                    ? "bg-[#171D2A] text-white"
+                    ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
@@ -404,7 +404,7 @@ export function ContentManagerPanel({
                 onClick={() => setActiveTab("recommended")}
                 className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                   activeTab === "recommended"
-                    ? "bg-[#171D2A] text-[#38BDF8]"
+                    ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
@@ -415,7 +415,7 @@ export function ContentManagerPanel({
                 onClick={() => setActiveTab("resource_packs")}
                 className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                   activeTab === "resource_packs"
-                    ? "bg-[#171D2A] text-white"
+                    ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
@@ -428,7 +428,7 @@ export function ContentManagerPanel({
               onClick={() => fileInputRef.current?.click()}
               className="h-8 px-3 rounded-lg bg-[#11151E] hover:bg-[#171D2A] border border-[#1E2534] inline-flex items-center gap-1.5 text-xs text-slate-200"
             >
-              <FolderPlus className="h-3.5 w-3.5 text-[#38BDF8]" />
+              <FolderPlus className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
               Importar
             </button>
 
@@ -449,7 +449,7 @@ export function ContentManagerPanel({
         </div>
 
         {dragActive && (
-          <div className="rounded-xl border-2 border-dashed border-[#38BDF8] bg-[#38BDF8]/10 p-4 text-center text-xs font-medium text-[#38BDF8]">
+          <div className="rounded-xl border-2 border-dashed border-[var(--accent-primary)] bg-[var(--accent-soft)] p-4 text-center text-xs font-medium text-[var(--accent-primary)]">
             Suelta tus archivos .jar o .zip aquí para instalarlos en{" "}
             {profile.name}
           </div>
@@ -458,7 +458,7 @@ export function ContentManagerPanel({
         {progress && busySlug && (
           <div className="rounded-lg bg-[#11151E] border border-[#1E2534] px-4 py-2.5 space-y-1.5">
             <div className="flex items-center justify-between text-[11px]">
-              <span className="font-medium text-[#38BDF8]">
+              <span className="font-medium text-[var(--accent-primary)]">
                 {progress.phase}
               </span>
               <span className="font-mono text-slate-300">
@@ -483,8 +483,8 @@ export function ContentManagerPanel({
             {/* Compact Status Band if Presets are Already Installed, Otherwise Full Cards */}
             {profile.loader === "fabric" &&
               (fpsPureInstalled && distantHorizonsInstalled ? (
-                <div className="rounded-xl bg-[#11151E] border border-[#10B981]/30 px-4 py-2.5 flex items-center justify-between gap-3">
-                  <div className="inline-flex items-center gap-2 text-xs text-[#10B981] font-medium">
+                <div className="rounded-xl bg-[#11151E] border border-[var(--accent-border)] px-4 py-2.5 flex items-center justify-between gap-3">
+                  <div className="inline-flex items-center gap-2 text-xs text-[var(--accent-primary)] font-medium">
                     <Check className="h-4 w-4" />
                     Stack FPS Puros y Distant Horizons instalados
                   </div>
@@ -499,8 +499,8 @@ export function ContentManagerPanel({
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {fpsPureInstalled ? (
-                    <div className="rounded-xl bg-[#11151E] border border-[#10B981]/25 px-4 py-3 flex items-center justify-between gap-2">
-                      <span className="inline-flex items-center gap-2 text-xs font-medium text-[#10B981]">
+                    <div className="rounded-xl bg-[#11151E] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-2 text-xs font-medium text-[var(--accent-primary)]">
                         <Check className="h-4 w-4" />
                         Stack FPS Puros instalado
                       </span>
@@ -518,10 +518,10 @@ export function ContentManagerPanel({
                       <div className="space-y-1">
                         <div className="flex items-center justify-between">
                           <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-white">
-                            <Rocket className="h-3.5 w-3.5 text-[#10B981]" />
+                            <Rocket className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                             FPS Puros (Core Stack)
                           </span>
-                          <span className="rounded bg-[#10B981]/12 border border-[#10B981]/30 px-1.5 py-0.5 text-[10px] font-mono text-[#10B981]">
+                          <span className="rounded bg-[var(--accent-soft)] border border-[var(--accent-border)] px-1.5 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
                             5 mods + deps
                           </span>
                         </div>
@@ -534,7 +534,7 @@ export function ContentManagerPanel({
                         type="button"
                         disabled={busySlug !== null}
                         onClick={() => void handlePreset("fps_pure")}
-                        className="btn-accent w-full rounded-lg disabled:opacity-45 py-2 text-xs font-semibold text-slate-950 transition-colors"
+                        className="btn-accent w-full rounded-lg disabled:opacity-45 py-2 text-xs font-semibold transition-colors"
                       >
                         {busySlug === "fps_pure"
                           ? "Instalando FPS Puros..."
@@ -544,8 +544,8 @@ export function ContentManagerPanel({
                   )}
 
                   {distantHorizonsInstalled ? (
-                    <div className="rounded-xl bg-[#11151E] border border-[#38BDF8]/25 px-4 py-3 flex items-center justify-between gap-2">
-                      <span className="inline-flex items-center gap-2 text-xs font-medium text-[#38BDF8]">
+                    <div className="rounded-xl bg-[#11151E] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-2 text-xs font-medium text-[var(--accent-primary)]">
                         <Check className="h-4 w-4" />
                         Distant Horizons instalado
                       </span>
@@ -562,10 +562,10 @@ export function ContentManagerPanel({
                       <div className="space-y-1">
                         <div className="flex items-center justify-between">
                           <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-white">
-                            <Compass className="h-3.5 w-3.5 text-[#38BDF8]" />
+                            <Compass className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                             Horizonte Opcional (LODs)
                           </span>
-                          <span className="rounded bg-[#38BDF8]/12 border border-[#38BDF8]/30 px-1.5 py-0.5 text-[10px] font-mono text-[#38BDF8]">
+                          <span className="rounded bg-[var(--accent-soft)] border border-[var(--accent-border)] px-1.5 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
                             64+ chunks
                           </span>
                         </div>
@@ -578,7 +578,7 @@ export function ContentManagerPanel({
                         type="button"
                         disabled={busySlug !== null}
                         onClick={() => void handlePreset("distant_horizons")}
-                        className="w-full rounded-lg bg-[#171D2A] hover:bg-[#1E2534] border border-[#38BDF8]/30 disabled:opacity-45 py-2 text-xs font-semibold text-[#38BDF8] transition-colors"
+                        className="w-full rounded-lg bg-[#171D2A] hover:bg-[#1E2534] border border-[var(--accent-border)] disabled:opacity-45 py-2 text-xs font-semibold text-[var(--accent-primary)] transition-colors"
                       >
                         {busySlug === "distant_horizons"
                           ? "Instalando Distant Horizons..."
@@ -604,14 +604,14 @@ export function ContentManagerPanel({
                     if (!e.target.value.trim()) setSearchResults(null);
                   }}
                   placeholder={`Buscar en Modrinth para ${profile.loader} ${profile.mc_version}...`}
-                  className="w-full rounded-lg bg-[#11151E] border border-[#1E2534] pl-9 pr-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-[#38BDF8] focus:outline-none"
+                  className="w-full rounded-lg bg-[#11151E] border border-[#1E2534] pl-9 pr-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-[var(--accent-primary)] focus:outline-none"
                 />
               </div>
 
               <select
                 value={searchKind}
                 onChange={(e) => setSearchKind(e.target.value as ContentKind)}
-                className="rounded-lg bg-[#11151E] border border-[#1E2534] px-3 py-2 text-xs text-slate-200 focus:border-[#38BDF8] focus:outline-none"
+                className="rounded-lg bg-[#11151E] border border-[#1E2534] px-3 py-2 text-xs text-slate-200 focus:border-[var(--accent-primary)] focus:outline-none"
               >
                 <option value="mod">Mods</option>
                 <option value="resource_pack">Resource Packs</option>
@@ -644,7 +644,7 @@ export function ContentManagerPanel({
                     onClick={() => setDiscoveryChip(chip.id)}
                     className={`rounded-full px-3 py-1 text-[11px] font-medium border transition-colors ${
                       discoveryChip === chip.id
-                        ? "bg-[#171D2A] text-[#38BDF8] border-[#38BDF8]/40"
+                        ? "bg-[var(--accent-soft)] text-[var(--accent-primary)] border-[var(--accent-border)]"
                         : "bg-[#11151E] text-slate-400 border-[#1E2534] hover:text-slate-200"
                     }`}
                   >
@@ -658,7 +658,7 @@ export function ContentManagerPanel({
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
-                  <Sparkles className="h-3.5 w-3.5 text-[#38BDF8]" />
+                  <Sparkles className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                   {searchResults
                     ? `Resultados de Modrinth (${searchResults.length})`
                     : `Te podría gustar · MC ${profile.mc_version}`}
@@ -670,7 +670,7 @@ export function ContentManagerPanel({
                       setSearchQuery("");
                       setSearchResults(null);
                     }}
-                    className="text-[11px] text-[#38BDF8] hover:underline"
+                    className="text-[11px] text-[var(--accent-primary)] hover:underline"
                   >
                     Volver a descubrimiento
                   </button>
@@ -705,7 +705,7 @@ export function ContentManagerPanel({
                               className="h-9 w-9 rounded-lg object-cover border border-[#1E2534] shrink-0 bg-[#080A0F]"
                             />
                           ) : (
-                            <div className="h-9 w-9 rounded-lg bg-[#080A0F] border border-[#1E2534] flex items-center justify-center text-[#38BDF8] shrink-0">
+                            <div className="h-9 w-9 rounded-lg bg-[#080A0F] border border-[#1E2534] flex items-center justify-center text-[var(--accent-primary)] shrink-0">
                               {item.kind === "mod" ? (
                                 <Package className="h-4 w-4" />
                               ) : (
@@ -736,7 +736,7 @@ export function ContentManagerPanel({
                         </div>
 
                         {item.installed ? (
-                          <span className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[#10B981]/12 border border-[#10B981]/30 px-2.5 py-1.5 text-[11px] font-mono text-[#10B981]">
+                          <span className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-soft)] border border-[var(--accent-border)] px-2.5 py-1.5 text-[11px] font-mono text-[var(--accent-primary)]">
                             <Check className="h-3 w-3" />
                             Instalado
                           </span>
@@ -751,7 +751,7 @@ export function ContentManagerPanel({
                             onClick={() => void handleInstallSingle(item)}
                             className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-[#171D2A] hover:bg-[#1E2534] border border-[#1E2534] disabled:opacity-40 px-3 py-1.5 text-[11px] font-medium text-white transition-colors"
                           >
-                            <Download className="h-3 w-3 text-[#38BDF8]" />
+                            <Download className="h-3 w-3 text-[var(--accent-primary)]" />
                             {isInstalling ? "..." : "Instalar"}
                           </button>
                         )}
@@ -769,9 +769,9 @@ export function ContentManagerPanel({
           <div className="space-y-3">
             <div className="rounded-xl border border-dashed border-[#1E2534] bg-[#11151E]/60 px-4 py-3 flex items-center justify-between gap-3 text-xs text-slate-400">
               <span className="inline-flex items-center gap-2">
-                <Upload className="h-3.5 w-3.5 text-[#38BDF8]" />
+                <Upload className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                 Arrastra archivos{" "}
-                <code className="text-[#38BDF8]">
+                <code className="text-[var(--accent-primary)]">
                   {activeTab === "resource_packs" ? ".zip" : ".jar"}
                 </code>{" "}
                 a esta ventana para importarlos
@@ -779,7 +779,7 @@ export function ContentManagerPanel({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="text-[#38BDF8] hover:underline font-medium"
+                className="text-[var(--accent-primary)] hover:underline font-medium"
               >
                 Seleccionar archivo
               </button>
@@ -830,14 +830,14 @@ export function ContentManagerPanel({
                           onClick={() => void handleToggle(item, kind)}
                           className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
                             item.enabled
-                              ? "bg-[#10B981]/25 border-[#10B981]/50"
+                              ? "bg-[var(--accent-soft)] border-[var(--accent-border)]"
                               : "bg-[#080A0F] border-[#1E2534]"
                           }`}
                         >
                           <span
                             className={`inline-block h-3.5 w-3.5 rounded-full transition-transform ${
                               item.enabled
-                                ? "translate-x-4 bg-[#10B981]"
+                                ? "translate-x-4 bg-[var(--accent-primary)]"
                                 : "translate-x-0.5 bg-slate-500"
                             }`}
                           />

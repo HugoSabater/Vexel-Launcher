@@ -180,7 +180,7 @@ export function ProfileDashboard({
           <div className="col-span-12 md:col-span-7 space-y-5">
             <div className="space-y-2">
               {profile.server_address && (
-                <div className="inline-flex items-center gap-2 rounded-full bg-[#11151E]/90 border border-[#1E2534] px-3 py-1 text-[11px] font-mono text-[#38BDF8]">
+                <div className="inline-flex items-center gap-2 rounded-full bg-[var(--accent-soft)] border border-[var(--accent-border)] px-3 py-1 text-[11px] font-mono text-[var(--accent-primary)]">
                   <Radio className="h-3 w-3" />
                   <span>QuickPlay · {profile.server_address}</span>
                 </div>
@@ -197,7 +197,7 @@ export function ProfileDashboard({
             </div>
 
             {isWorking && progress && (
-              <div className="text-xs font-mono text-[#38BDF8] truncate">
+              <div className="text-xs font-mono text-[var(--accent-primary)] truncate">
                 {progress.phase}
                 {progress.total > 0 ? ` (${progressPct}%)` : ""} ·{" "}
                 {progress.detail}
@@ -219,7 +219,7 @@ export function ProfileDashboard({
                   type="button"
                   disabled={isWorking}
                   onClick={() => void onPlay()}
-                  className="btn-accent h-12 min-w-[180px] px-7 rounded-xl active:scale-[0.99] disabled:opacity-50 inline-flex items-center justify-center gap-2.5 text-sm font-bold tracking-wider text-slate-950 transition-all"
+                  className="btn-accent h-12 min-w-[180px] px-7 rounded-xl active:scale-[0.99] disabled:opacity-50 inline-flex items-center justify-center gap-2.5 text-sm font-bold tracking-wider transition-all"
                 >
                   <Play className="h-4 w-4 fill-current" />
                   {launching ? "INICIANDO..." : "JUGAR"}
@@ -260,11 +260,11 @@ export function ProfileDashboard({
           </div>
         </div>
 
-        {/* 2px Cyan Progress Line on Bottom Edge */}
+        {/* 2px Accent Progress Line on Bottom Edge */}
         {isWorking && (
           <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#1E2534]">
             <div
-              className="h-full bg-[#38BDF8] transition-all duration-150"
+              className="h-full bg-[var(--accent-primary)] transition-all duration-150"
               style={{ width: `${Math.max(8, progressPct)}%` }}
             />
           </div>
@@ -277,13 +277,13 @@ export function ProfileDashboard({
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-slate-400">
-                <Globe2 className="h-3.5 w-3.5 text-[#10B981]" />
+                <Globe2 className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                 Mundos Recientes
               </span>
               <button
                 type="button"
                 onClick={() => void onOpenSavesFolder()}
-                className="text-[11px] font-mono text-slate-500 hover:text-[#38BDF8] transition-colors"
+                className="text-[11px] font-mono text-slate-500 hover:text-[var(--accent-primary)] transition-colors"
               >
                 Abrir saves/
               </button>
@@ -319,13 +319,13 @@ export function ProfileDashboard({
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-slate-400">
-                <Package className="h-3.5 w-3.5 text-[#38BDF8]" />
+                <Package className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                 Mods Activos
               </span>
               <button
                 type="button"
                 onClick={onOpenMods}
-                className="inline-flex items-center gap-1 text-[11px] text-[#38BDF8] hover:underline"
+                className="inline-flex items-center gap-1 text-[11px] text-[var(--accent-primary)] hover:underline"
               >
                 Explorar / Gestionar
                 <ArrowUpRight className="h-3 w-3" />
@@ -338,7 +338,7 @@ export function ProfileDashboard({
                 <button
                   type="button"
                   onClick={onOpenMods}
-                  className="text-[#38BDF8] hover:underline"
+                  className="text-[var(--accent-primary)] hover:underline"
                 >
                   Explorar Modrinth
                 </button>
@@ -357,7 +357,7 @@ export function ProfileDashboard({
                   <button
                     type="button"
                     onClick={onOpenMods}
-                    className="rounded-md bg-[#171D2A] border border-[#1E2534] px-2 py-1 text-[11px] font-mono text-[#38BDF8]"
+                    className="rounded-md bg-[var(--accent-soft)] border border-[var(--accent-border)] px-2 py-1 text-[11px] font-mono text-[var(--accent-primary)]"
                   >
                     +{activeMods.length - 5}
                   </button>
@@ -373,7 +373,7 @@ export function ProfileDashboard({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
           <div className="w-full max-w-md rounded-xl bg-[#11151E] border border-[#1E2534] p-6 space-y-4">
             <div className="flex items-center gap-3">
-              <div className="h-9 w-9 rounded-lg bg-[#080A0F] border border-[#1E2534] flex items-center justify-center text-[#38BDF8]">
+              <div className="h-9 w-9 rounded-lg bg-[var(--accent-soft)] border border-[var(--accent-border)] flex items-center justify-center text-[var(--accent-primary)]">
                 <Download
                   className={`h-4 w-4 ${installingJava ? "animate-bounce" : ""}`}
                 />
@@ -392,14 +392,14 @@ export function ProfileDashboard({
             <p className="text-xs text-slate-400 leading-relaxed">
               No se detectó un runtime local para Java {missingJavaMajor}. Se
               descargará el JRE oficial x64 desde{" "}
-              <span className="font-mono text-[#38BDF8]">api.adoptium.net</span>{" "}
+              <span className="font-mono text-[var(--accent-primary)]">api.adoptium.net</span>{" "}
               sin alterar tu sistema.
             </p>
 
             {installingJava && javaInstallProgress && (
               <div className="rounded-lg bg-[#080A0F] border border-[#1E2534] p-3.5 space-y-2">
                 <div className="flex items-center justify-between text-[11px]">
-                  <span className="font-medium text-[#38BDF8]">
+                  <span className="font-medium text-[var(--accent-primary)]">
                     {javaInstallProgress.phase}
                   </span>
                   <span className="font-mono font-semibold text-white">
@@ -411,7 +411,7 @@ export function ProfileDashboard({
 
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#1E2534]">
                   <div
-                    className={`h-full rounded-full bg-[#38BDF8] transition-all duration-150 ${
+                    className={`h-full rounded-full bg-[var(--accent-primary)] transition-all duration-150 ${
                       javaInstallProgress.total === 0
                         ? "w-1/2 animate-pulse"
                         : ""
