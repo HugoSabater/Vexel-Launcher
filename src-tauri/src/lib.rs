@@ -46,6 +46,7 @@ pub fn run() {
             commands::get_jvm_flags_preview,
             commands::list_profile_content,
             commands::toggle_profile_content,
+            commands::delete_profile_content,
             commands::import_profile_content,
             commands::import_profile_content_bytes,
             commands::inject_performance_preset,

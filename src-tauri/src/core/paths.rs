@@ -160,6 +160,11 @@ impl LauncherPaths {
     }
 
     #[must_use]
+    pub fn instance_content_index_path(&self, profile_id: &str) -> PathBuf {
+        self.instance_dir(profile_id).join(".content_index.json")
+    }
+
+    #[must_use]
     pub fn config_path(&self) -> PathBuf {
         self.root.join("config.json")
     }

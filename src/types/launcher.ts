@@ -1,7 +1,8 @@
 export type GcPreset = "generational_zgc" | "aikar_g1_gc";
 export type ProcessPriority = "normal" | "above_normal" | "high";
 export type ModLoaderKind = "vanilla" | "fabric" | "forge" | "neo_forge";
-export type ContentKind = "mod" | "resource_pack";
+export type ContentKind = "mod" | "resource_pack" | "shader";
+export type ModrinthSort = "downloads" | "relevance" | "newest" | "updated";
 export type PerformancePreset =
   | "fps_pure"
   | "distant_horizons"
@@ -71,6 +72,10 @@ export interface ContentItem {
   enabled: boolean;
   size_bytes: number;
   kind: ContentKind;
+  version?: string | null;
+  mod_id?: string | null;
+  slug?: string | null;
+  project_id?: string | null;
 }
 
 export interface ModrinthSearchResult {
@@ -84,6 +89,7 @@ export interface ModrinthSearchResult {
   compatibility_note: string | null;
   installed: boolean;
   kind: ContentKind;
+  performance_warning?: string | null;
 }
 
 export interface InstalledJavaRuntime {

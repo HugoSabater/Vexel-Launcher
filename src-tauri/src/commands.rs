@@ -10,11 +10,11 @@ use tauri::{State, Window};
 use tokio::sync::Mutex;
 
 use crate::core::content::{
-    get_dynamic_recommendations as fetch_dynamic_recommendations, import_content_bytes,
-    import_content_file, inject_modrinth_preset, install_single_modrinth_item,
-    list_curated_recommendations, list_instance_content, search_modrinth_catalog,
-    toggle_content_item, ContentItem, ContentKind, CuratedRecommendation, ModrinthSearchResult,
-    PerformancePreset,
+    delete_content_item, get_dynamic_recommendations as fetch_dynamic_recommendations,
+    import_content_bytes, import_content_file, inject_modrinth_preset,
+    install_single_modrinth_item, list_curated_recommendations, list_instance_content,
+    search_modrinth_catalog, toggle_content_item, ContentItem, ContentKind, CuratedRecommendation,
+    ModrinthSearchResult, PerformancePreset,
 };
 use crate::core::downloader::{verify_and_download_all, DownloadProgress};
 use crate::core::hardware::HardwareInfo;
@@ -256,6 +256,16 @@ pub async fn toggle_profile_content(
 }
 
 #[tauri::command]
+pub async fn delete_profile_content(
+    state: State<'_, AppState>,
+    profile_id: String,
+    kind: ContentKind,
+    file_name: String,
+) -> AppResult<()> {
+    delete_content_item(&state.paths, &profile_id, kind, &file_name).await
+}
+
+#[tauri::command]
 pub async fn import_profile_content(
     state: State<'_, AppState>,
     profile_id: String,
@@ -277,6 +287,7 @@ pub async fn import_profile_content_bytes(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn search_modrinth(
     state: State<'_, AppState>,
     profile_id: String,
@@ -284,6 +295,8 @@ pub async fn search_modrinth(
     mc_version: String,
     loader: String,
     kind: ContentKind,
+    offset: Option<u32>,
+    sort: Option<String>,
 ) -> AppResult<Vec<ModrinthSearchResult>> {
     search_modrinth_catalog(
         &state.client,
@@ -293,6 +306,8 @@ pub async fn search_modrinth(
         &mc_version,
         &loader,
         kind,
+        offset.unwrap_or(0),
+        sort.as_deref(),
     )
     .await
 }
@@ -303,6 +318,8 @@ pub async fn get_dynamic_recommendations(
     profile_id: String,
     category: String,
     kind: ContentKind,
+    offset: Option<u32>,
+    sort: Option<String>,
 ) -> AppResult<Vec<ModrinthSearchResult>> {
     let profile = {
         let guard = state.config.lock().await;
@@ -329,6 +346,8 @@ pub async fn get_dynamic_recommendations(
         loader_str,
         &category,
         kind,
+        offset.unwrap_or(0),
+        sort.as_deref(),
     )
     .await
 }
@@ -742,11 +761,19 @@ pub async fn inject_performance_preset(
             .ok_or_else(|| AppError::ConfigError(format!("Profile '{profile_id}' not found")))?
     };
 
+    let loader_str = match profile.loader {
+        ModLoaderKind::Vanilla => "vanilla",
+        ModLoaderKind::Fabric => "fabric",
+        ModLoaderKind::Forge => "forge",
+        ModLoaderKind::NeoForge => "neoforge",
+    };
+
     inject_modrinth_preset(
         &state.client,
         &state.paths,
         &profile.id,
         &profile.mc_version,
+        loader_str,
         preset,
         move |progress| {
             let _ = on_progress.send(progress.into());
@@ -781,11 +808,19 @@ pub async fn install_modrinth_item(
             .ok_or_else(|| AppError::ConfigError(format!("Profile '{profile_id}' not found")))?
     };
 
+    let loader_str = match profile.loader {
+        ModLoaderKind::Vanilla => "vanilla",
+        ModLoaderKind::Fabric => "fabric",
+        ModLoaderKind::Forge => "forge",
+        ModLoaderKind::NeoForge => "neoforge",
+    };
+
     install_single_modrinth_item(
         &state.client,
         &state.paths,
         &profile.id,
         &profile.mc_version,
+        loader_str,
         &slug,
         kind,
         move |progress| {

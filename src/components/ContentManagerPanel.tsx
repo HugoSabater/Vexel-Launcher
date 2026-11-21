@@ -13,7 +13,10 @@ import {
   RefreshCw,
   Rocket,
   Search,
+  Shuffle,
   Sparkles,
+  Sun,
+  Trash2,
   Upload,
 } from "lucide-react";
 import type {
@@ -21,12 +24,20 @@ import type {
   ContentKind,
   LaunchProgressEvent,
   ModrinthSearchResult,
+  ModrinthSort,
   PerformancePreset,
   Profile,
 } from "../types/launcher";
 
-type ContentTab = "installed" | "recommended" | "resource_packs";
-type DiscoveryChip = "performance" | "visual" | "qol" | "world" | "resource_pack";
+type ContentTab = "installed" | "recommended" | "resource_packs" | "shaders";
+type DiscoveryChip =
+  | "performance"
+  | "visual"
+  | "qol"
+  | "world"
+  | "resource_pack"
+  | "shader";
+type LocalSort = "name" | "size" | "enabled";
 
 interface ContentManagerPanelProps {
   profile: Profile;
@@ -38,6 +49,8 @@ interface ContentManagerPanelProps {
     profileId: string,
     category: string,
     kind: ContentKind,
+    offset?: number,
+    sort?: ModrinthSort,
   ) => Promise<ModrinthSearchResult[]>;
   onSearchModrinth: (
     profileId: string,
@@ -45,6 +58,8 @@ interface ContentManagerPanelProps {
     mcVersion: string,
     loader: string,
     kind: ContentKind,
+    offset?: number,
+    sort?: ModrinthSort,
   ) => Promise<ModrinthSearchResult[]>;
   onToggleContent: (
     profileId: string,
@@ -52,6 +67,11 @@ interface ContentManagerPanelProps {
     fileName: string,
     enable: boolean,
   ) => Promise<ContentItem>;
+  onDeleteContent: (
+    profileId: string,
+    kind: ContentKind,
+    fileName: string,
+  ) => Promise<void>;
   onImportContent: (
     profileId: string,
     kind: ContentKind,
@@ -76,10 +96,10 @@ interface ContentManagerPanelProps {
   ) => Promise<string[]>;
 }
 
-const FPS_PURE_TOKENS = [
+const FPS_PURE_SLUGS = [
   "sodium",
   "lithium",
-  "ferrite",
+  "ferrite-core",
   "immediatelyfast",
   "modernfix",
   "entityculling",
@@ -87,6 +107,35 @@ const FPS_PURE_TOKENS = [
   "dynamic-fps",
   "badoptimizations",
 ];
+
+function normalizeId(raw: string): string {
+  return raw.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function hasInstalledSlug(items: ContentItem[], slug: string): boolean {
+  const normSlug = normalizeId(slug);
+  const normBase = normalizeId(
+    slug.replace(/-(fabric|forge|neoforge)$/i, ""),
+  );
+  return items.some((item) => {
+    if (item.slug) {
+      const s = normalizeId(item.slug);
+      if (s === normSlug || s === normBase) return true;
+    }
+    if (item.mod_id) {
+      const m = normalizeId(item.mod_id);
+      if (m === normSlug || m === normBase) return true;
+      return false;
+    }
+    if (item.slug || item.project_id) return false;
+    const f = item.file_name.toLowerCase();
+    return (
+      f.startsWith(`${slug.toLowerCase()}-`) ||
+      f.startsWith(`${normBase}-`) ||
+      f.startsWith(`${normBase}_`)
+    );
+  });
+}
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -106,6 +155,7 @@ export function ContentManagerPanel({
   onGetDynamicRecommendations,
   onSearchModrinth,
   onToggleContent,
+  onDeleteContent,
   onImportContent,
   onImportContentBytes,
   onInjectPreset,
@@ -116,15 +166,28 @@ export function ContentManagerPanel({
     useState<DiscoveryChip>("performance");
   const [installedMods, setInstalledMods] = useState<ContentItem[]>([]);
   const [resourcePacks, setResourcePacks] = useState<ContentItem[]>([]);
+  const [shaderPacks, setShaderPacks] = useState<ContentItem[]>([]);
+
   const [dynamicFeed, setDynamicFeed] = useState<ModrinthSearchResult[]>([]);
+  const [feedOffset, setFeedOffset] = useState(0);
+  const [feedHasMore, setFeedHasMore] = useState(true);
   const [loadingFeed, setLoadingFeed] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchKind, setSearchKind] = useState<ContentKind>("mod");
+  const [modrinthSort, setModrinthSort] = useState<ModrinthSort>("downloads");
   const [searchResults, setSearchResults] = useState<
     ModrinthSearchResult[] | null
   >(null);
+  const [searchOffset, setSearchOffset] = useState(0);
+  const [searchHasMore, setSearchHasMore] = useState(false);
   const [searching, setSearching] = useState(false);
+
+  const [localQuery, setLocalQuery] = useState("");
+  const [localSort, setLocalSort] = useState<LocalSort>("name");
+  const [confirmDeleteFile, setConfirmDeleteFile] = useState<string | null>(
+    null,
+  );
 
   const [loading, setLoading] = useState(false);
   const [busySlug, setBusySlug] = useState<string | null>(null);
@@ -133,37 +196,68 @@ export function ContentManagerPanel({
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const activeTabRef = useRef<ContentTab>(activeTab);
+  activeTabRef.current = activeTab;
+
   const refreshLocal = useCallback(async () => {
     setLoading(true);
     try {
-      const [mods, packs] = await Promise.all([
+      const [mods, packs, shaders] = await Promise.all([
         onListContent(profile.id, "mod"),
         onListContent(profile.id, "resource_pack"),
+        onListContent(profile.id, "shader"),
       ]);
       setInstalledMods(mods);
       setResourcePacks(packs);
+      setShaderPacks(shaders);
     } finally {
       setLoading(false);
     }
   }, [onListContent, profile.id]);
 
-  const refreshDynamicFeed = useCallback(async () => {
-    setLoadingFeed(true);
-    try {
-      const kind: ContentKind =
-        discoveryChip === "resource_pack" ? "resource_pack" : "mod";
-      const items = await onGetDynamicRecommendations(
-        profile.id,
-        discoveryChip,
-        kind,
-      );
-      setDynamicFeed(items);
-    } catch {
-      setDynamicFeed([]);
-    } finally {
-      setLoadingFeed(false);
-    }
-  }, [discoveryChip, onGetDynamicRecommendations, profile.id]);
+  const discoveryKind: ContentKind =
+    discoveryChip === "resource_pack"
+      ? "resource_pack"
+      : discoveryChip === "shader"
+        ? "shader"
+        : "mod";
+
+  const fetchFeedPage = useCallback(
+    async (offset: number, append: boolean, sort: ModrinthSort) => {
+      setLoadingFeed(true);
+      try {
+        const items = await onGetDynamicRecommendations(
+          profile.id,
+          discoveryChip,
+          discoveryKind,
+          offset,
+          sort,
+        );
+        if (append) {
+          setDynamicFeed((prev) => {
+            const seen = new Set(prev.map((p) => `${p.kind}:${p.slug}`));
+            const merged = [...prev];
+            for (const item of items) {
+              if (!seen.has(`${item.kind}:${item.slug}`)) {
+                merged.push(item);
+              }
+            }
+            return merged;
+          });
+        } else {
+          setDynamicFeed(items);
+        }
+        setFeedOffset(offset);
+        setFeedHasMore(items.length >= 10);
+      } catch {
+        if (!append) setDynamicFeed([]);
+        setFeedHasMore(false);
+      } finally {
+        setLoadingFeed(false);
+      }
+    },
+    [discoveryChip, discoveryKind, onGetDynamicRecommendations, profile.id],
+  );
 
   useEffect(() => {
     void refreshLocal();
@@ -171,11 +265,11 @@ export function ContentManagerPanel({
 
   useEffect(() => {
     if (activeTab === "recommended" && searchResults === null) {
-      void refreshDynamicFeed();
+      void fetchFeedPage(0, false, modrinthSort);
     }
-  }, [activeTab, refreshDynamicFeed, searchResults]);
+  }, [activeTab, fetchFeedPage, modrinthSort, searchResults]);
 
-  // Native Tauri v2 Drag & Drop listener
+  // Native Tauri v2 Drag & Drop listener (respects Shaders tab for .zip files)
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     try {
@@ -190,6 +284,9 @@ export function ContentManagerPanel({
             const paths = event.payload.paths;
             if (!paths || paths.length === 0) return;
 
+            const zipTargetKind: ContentKind =
+              activeTabRef.current === "shaders" ? "shader" : "resource_pack";
+
             void (async () => {
               let imported = 0;
               for (const fullPath of paths) {
@@ -201,13 +298,13 @@ export function ContentManagerPanel({
                   lower.endsWith(".zip") ||
                   lower.endsWith(".zip.disabled")
                 ) {
-                  await onImportContent(profile.id, "resource_pack", fullPath);
+                  await onImportContent(profile.id, zipTargetKind, fullPath);
                   imported += 1;
                 }
               }
               if (imported > 0) {
                 setStatusMessage(
-                  `Importados ${imported} archivo(s) mediante arrastrar y soltar.`,
+                  `Importados ${imported} archivo(s) en ${zipTargetKind === "shader" ? "shaderpacks/" : "la instancia"}.`,
                 );
                 await refreshLocal();
               }
@@ -225,29 +322,25 @@ export function ContentManagerPanel({
     };
   }, [onImportContent, profile.id, refreshLocal]);
 
-  const fpsPureInstalled = useMemo(() => {
-    const names = installedMods.map((m) => m.file_name.toLowerCase());
-    return FPS_PURE_TOKENS.every((token) =>
-      names.some((n) => n.includes(token)),
-    );
-  }, [installedMods]);
+  const fpsPureInstalled = useMemo(
+    () => FPS_PURE_SLUGS.every((slug) => hasInstalledSlug(installedMods, slug)),
+    [installedMods],
+  );
 
-  const distantHorizonsInstalled = useMemo(() => {
-    const names = installedMods.map((m) => m.file_name.toLowerCase());
-    return names.some(
-      (n) => n.includes("distanthorizons") || n.includes("distant-horizons"),
-    );
-  }, [installedMods]);
+  const distantHorizonsInstalled = useMemo(
+    () => hasInstalledSlug(installedMods, "distanthorizons"),
+    [installedMods],
+  );
 
-  const c2meInstalled = useMemo(() => {
-    const names = installedMods.map((m) => m.file_name.toLowerCase());
-    return names.some((n) => n.includes("c2me"));
-  }, [installedMods]);
+  const c2meInstalled = useMemo(
+    () => hasInstalledSlug(installedMods, "c2me-fabric"),
+    [installedMods],
+  );
 
-  const bobbyInstalled = useMemo(() => {
-    const names = installedMods.map((m) => m.file_name.toLowerCase());
-    return names.some((n) => n.includes("bobby"));
-  }, [installedMods]);
+  const bobbyInstalled = useMemo(
+    () => hasInstalledSlug(installedMods, "bobby"),
+    [installedMods],
+  );
 
   const handleToggle = async (item: ContentItem, kind: ContentKind) => {
     const updated = await onToggleContent(
@@ -256,13 +349,34 @@ export function ContentManagerPanel({
       item.file_name,
       !item.enabled,
     );
+    const updater = (prev: ContentItem[]) =>
+      prev.map((c) => (c.file_name === item.file_name ? updated : c));
     if (kind === "mod") {
-      setInstalledMods((prev) =>
-        prev.map((c) => (c.file_name === item.file_name ? updated : c)),
-      );
+      setInstalledMods(updater);
+    } else if (kind === "resource_pack") {
+      setResourcePacks(updater);
     } else {
-      setResourcePacks((prev) =>
-        prev.map((c) => (c.file_name === item.file_name ? updated : c)),
+      setShaderPacks(updater);
+    }
+  };
+
+  const handleDelete = async (item: ContentItem, kind: ContentKind) => {
+    try {
+      await onDeleteContent(profile.id, kind, item.file_name);
+      const remover = (prev: ContentItem[]) =>
+        prev.filter((c) => c.file_name !== item.file_name);
+      if (kind === "mod") {
+        setInstalledMods(remover);
+      } else if (kind === "resource_pack") {
+        setResourcePacks(remover);
+      } else {
+        setShaderPacks(remover);
+      }
+      setConfirmDeleteFile(null);
+      setStatusMessage(`Eliminado ${item.display_name} (${item.file_name}).`);
+    } catch (err) {
+      setStatusMessage(
+        err instanceof Error ? err.message : JSON.stringify(err),
       );
     }
   };
@@ -272,12 +386,15 @@ export function ContentManagerPanel({
   ) => {
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) return;
+    const zipTargetKind: ContentKind =
+      activeTab === "shaders" ? "shader" : "resource_pack";
+
     let count = 0;
     for (const file of files) {
       const lower = file.name.toLowerCase();
       const kind: ContentKind =
         lower.endsWith(".zip") || lower.endsWith(".zip.disabled")
-          ? "resource_pack"
+          ? zipTargetKind
           : "mod";
       const buffer = await file.arrayBuffer();
       await onImportContentBytes(
@@ -295,11 +412,18 @@ export function ContentManagerPanel({
     }
   };
 
-  const handleSearch = async (event: React.FormEvent) => {
-    event.preventDefault();
-    const q = searchQuery.trim();
+  const executeSearch = async (
+    query: string,
+    kind: ContentKind,
+    offset: number,
+    sort: ModrinthSort,
+    append: boolean,
+  ) => {
+    const q = query.trim();
     if (!q) {
       setSearchResults(null);
+      setSearchOffset(0);
+      setSearchHasMore(false);
       return;
     }
     setSearching(true);
@@ -310,15 +434,70 @@ export function ContentManagerPanel({
         q,
         profile.mc_version,
         profile.loader,
-        searchKind,
+        kind,
+        offset,
+        sort,
       );
-      setSearchResults(hits);
+      if (append) {
+        setSearchResults((prev) => {
+          const base = prev ?? [];
+          const seen = new Set(base.map((r) => `${r.kind}:${r.slug}`));
+          const merged = [...base];
+          for (const h of hits) {
+            if (!seen.has(`${h.kind}:${h.slug}`)) {
+              merged.push(h);
+            }
+          }
+          return merged;
+        });
+      } else {
+        setSearchResults(hits);
+      }
+      setSearchOffset(offset);
+      setSearchHasMore(hits.length >= 12);
     } catch (err) {
       setStatusMessage(
         err instanceof Error ? err.message : JSON.stringify(err),
       );
     } finally {
       setSearching(false);
+    }
+  };
+
+  const handleSearchSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    await executeSearch(searchQuery, searchKind, 0, modrinthSort, false);
+  };
+
+  const handleRefreshSuggestions = async () => {
+    const nextOffset = feedHasMore ? feedOffset + 10 : 0;
+    const items = await onGetDynamicRecommendations(
+      profile.id,
+      discoveryChip,
+      discoveryKind,
+      nextOffset,
+      modrinthSort,
+    );
+    if (items.length === 0 && nextOffset > 0) {
+      await fetchFeedPage(0, false, modrinthSort);
+    } else {
+      setDynamicFeed(items);
+      setFeedOffset(nextOffset);
+      setFeedHasMore(items.length >= 10);
+    }
+  };
+
+  const handleLoadMore = async () => {
+    if (searchResults !== null) {
+      await executeSearch(
+        searchQuery,
+        searchKind,
+        searchOffset + 12,
+        modrinthSort,
+        true,
+      );
+    } else {
+      await fetchFeedPage(feedOffset + 10, true, modrinthSort);
     }
   };
 
@@ -333,7 +512,7 @@ export function ContentManagerPanel({
         `Instalados (${installed.length} con dependencias): ${installed.join(", ")}`,
       );
       await refreshLocal();
-      await refreshDynamicFeed();
+      await fetchFeedPage(feedOffset, false, modrinthSort);
     } catch (err) {
       setStatusMessage(
         err instanceof Error ? err.message : JSON.stringify(err),
@@ -378,6 +557,41 @@ export function ContentManagerPanel({
   };
 
   const displayList = searchResults ?? dynamicFeed;
+  const canLoadMore = searchResults !== null ? searchHasMore : feedHasMore;
+
+  const currentLocalKind: ContentKind =
+    activeTab === "resource_packs"
+      ? "resource_pack"
+      : activeTab === "shaders"
+        ? "shader"
+        : "mod";
+
+  const filteredLocalItems = useMemo(() => {
+    const raw =
+      activeTab === "resource_packs"
+        ? resourcePacks
+        : activeTab === "shaders"
+          ? shaderPacks
+          : installedMods;
+    const q = localQuery.trim().toLowerCase();
+    const filtered = q
+      ? raw.filter(
+          (item) =>
+            item.display_name.toLowerCase().includes(q) ||
+            item.file_name.toLowerCase().includes(q) ||
+            (item.mod_id?.toLowerCase().includes(q) ?? false),
+        )
+      : [...raw];
+
+    filtered.sort((a, b) => {
+      if (localSort === "size") return b.size_bytes - a.size_bytes;
+      if (localSort === "enabled") {
+        if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+      }
+      return a.display_name.localeCompare(b.display_name);
+    });
+    return filtered;
+  }, [activeTab, installedMods, resourcePacks, shaderPacks, localQuery, localSort]);
 
   return (
     <div className="h-full overflow-y-auto p-5 bg-[#080A0F]">
@@ -392,22 +606,25 @@ export function ContentManagerPanel({
 
       <div className="max-w-5xl mx-auto space-y-4">
         {/* Header & Segmented Tabs */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           <div>
             <h1 className="text-lg font-semibold text-white">
-              Mods y Resource Packs
+              Mods, Resource Packs y Shaders
             </h1>
             <p className="text-[11px] font-mono text-slate-500">
               {profile.name} · MC {profile.mc_version} ({profile.loader})
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex rounded-lg bg-[#11151E] border border-[#1E2534] p-0.5">
               <button
                 type="button"
-                onClick={() => setActiveTab("installed")}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                onClick={() => {
+                  setActiveTab("installed");
+                  setConfirmDeleteFile(null);
+                }}
+                className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
                   activeTab === "installed"
                     ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
                     : "text-slate-400 hover:text-slate-200"
@@ -418,7 +635,7 @@ export function ContentManagerPanel({
               <button
                 type="button"
                 onClick={() => setActiveTab("recommended")}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
                   activeTab === "recommended"
                     ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
                     : "text-slate-400 hover:text-slate-200"
@@ -428,14 +645,31 @@ export function ContentManagerPanel({
               </button>
               <button
                 type="button"
-                onClick={() => setActiveTab("resource_packs")}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                onClick={() => {
+                  setActiveTab("resource_packs");
+                  setConfirmDeleteFile(null);
+                }}
+                className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
                   activeTab === "resource_packs"
                     ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
-                Resource Packs ({resourcePacks.length})
+                Packs ({resourcePacks.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab("shaders");
+                  setConfirmDeleteFile(null);
+                }}
+                className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                  activeTab === "shaders"
+                    ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Shaders ({shaderPacks.length})
               </button>
             </div>
 
@@ -452,7 +686,9 @@ export function ContentManagerPanel({
               type="button"
               onClick={() => {
                 void refreshLocal();
-                if (activeTab === "recommended") void refreshDynamicFeed();
+                if (activeTab === "recommended" && searchResults === null) {
+                  void fetchFeedPage(feedOffset, false, modrinthSort);
+                }
               }}
               title="Recargar"
               className="h-8 w-8 rounded-lg bg-[#11151E] border border-[#1E2534] flex items-center justify-center text-slate-400 hover:text-white"
@@ -467,7 +703,7 @@ export function ContentManagerPanel({
         {dragActive && (
           <div className="rounded-xl border-2 border-dashed border-[var(--accent-primary)] bg-[var(--accent-soft)] p-4 text-center text-xs font-medium text-[var(--accent-primary)]">
             Suelta tus archivos .jar o .zip aquí para instalarlos en{" "}
-            {profile.name}
+            {activeTab === "shaders" ? "shaderpacks/" : profile.name}
           </div>
         )}
 
@@ -511,7 +747,7 @@ export function ContentManagerPanel({
                       onClick={() => void handlePreset("fps_pure")}
                       className="rounded-md bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-2.5 py-1 text-[11px] text-slate-300"
                     >
-                      Reinstalar
+                      Actualizar
                     </button>
                   </div>
                 ) : (
@@ -679,19 +915,23 @@ export function ContentManagerPanel({
               </div>
             )}
 
-            {/* Smart Modrinth Search Bar */}
+            {/* Smart Modrinth Search Bar + Sort */}
             <form
-              onSubmit={(e) => void handleSearch(e)}
+              onSubmit={(e) => void handleSearchSubmit(e)}
               className="flex flex-wrap items-center gap-2"
             >
-              <div className="relative flex-1 min-w-[220px]">
+              <div className="relative flex-1 min-w-[200px]">
                 <Search className="h-3.5 w-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => {
                     setSearchQuery(e.target.value);
-                    if (!e.target.value.trim()) setSearchResults(null);
+                    if (!e.target.value.trim()) {
+                      setSearchResults(null);
+                      setSearchOffset(0);
+                      setSearchHasMore(false);
+                    }
                   }}
                   placeholder={`Buscar en Modrinth para ${profile.loader} ${profile.mc_version}...`}
                   className="w-full rounded-lg bg-[#11151E] border border-[#1E2534] pl-9 pr-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-[var(--accent-primary)] focus:outline-none"
@@ -705,6 +945,31 @@ export function ContentManagerPanel({
               >
                 <option value="mod">Mods</option>
                 <option value="resource_pack">Resource Packs</option>
+                <option value="shader">Shaders</option>
+              </select>
+
+              <select
+                value={modrinthSort}
+                onChange={(e) => {
+                  const nextSort = e.target.value as ModrinthSort;
+                  setModrinthSort(nextSort);
+                  if (searchResults !== null && searchQuery.trim()) {
+                    void executeSearch(
+                      searchQuery,
+                      searchKind,
+                      0,
+                      nextSort,
+                      false,
+                    );
+                  }
+                }}
+                title="Ordenar resultados"
+                className="rounded-lg bg-[#11151E] border border-[#1E2534] px-3 py-2 text-xs text-slate-200 focus:border-[var(--accent-primary)] focus:outline-none"
+              >
+                <option value="downloads">Descargas</option>
+                <option value="relevance">Relevancia</option>
+                <option value="newest">Nuevos</option>
+                <option value="updated">Actualizados</option>
               </select>
 
               <button
@@ -718,34 +983,47 @@ export function ContentManagerPanel({
 
             {/* Dynamic Discovery Filter Chips */}
             {!searchResults && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                {(
-                  [
-                    { id: "performance", label: "Rendimiento" },
-                    { id: "visual", label: "Visual y Shaders" },
-                    { id: "qol", label: "Calidad de Vida" },
-                    { id: "world", label: "Mundo y Aventura" },
-                    { id: "resource_pack", label: "Resource Packs" },
-                  ] as { id: DiscoveryChip; label: string }[]
-                ).map((chip) => (
-                  <button
-                    key={chip.id}
-                    type="button"
-                    onClick={() => setDiscoveryChip(chip.id)}
-                    className={`rounded-full px-3 py-1 text-[11px] font-medium border transition-colors ${
-                      discoveryChip === chip.id
-                        ? "bg-[var(--accent-soft)] text-[var(--accent-primary)] border-[var(--accent-border)]"
-                        : "bg-[#11151E] text-slate-400 border-[#1E2534] hover:text-slate-200"
-                    }`}
-                  >
-                    {chip.label}
-                  </button>
-                ))}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {(
+                    [
+                      { id: "performance", label: "Rendimiento" },
+                      { id: "visual", label: "Visual y Ambiente" },
+                      { id: "qol", label: "Calidad de Vida" },
+                      { id: "world", label: "Mundo y Aventura" },
+                      { id: "resource_pack", label: "Resource Packs" },
+                      { id: "shader", label: "Shaders" },
+                    ] as { id: DiscoveryChip; label: string }[]
+                  ).map((chip) => (
+                    <button
+                      key={chip.id}
+                      type="button"
+                      onClick={() => setDiscoveryChip(chip.id)}
+                      className={`rounded-full px-3 py-1 text-[11px] font-medium border transition-colors ${
+                        discoveryChip === chip.id
+                          ? "bg-[var(--accent-soft)] text-[var(--accent-primary)] border-[var(--accent-border)]"
+                          : "bg-[#11151E] text-slate-400 border-[#1E2534] hover:text-slate-200"
+                      }`}
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  disabled={loadingFeed}
+                  onClick={() => void handleRefreshSuggestions()}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#11151E] hover:bg-[#171D2A] border border-[#1E2534] px-3 py-1 text-[11px] font-medium text-slate-200 disabled:opacity-45 transition-colors"
+                >
+                  <Shuffle className="h-3 w-3 text-[var(--accent-primary)]" />
+                  Renovar sugerencias
+                </button>
               </div>
             )}
 
             {/* Dynamic "Te podría gustar" / Search Results Grid */}
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
                   <Sparkles className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
@@ -759,6 +1037,8 @@ export function ContentManagerPanel({
                     onClick={() => {
                       setSearchQuery("");
                       setSearchResults(null);
+                      setSearchOffset(0);
+                      setSearchHasMore(false);
                     }}
                     className="text-[11px] text-[var(--accent-primary)] hover:underline"
                   >
@@ -767,7 +1047,7 @@ export function ContentManagerPanel({
                 )}
               </div>
 
-              {loadingFeed && !searchResults ? (
+              {loadingFeed && displayList.length === 0 && !searchResults ? (
                 <div className="rounded-xl bg-[#11151E] border border-[#1E2534] p-6 text-center text-xs font-mono text-slate-500">
                   Consultando Modrinth API v2...
                 </div>
@@ -776,95 +1056,155 @@ export function ContentManagerPanel({
                   No se encontraron resultados nuevos para esta categoría.
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                  {displayList.map((item) => {
-                    const isInstalling = busySlug === item.slug;
-                    const disabledByLoader =
-                      item.kind === "mod" && profile.loader !== "fabric";
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                    {displayList.map((item) => {
+                      const isInstalling = busySlug === item.slug;
+                      const disabledByLoader =
+                        item.kind === "mod" && profile.loader === "vanilla";
 
-                    return (
-                      <div
-                        key={`${item.kind}-${item.slug}`}
-                        className="rounded-xl bg-[#11151E] border border-[#1E2534] p-3.5 flex items-center justify-between gap-3"
-                      >
-                        <div className="min-w-0 flex items-center gap-3">
-                          {item.icon_url ? (
-                            <img
-                              src={item.icon_url}
-                              alt={item.title}
-                              className="h-9 w-9 rounded-lg object-cover border border-[#1E2534] shrink-0 bg-[#080A0F]"
-                            />
-                          ) : (
-                            <div className="h-9 w-9 rounded-lg bg-[#080A0F] border border-[#1E2534] flex items-center justify-center text-[var(--accent-primary)] shrink-0">
-                              {item.kind === "mod" ? (
-                                <Package className="h-4 w-4" />
-                              ) : (
-                                <FileArchive className="h-4 w-4" />
-                              )}
-                            </div>
-                          )}
-
-                          <div className="min-w-0 space-y-0.5">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-xs font-semibold text-white truncate">
-                                {item.title}
-                              </span>
-                              <span className="shrink-0 rounded bg-[#080A0F] border border-[#1E2534] px-1.5 py-0.5 text-[9px] font-mono text-slate-400">
-                                {formatDownloads(item.downloads)} DL
-                              </span>
-                            </div>
-                            <p className="text-[11px] text-slate-400 line-clamp-1">
-                              {item.description}
-                            </p>
-                            {!item.compatible && item.compatibility_note && (
-                              <span className="inline-flex items-center gap-1 rounded bg-[#F59E0B]/12 border border-[#F59E0B]/35 px-1.5 py-0.5 text-[9px] font-mono text-[#F59E0B]">
-                                <AlertTriangle className="h-2.5 w-2.5" />
-                                {item.compatibility_note}
-                              </span>
+                      return (
+                        <div
+                          key={`${item.kind}-${item.slug}`}
+                          className="rounded-xl bg-[#11151E] border border-[#1E2534] p-3.5 flex items-center justify-between gap-3"
+                        >
+                          <div className="min-w-0 flex items-center gap-3">
+                            {item.icon_url ? (
+                              <img
+                                src={item.icon_url}
+                                alt={item.title}
+                                className="h-9 w-9 rounded-lg object-cover border border-[#1E2534] shrink-0 bg-[#080A0F]"
+                              />
+                            ) : (
+                              <div className="h-9 w-9 rounded-lg bg-[#080A0F] border border-[#1E2534] flex items-center justify-center text-[var(--accent-primary)] shrink-0">
+                                {item.kind === "mod" ? (
+                                  <Package className="h-4 w-4" />
+                                ) : item.kind === "shader" ? (
+                                  <Sun className="h-4 w-4" />
+                                ) : (
+                                  <FileArchive className="h-4 w-4" />
+                                )}
+                              </div>
                             )}
-                          </div>
-                        </div>
 
-                        {item.installed ? (
-                          <span className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-soft)] border border-[var(--accent-border)] px-2.5 py-1.5 text-[11px] font-mono text-[var(--accent-primary)]">
-                            <Check className="h-3 w-3" />
-                            Instalado
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={
-                              busySlug !== null ||
-                              disabledByLoader ||
-                              !item.compatible
-                            }
-                            onClick={() => void handleInstallSingle(item)}
-                            className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-[#171D2A] hover:bg-[#1E2534] border border-[#1E2534] disabled:opacity-40 px-3 py-1.5 text-[11px] font-medium text-white transition-colors"
-                          >
-                            <Download className="h-3 w-3 text-[var(--accent-primary)]" />
-                            {isInstalling ? "..." : "Instalar"}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                            <div className="min-w-0 space-y-0.5">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs font-semibold text-white truncate">
+                                  {item.title}
+                                </span>
+                                <span className="shrink-0 rounded bg-[#080A0F] border border-[#1E2534] px-1.5 py-0.5 text-[9px] font-mono text-slate-400">
+                                  {formatDownloads(item.downloads)} DL
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-400 line-clamp-1">
+                                {item.description}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-1">
+                                {!item.compatible && item.compatibility_note && (
+                                  <span className="inline-flex items-center gap-1 rounded bg-[#F59E0B]/12 border border-[#F59E0B]/35 px-1.5 py-0.5 text-[9px] font-mono text-[#F59E0B]">
+                                    <AlertTriangle className="h-2.5 w-2.5" />
+                                    {item.compatibility_note}
+                                  </span>
+                                )}
+                                {item.performance_warning && (
+                                  <span className="inline-flex items-center gap-1 rounded bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-1.5 py-0.5 text-[9px] font-mono text-[#F59E0B]">
+                                    <AlertTriangle className="h-2.5 w-2.5" />
+                                    {item.performance_warning}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {item.installed ? (
+                            <span className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-soft)] border border-[var(--accent-border)] px-2.5 py-1.5 text-[11px] font-mono text-[var(--accent-primary)]">
+                              <Check className="h-3 w-3" />
+                              Instalado
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={
+                                busySlug !== null ||
+                                disabledByLoader ||
+                                !item.compatible
+                              }
+                              onClick={() => void handleInstallSingle(item)}
+                              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-[#171D2A] hover:bg-[#1E2534] border border-[#1E2534] disabled:opacity-40 px-3 py-1.5 text-[11px] font-medium text-white transition-colors"
+                            >
+                              <Download className="h-3 w-3 text-[var(--accent-primary)]" />
+                              {isInstalling ? "..." : "Instalar"}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {canLoadMore && (
+                    <div className="pt-1 flex justify-center">
+                      <button
+                        type="button"
+                        disabled={loadingFeed || searching}
+                        onClick={() => void handleLoadMore()}
+                        className="rounded-lg bg-[#11151E] hover:bg-[#171D2A] border border-[#1E2534] px-5 py-2 text-xs font-medium text-slate-200 disabled:opacity-45 transition-colors"
+                      >
+                        {loadingFeed || searching
+                          ? "Cargando..."
+                          : "Cargar más resultados"}
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
         )}
 
-        {/* TAB: INSTALADOS / RESOURCE PACKS */}
-        {(activeTab === "installed" || activeTab === "resource_packs") && (
+        {/* TAB: INSTALADOS / RESOURCE PACKS / SHADERS */}
+        {(activeTab === "installed" ||
+          activeTab === "resource_packs" ||
+          activeTab === "shaders") && (
           <div className="space-y-3">
+            {/* Local Search & Sort Controls */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="h-3.5 w-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={localQuery}
+                  onChange={(e) => setLocalQuery(e.target.value)}
+                  placeholder="Filtrar elementos instalados por nombre o archivo..."
+                  className="w-full rounded-lg bg-[#11151E] border border-[#1E2534] pl-9 pr-3 py-1.5 text-xs text-white placeholder:text-slate-500 focus:border-[var(--accent-primary)] focus:outline-none"
+                />
+              </div>
+
+              <select
+                value={localSort}
+                onChange={(e) => setLocalSort(e.target.value as LocalSort)}
+                className="rounded-lg bg-[#11151E] border border-[#1E2534] px-3 py-1.5 text-xs text-slate-200 focus:border-[var(--accent-primary)] focus:outline-none"
+              >
+                <option value="name">Nombre (A-Z)</option>
+                <option value="size">Tamaño (mayor)</option>
+                <option value="enabled">Activos primero</option>
+              </select>
+            </div>
+
             <div className="rounded-xl border border-dashed border-[#1E2534] bg-[#11151E]/60 px-4 py-3 flex items-center justify-between gap-3 text-xs text-slate-400">
               <span className="inline-flex items-center gap-2">
                 <Upload className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                 Arrastra archivos{" "}
                 <code className="text-[var(--accent-primary)]">
-                  {activeTab === "resource_packs" ? ".zip" : ".jar"}
+                  {activeTab === "installed" ? ".jar" : ".zip"}
                 </code>{" "}
-                a esta ventana para importarlos
+                a esta ventana para importarlos en{" "}
+                <code className="text-slate-300">
+                  {activeTab === "shaders"
+                    ? "shaderpacks/"
+                    : activeTab === "resource_packs"
+                      ? "resourcepacks/"
+                      : "mods/"}
+                </code>
               </span>
               <button
                 type="button"
@@ -876,29 +1216,31 @@ export function ContentManagerPanel({
             </div>
 
             <div className="divide-y divide-[#1E2534] rounded-xl border border-[#1E2534] bg-[#11151E] overflow-hidden">
-              {(activeTab === "installed" ? installedMods : resourcePacks)
-                .length === 0 ? (
+              {filteredLocalItems.length === 0 ? (
                 <div className="p-8 text-center text-xs font-mono text-slate-500">
-                  No hay elementos instalados todavía.
+                  {localQuery.trim()
+                    ? "Sin coincidencias para el filtro actual."
+                    : "No hay elementos instalados todavía."}
                 </div>
               ) : (
-                (activeTab === "installed" ? installedMods : resourcePacks).map(
-                  (item) => {
-                    const kind: ContentKind =
-                      activeTab === "resource_packs" ? "resource_pack" : "mod";
-                    return (
-                      <div
-                        key={item.file_name}
-                        className="flex items-center justify-between px-4 py-2.5 hover:bg-[#171D2A]/60 transition-colors"
-                      >
-                        <div className="min-w-0 pr-4 flex items-center gap-2.5">
-                          {kind === "mod" ? (
-                            <Package className="h-4 w-4 text-slate-500 shrink-0" />
-                          ) : (
-                            <FileArchive className="h-4 w-4 text-slate-500 shrink-0" />
-                          )}
-                          <div className="min-w-0">
-                            <div
+                filteredLocalItems.map((item) => {
+                  const isConfirming = confirmDeleteFile === item.file_name;
+                  return (
+                    <div
+                      key={item.file_name}
+                      className="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-[#171D2A]/60 transition-colors"
+                    >
+                      <div className="min-w-0 pr-2 flex items-center gap-2.5">
+                        {currentLocalKind === "mod" ? (
+                          <Package className="h-4 w-4 text-slate-500 shrink-0" />
+                        ) : currentLocalKind === "shader" ? (
+                          <Sun className="h-4 w-4 text-slate-500 shrink-0" />
+                        ) : (
+                          <FileArchive className="h-4 w-4 text-slate-500 shrink-0" />
+                        )}
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span
                               className={`text-xs font-medium truncate ${
                                 item.enabled
                                   ? "text-slate-100"
@@ -906,18 +1248,58 @@ export function ContentManagerPanel({
                               }`}
                             >
                               {item.display_name}
-                            </div>
-                            <div className="text-[10px] font-mono text-slate-500 truncate">
-                              {item.file_name} · {formatSize(item.size_bytes)}
-                            </div>
+                            </span>
+                            {item.version && (
+                              <span className="shrink-0 rounded bg-[#080A0F] border border-[#1E2534] px-1.5 py-0.5 text-[9px] font-mono text-slate-400">
+                                v{item.version}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-500 truncate">
+                            {item.file_name} · {formatSize(item.size_bytes)}
+                            {item.mod_id ? ` · ${item.mod_id}` : ""}
                           </div>
                         </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {isConfirming ? (
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleDelete(item, currentLocalKind)
+                              }
+                              className="rounded-md bg-rose-600 hover:bg-rose-500 px-2 py-1 text-[10px] font-semibold text-white transition-colors"
+                            >
+                              Eliminar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteFile(null)}
+                              className="rounded-md bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-2 py-1 text-[10px] text-slate-300"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteFile(item.file_name)}
+                            title="Eliminar archivo"
+                            className="p-1.5 rounded-md text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
 
                         <button
                           type="button"
                           role="switch"
                           aria-checked={item.enabled}
-                          onClick={() => void handleToggle(item, kind)}
+                          onClick={() =>
+                            void handleToggle(item, currentLocalKind)
+                          }
                           className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
                             item.enabled
                               ? "bg-[var(--accent-soft)] border-[var(--accent-border)]"
@@ -933,9 +1315,9 @@ export function ContentManagerPanel({
                           />
                         </button>
                       </div>
-                    );
-                  },
-                )
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>

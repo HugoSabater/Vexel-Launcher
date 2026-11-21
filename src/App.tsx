@@ -41,6 +41,7 @@ import type {
   LogCleanupResult,
   LogLineEvent,
   ModrinthSearchResult,
+  ModrinthSort,
   PerformancePreset,
   Profile,
   StorageBreakdown,
@@ -536,11 +537,19 @@ export function App() {
   );
 
   const handleGetDynamicRecommendations = useCallback(
-    async (profileId: string, category: string, kind: ContentKind) =>
+    async (
+      profileId: string,
+      category: string,
+      kind: ContentKind,
+      offset = 0,
+      sort: ModrinthSort = "downloads",
+    ) =>
       invoke<ModrinthSearchResult[]>("get_dynamic_recommendations", {
         profileId,
         category,
         kind,
+        offset,
+        sort,
       }),
     [],
   );
@@ -552,6 +561,8 @@ export function App() {
       mcVersion: string,
       loader: string,
       kind: ContentKind,
+      offset = 0,
+      sort: ModrinthSort = "relevance",
     ) =>
       invoke<ModrinthSearchResult[]>("search_modrinth", {
         profileId,
@@ -559,6 +570,8 @@ export function App() {
         mcVersion,
         loader,
         kind,
+        offset,
+        sort,
       }),
     [],
   );
@@ -575,6 +588,16 @@ export function App() {
         kind,
         fileName,
         enable,
+      }),
+    [],
+  );
+
+  const handleDeleteContent = useCallback(
+    async (profileId: string, kind: ContentKind, fileName: string) =>
+      invoke<void>("delete_profile_content", {
+        profileId,
+        kind,
+        fileName,
       }),
     [],
   );
@@ -885,6 +908,7 @@ export function App() {
                   onGetDynamicRecommendations={handleGetDynamicRecommendations}
                   onSearchModrinth={handleSearchModrinth}
                   onToggleContent={handleToggleContent}
+                  onDeleteContent={handleDeleteContent}
                   onImportContent={handleImportContent}
                   onImportContentBytes={handleImportContentBytes}
                   onInjectPreset={handleInjectPreset}
