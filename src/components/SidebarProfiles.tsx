@@ -45,7 +45,7 @@ interface SidebarProfilesProps {
   onDuplicateProfile: (profile: Profile) => Promise<void>;
   onSetDefault: (profileId: string) => Promise<void>;
   onSaveProfile: (profile: Profile) => Promise<void>;
-  onDeleteProfile: (profileId: string) => Promise<void>;
+  onDeleteProfile: (profileId: string, deleteFiles: boolean) => Promise<void>;
 }
 
 const LOADER_DOT: Record<ModLoaderKind, string> = {
@@ -91,6 +91,9 @@ export function SidebarProfiles({
 }: SidebarProfilesProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Profile | null>(null);
+  const [deleteFilesChecked, setDeleteFilesChecked] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [editingNick, setEditingNick] = useState(false);
   const [nickDraft, setNickDraft] = useState(offlineUsername);
 
@@ -173,7 +176,11 @@ export function SidebarProfiles({
     if (trimmed && trimmed !== offlineUsername) {
       if (!USERNAME_REGEX.test(trimmed)) {
         setNickDraft(offlineUsername);
-        await onUpdateUsername(trimmed);
+        try {
+          await onUpdateUsername(trimmed);
+        } catch {
+          // Validation error already shown in global banner
+        }
         return;
       }
       try {
@@ -461,12 +468,14 @@ export function SidebarProfiles({
               <div className="my-1 border-t border-[#1E2534]" />
               <button
                 type="button"
+                disabled={Boolean(runningProfileIds[contextMenu.profile.id])}
                 onClick={() => {
-                  const id = contextMenu.profile.id;
+                  const target = contextMenu.profile;
                   setContextMenu(null);
-                  void onDeleteProfile(id);
+                  setDeleteFilesChecked(false);
+                  setDeleteTarget(target);
                 }}
-                className="w-full px-3 py-1.5 text-left text-xs text-rose-400 hover:bg-rose-500/10 flex items-center gap-2.5"
+                className="w-full px-3 py-1.5 text-left text-xs text-rose-400 hover:bg-rose-500/10 disabled:opacity-40 flex items-center gap-2.5"
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 Eliminar
@@ -612,6 +621,71 @@ export function SidebarProfiles({
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Safe Profile Delete Confirmation Modal (Checkbox Unchecked by Default) */}
+      {deleteTarget && (
+        <div
+          onClick={() => !deleting && setDeleteTarget(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-xl bg-[#11151E] border border-[#1E2534] p-5 space-y-4 shadow-2xl"
+          >
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-white">
+                Eliminar perfil
+              </h2>
+              <p className="text-xs text-slate-400">
+                ¿Seguro que deseas quitar{" "}
+                <span className="font-semibold text-white">
+                  {deleteTarget.name}
+                </span>{" "}
+                de la lista de instancias?
+              </p>
+            </div>
+
+            <label className="flex items-start gap-2.5 rounded-lg bg-[#080A0F] border border-[#1E2534] px-3 py-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={deleteFilesChecked}
+                onChange={(e) => setDeleteFilesChecked(e.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 accent-rose-500 shrink-0"
+              />
+              <span className="text-[11px] text-slate-300 leading-snug">
+                Eliminar también la carpeta y mundos en disco (irreversible)
+              </span>
+            </label>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+                className="rounded-lg border border-[#1E2534] px-3.5 py-1.5 text-xs text-slate-300 hover:bg-[#171D2A]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => {
+                  const id = deleteTarget.id;
+                  const removeDisk = deleteFilesChecked;
+                  setDeleting(true);
+                  void onDeleteProfile(id, removeDisk).finally(() => {
+                    setDeleting(false);
+                    setDeleteTarget(null);
+                  });
+                }}
+                className="rounded-lg bg-rose-600 hover:bg-rose-500 px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                {deleting ? "Eliminando..." : "Eliminar"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </aside>

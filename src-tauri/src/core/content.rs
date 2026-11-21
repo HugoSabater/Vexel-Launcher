@@ -60,18 +60,6 @@ pub struct ContentItem {
     pub project_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CuratedRecommendation {
-    pub slug: String,
-    pub name: String,
-    pub description: String,
-    pub category: String,
-    pub badge: String,
-    pub kind: ContentKind,
-    pub installed: bool,
-    pub icon_url: Option<String>,
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InstanceContentIndex {
     #[serde(default)]
@@ -247,136 +235,27 @@ fn read_fabric_mod_meta_blocking(jar_path: &Path) -> Option<JarModMetadata> {
     })
 }
 
-struct CuratedCatalogEntry {
+struct CuratedLabelEntry {
     slug: &'static str,
     name: &'static str,
-    description: &'static str,
-    category: &'static str,
-    badge: &'static str,
-    kind: ContentKind,
 }
 
-const CURATED_CATALOG: &[CuratedCatalogEntry] = &[
-    CuratedCatalogEntry {
-        slug: "sodium",
-        name: "Sodium",
-        description: "Motor de renderizado moderno para OpenGL con ganancias masivas de FPS.",
-        category: "FPS Puros",
-        badge: "Core Render",
-        kind: ContentKind::Mod,
-    },
-    CuratedCatalogEntry {
-        slug: "lithium",
-        name: "Lithium",
-        description: "Optimiza física, IA de mobs y ticks de chunks sin alterar mecánicas vanilla.",
-        category: "FPS Puros",
-        badge: "Server/Tick",
-        kind: ContentKind::Mod,
-    },
-    CuratedCatalogEntry {
-        slug: "ferrite-core",
-        name: "FerriteCore",
-        description: "Reduce drásticamente el consumo de memoria RAM en modelos y BlockStates.",
-        category: "FPS Puros",
-        badge: "RAM -40%",
-        kind: ContentKind::Mod,
-    },
-    CuratedCatalogEntry {
-        slug: "immediatelyfast",
-        name: "ImmediatelyFast",
-        description: "Acelera el renderizado de entidades, UI, texto y partículas en tiempo real.",
-        category: "FPS Puros",
-        badge: "HUD & Entities",
-        kind: ContentKind::Mod,
-    },
-    CuratedCatalogEntry {
-        slug: "modernfix",
-        name: "ModernFix",
-        description: "Reduce tiempos de arranque, consumo de RAM y corrige cuellos de botella modernos.",
-        category: "FPS Puros",
-        badge: "Carga Rápida",
-        kind: ContentKind::Mod,
-    },
-    CuratedCatalogEntry {
-        slug: "entityculling",
-        name: "Entity Culling",
-        description: "Evita renderizar entidades y bloques ocultos detrás de muros usando ray-tracing asíncrono.",
-        category: "FPS Puros",
-        badge: "GPU Culling",
-        kind: ContentKind::Mod,
-    },
-    CuratedCatalogEntry {
-        slug: "moreculling",
-        name: "MoreCulling",
-        description: "Añade culling inteligente a hojas, marcos, bloques transparentes y entidades.",
-        category: "FPS Puros",
-        badge: "Mesh Culling",
-        kind: ContentKind::Mod,
-    },
-    CuratedCatalogEntry {
-        slug: "dynamic-fps",
-        name: "Dynamic FPS",
-        description: "Reduce automáticamente el consumo de GPU y CPU cuando Minecraft está en segundo plano.",
-        category: "FPS Puros",
-        badge: "Ahorro GPU",
-        kind: ContentKind::Mod,
-    },
-    CuratedCatalogEntry {
-        slug: "badoptimizations",
-        name: "BadOptimizations",
-        description: "Colección de micro-optimizaciones de cliente sin modificar el renderizado de Sodium.",
-        category: "FPS Puros",
-        badge: "Micro-Opt",
-        kind: ContentKind::Mod,
-    },
-    CuratedCatalogEntry {
-        slug: "c2me-fabric",
-        name: "C2ME",
-        description: "Generación y carga multihilo de chunks en Singleplayer (ideal para /tp y exploración rápida).",
-        category: "Chunks Local",
-        badge: "Opcional · Multithread",
-        kind: ContentKind::Mod,
-    },
-    CuratedCatalogEntry {
-        slug: "bobby",
-        name: "Bobby",
-        description: "Caché local de chunks para ver más allá de la view-distance limitada por servidores multijugador.",
-        category: "Multijugador",
-        badge: "Opcional · Chunks MP",
-        kind: ContentKind::Mod,
-    },
-    CuratedCatalogEntry {
-        slug: "distanthorizons",
-        name: "Distant Horizons",
-        description: "LODs de distancia extrema (64+ chunks) con coste controlado de GPU.",
-        category: "Horizonte",
-        badge: "Opcional · LOD",
-        kind: ContentKind::Mod,
-    },
-    CuratedCatalogEntry {
-        slug: "iris",
-        name: "Iris Shaders",
-        description: "Soporte de shaders modernos totalmente compatible con Sodium.",
-        category: "Visual",
-        badge: "Shaders",
-        kind: ContentKind::Mod,
-    },
-    CuratedCatalogEntry {
-        slug: "fresh-animations",
-        name: "Fresh Animations",
-        description: "Animaciones fluidas y expresivas para todos los mobs manteniendo estética vanilla.",
-        category: "Resource Pack",
-        badge: "Animaciones",
-        kind: ContentKind::ResourcePack,
-    },
-    CuratedCatalogEntry {
-        slug: "bare-bones",
-        name: "Bare Bones",
-        description: "Texturas limpias estilo tráiler oficial de Minecraft con gran claridad visual.",
-        category: "Resource Pack",
-        badge: "Minimal",
-        kind: ContentKind::ResourcePack,
-    },
+const CURATED_LABELS: &[CuratedLabelEntry] = &[
+    CuratedLabelEntry { slug: "sodium", name: "Sodium" },
+    CuratedLabelEntry { slug: "lithium", name: "Lithium" },
+    CuratedLabelEntry { slug: "ferrite-core", name: "FerriteCore" },
+    CuratedLabelEntry { slug: "immediatelyfast", name: "ImmediatelyFast" },
+    CuratedLabelEntry { slug: "modernfix", name: "ModernFix" },
+    CuratedLabelEntry { slug: "entityculling", name: "Entity Culling" },
+    CuratedLabelEntry { slug: "moreculling", name: "MoreCulling" },
+    CuratedLabelEntry { slug: "dynamic-fps", name: "Dynamic FPS" },
+    CuratedLabelEntry { slug: "badoptimizations", name: "BadOptimizations" },
+    CuratedLabelEntry { slug: "c2me-fabric", name: "C2ME" },
+    CuratedLabelEntry { slug: "bobby", name: "Bobby" },
+    CuratedLabelEntry { slug: "distanthorizons", name: "Distant Horizons" },
+    CuratedLabelEntry { slug: "iris", name: "Iris Shaders" },
+    CuratedLabelEntry { slug: "fresh-animations", name: "Fresh Animations" },
+    CuratedLabelEntry { slug: "bare-bones", name: "Bare Bones" },
 ];
 
 #[derive(Debug, Clone, Deserialize)]
@@ -769,40 +648,6 @@ pub async fn list_instance_content(
 
     items.sort_by_key(|a| a.display_name.to_lowercase());
     Ok(items)
-}
-
-pub async fn list_curated_recommendations(
-    paths: &LauncherPaths,
-    profile_id: &str,
-) -> AppResult<Vec<CuratedRecommendation>> {
-    let installed_mods = list_instance_content(paths, profile_id, ContentKind::Mod).await?;
-    let installed_packs =
-        list_instance_content(paths, profile_id, ContentKind::ResourcePack).await?;
-    let installed_shaders = list_instance_content(paths, profile_id, ContentKind::Shader).await?;
-
-    let results = CURATED_CATALOG
-        .iter()
-        .map(|entry| {
-            let pool = match entry.kind {
-                ContentKind::Mod => &installed_mods,
-                ContentKind::ResourcePack => &installed_packs,
-                ContentKind::Shader => &installed_shaders,
-            };
-            let installed = is_project_installed(None, entry.slug, pool);
-            CuratedRecommendation {
-                slug: entry.slug.to_string(),
-                name: entry.name.to_string(),
-                description: entry.description.to_string(),
-                category: entry.category.to_string(),
-                badge: entry.badge.to_string(),
-                kind: entry.kind,
-                installed,
-                icon_url: None,
-            }
-        })
-        .collect();
-
-    Ok(results)
 }
 
 pub async fn toggle_content_item(
@@ -1586,7 +1431,7 @@ pub async fn install_single_modrinth_item<F>(
 where
     F: Fn(DownloadProgress) + Send + Sync + 'static,
 {
-    let label = CURATED_CATALOG
+    let label = CURATED_LABELS
         .iter()
         .find(|e| e.slug == slug)
         .map_or_else(|| slug.to_string(), |e| e.name.to_string());
@@ -1861,6 +1706,46 @@ mod tests {
         delete_content_item(&paths, "test-prof", ContentKind::Shader, "bsl.zip.disabled").await?;
         let reloaded = InstanceContentIndex::load(&index_path).await;
         assert!(reloaded.entries.is_empty());
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_list_instance_content_reads_and_caches_fabric_mod_json() -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "mc-launcher-jar-meta-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let paths = LauncherPaths::with_root(tmp.clone());
+        paths.ensure_instance_dirs("fabric-test").await?;
+
+        let jar_path = paths
+            .instance_mods_dir("fabric-test")
+            .join("sodium-fabric-0.6.5.jar");
+        {
+            let file = std::fs::File::create(&jar_path)?;
+            let mut writer = zip::ZipWriter::new(file);
+            writer.start_file("fabric.mod.json", SimpleFileOptions::default())?;
+            writer.write_all(
+                br#"{"schemaVersion":1,"id":"sodium","version":"0.6.5+mc1.21.4","name":"Sodium"}"#,
+            )?;
+            writer.finish()?;
+        }
+
+        let items = super::list_instance_content(&paths, "fabric-test", ContentKind::Mod).await?;
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].display_name, "Sodium");
+        assert_eq!(items[0].mod_id.as_deref(), Some("sodium"));
+        assert_eq!(items[0].version.as_deref(), Some("0.6.5+mc1.21.4"));
+
+        let cached_idx =
+            InstanceContentIndex::load(&paths.instance_content_index_path("fabric-test")).await;
+        assert_eq!(cached_idx.entries.len(), 1);
+        assert_eq!(cached_idx.entries[0].mod_id.as_deref(), Some("sodium"));
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
         Ok(())

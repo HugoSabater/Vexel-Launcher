@@ -12,9 +12,8 @@ use tokio::sync::Mutex;
 use crate::core::content::{
     delete_content_item, get_dynamic_recommendations as fetch_dynamic_recommendations,
     import_content_bytes, import_content_file, inject_modrinth_preset,
-    install_single_modrinth_item, list_curated_recommendations, list_instance_content,
-    search_modrinth_catalog, toggle_content_item, ContentItem, ContentKind, CuratedRecommendation,
-    ModrinthSearchResult, PerformancePreset,
+    install_single_modrinth_item, list_instance_content, search_modrinth_catalog,
+    toggle_content_item, ContentItem, ContentKind, ModrinthSearchResult, PerformancePreset,
 };
 use crate::core::downloader::{verify_and_download_all, DownloadProgress};
 use crate::core::hardware::{
@@ -32,7 +31,7 @@ use crate::core::jvm_optimizer::{generate_jvm_flags, GcPreset, JvmTuningInput, J
 use crate::core::loaders::{merge_overlay_into_plan, resolve_fabric_overlay};
 use crate::core::manifest::{
     build_download_plan, extract_game_arguments, fetch_or_load_asset_index,
-    fetch_or_load_version_manifest,
+    fetch_or_load_version_manifest, validate_version_id,
 };
 use crate::core::paths::LauncherPaths;
 use crate::core::runner::{
@@ -200,7 +199,7 @@ pub async fn save_global_settings(
         "hide_and_restore" | "close" => settings.launch_behavior,
         _ => "keep_open".to_string(),
     };
-    guard.close_on_launch = guard.launch_behavior != "keep_open" || settings.close_on_launch;
+    guard.close_on_launch = guard.launch_behavior != "keep_open";
     guard.apply_skin_ingame = settings.apply_skin_ingame;
     guard.accent_color = settings.accent_color;
     guard.auto_open_console_on_crash = settings.auto_open_console_on_crash;
@@ -213,7 +212,24 @@ pub async fn create_or_update_profile(
     state: State<'_, AppState>,
     profile: Profile,
 ) -> AppResult<LauncherConfig> {
+    validate_version_id(&profile.mc_version)?;
+
+    let is_running = {
+        let running = state.running_processes.lock().await;
+        running.contains_key(&profile.id)
+    };
+
     let mut guard = state.config.lock().await;
+    if is_running {
+        if let Some(existing) = guard.profiles.iter().find(|p| p.id == profile.id) {
+            if existing.mc_version != profile.mc_version || existing.loader != profile.loader {
+                return Err(AppError::ConfigError(
+                    "No puedes cambiar la versión o loader de un perfil mientras Minecraft está en ejecución.".to_string(),
+                ));
+            }
+        }
+    }
+
     upsert_profile(&state.paths, &mut guard, profile).await?;
     Ok(guard.clone())
 }
@@ -241,11 +257,33 @@ pub async fn set_default_profile(
 pub async fn remove_profile(
     state: State<'_, AppState>,
     profile_id: String,
+    delete_files: Option<bool>,
 ) -> AppResult<LauncherConfig> {
-    let mut guard = state.config.lock().await;
-    delete_profile(&mut guard, &profile_id)?;
-    save_config_atomic(&state.paths, &guard).await?;
-    Ok(guard.clone())
+    validate_profile_id(&profile_id)?;
+    {
+        let running = state.running_processes.lock().await;
+        if running.contains_key(&profile_id) {
+            return Err(AppError::ConfigError(
+                "Detén la instancia antes de eliminar este perfil.".to_string(),
+            ));
+        }
+    }
+
+    let next_config = {
+        let mut guard = state.config.lock().await;
+        delete_profile(&mut guard, &profile_id)?;
+        save_config_atomic(&state.paths, &guard).await?;
+        guard.clone()
+    };
+
+    if delete_files.unwrap_or(false) {
+        let instance_dir = state.paths.instance_dir(&profile_id);
+        if tokio::fs::try_exists(&instance_dir).await.unwrap_or(false) {
+            tokio::fs::remove_dir_all(&instance_dir).await?;
+        }
+    }
+
+    Ok(next_config)
 }
 
 #[tauri::command]
@@ -552,6 +590,7 @@ pub async fn get_launch_command_preview(
         window_width: profile.window_width,
         window_height: profile.window_height,
         fullscreen: profile.fullscreen,
+        detached: false,
     };
 
     Ok(build_full_command_preview(
@@ -596,28 +635,6 @@ fn validate_skin_png(bytes: &[u8]) -> AppResult<(u32, u32)> {
         )));
     }
     Ok((width, height))
-}
-
-#[tauri::command]
-pub async fn upload_custom_skin(
-    state: State<'_, AppState>,
-    source_path: String,
-) -> AppResult<String> {
-    let src = PathBuf::from(&source_path);
-    let bytes = tokio::fs::read(&src).await?;
-    validate_skin_png(&bytes)?;
-
-    state.paths.ensure_base_dirs().await?;
-    let dest = state.paths.custom_skin_path();
-    tokio::fs::write(&dest, &bytes).await?;
-
-    {
-        let mut guard = state.config.lock().await;
-        guard.skin_path = Some(dest.to_string_lossy().into_owned());
-        save_config_atomic(&state.paths, &guard).await?;
-    }
-
-    Ok(encode_png_data_url(&bytes))
 }
 
 #[tauri::command]
@@ -834,14 +851,6 @@ pub async fn inject_performance_preset(
 }
 
 #[tauri::command]
-pub async fn get_curated_recommendations(
-    state: State<'_, AppState>,
-    profile_id: String,
-) -> AppResult<Vec<CuratedRecommendation>> {
-    list_curated_recommendations(&state.paths, &profile_id).await
-}
-
-#[tauri::command]
 pub async fn install_modrinth_item(
     state: State<'_, AppState>,
     profile_id: String,
@@ -891,10 +900,8 @@ fn infer_java_major_for_mc_version(mc_version: &str) -> u32 {
 
     if major > 1 || (major == 1 && (minor > 20 || (minor == 20 && patch >= 5))) {
         21
-    } else if major == 1 && minor >= 18 {
+    } else if major == 1 && minor >= 17 {
         17
-    } else if major == 1 && minor == 17 {
-        16
     } else {
         8
     }
@@ -904,14 +911,36 @@ fn infer_java_major_for_mc_version(mc_version: &str) -> u32 {
 pub async fn check_profile_java(
     state: State<'_, AppState>,
     mc_version: String,
+    custom_java_path: Option<String>,
 ) -> AppResult<JavaRuntimeStatus> {
-    let cached_manifest = state.paths.version_json_path(&mc_version);
-    let required_major = if tokio::fs::try_exists(&cached_manifest).await? {
-        let raw = tokio::fs::read_to_string(&cached_manifest).await?;
-        serde_json::from_str::<crate::core::manifest::VersionManifest>(&raw)
-            .ok()
-            .and_then(|m| m.java_version.map(|j| j.major_version))
-            .unwrap_or_else(|| infer_java_major_for_mc_version(&mc_version))
+    if let Some(custom) = custom_java_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let custom_path = PathBuf::from(custom);
+        if let Ok(detected_major) = detect_java_major(&custom_path).await {
+            return Ok(JavaRuntimeStatus::Installed {
+                major: detected_major,
+                javaw_path: custom.to_string(),
+            });
+        }
+    }
+
+    let required_major = if validate_version_id(&mc_version).is_ok() {
+        let cached_manifest = state.paths.version_json_path(&mc_version);
+        if tokio::fs::try_exists(&cached_manifest).await? {
+            tokio::fs::read_to_string(&cached_manifest)
+                .await
+                .ok()
+                .and_then(|raw| {
+                    serde_json::from_str::<crate::core::manifest::VersionManifest>(&raw).ok()
+                })
+                .and_then(|m| m.java_version.map(|j| j.major_version))
+                .unwrap_or_else(|| infer_java_major_for_mc_version(&mc_version))
+        } else {
+            infer_java_major_for_mc_version(&mc_version)
+        }
     } else {
         infer_java_major_for_mc_version(&mc_version)
     };
@@ -1201,6 +1230,7 @@ pub async fn launch_profile(
         config_snapshot.launch_behavior.clone()
     };
     let should_restore_window = effective_behavior == "hide_and_restore";
+    let launch_detached = effective_behavior == "close";
     let exit_channel = on_exit.clone();
 
     let pid = spawn_minecraft(
@@ -1225,6 +1255,7 @@ pub async fn launch_profile(
             window_width: profile.window_width,
             window_height: profile.window_height,
             fullscreen: profile.fullscreen,
+            detached: launch_detached,
         },
         &state.paths,
         state.hardware.logical_cores,
@@ -1316,5 +1347,16 @@ mod tests {
         assert!(validate_skin_png(&make_png_header(100, 100)).is_err());
         assert!(validate_skin_png(&make_png_header(32, 32)).is_err());
         assert!(validate_skin_png(&make_png_header(2048, 2048)).is_err());
+    }
+
+    #[test]
+    fn test_infer_java_major_maps_1_17_to_17_and_modern_to_21() {
+        assert_eq!(super::infer_java_major_for_mc_version("1.8.9"), 8);
+        assert_eq!(super::infer_java_major_for_mc_version("1.16.5"), 8);
+        assert_eq!(super::infer_java_major_for_mc_version("1.17.1"), 17);
+        assert_eq!(super::infer_java_major_for_mc_version("1.20.4"), 17);
+        assert_eq!(super::infer_java_major_for_mc_version("1.20.5"), 21);
+        assert_eq!(super::infer_java_major_for_mc_version("1.21.4"), 21);
+        assert_eq!(super::infer_java_major_for_mc_version("24w45a"), 21);
     }
 }

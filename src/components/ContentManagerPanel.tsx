@@ -198,8 +198,24 @@ export function ContentManagerPanel({
 
   const activeTabRef = useRef<ContentTab>(activeTab);
   activeTabRef.current = activeTab;
+  const localReqRef = useRef(0);
+  const feedReqRef = useRef(0);
+  const searchReqRef = useRef(0);
+
+  // Reset search/transient state cleanly when switching profile
+  useEffect(() => {
+    searchReqRef.current += 1;
+    setSearchQuery("");
+    setSearchResults(null);
+    setSearchOffset(0);
+    setSearchHasMore(false);
+    setConfirmDeleteFile(null);
+    setStatusMessage(null);
+    setFeedOffset(0);
+  }, [profile.id]);
 
   const refreshLocal = useCallback(async () => {
+    const reqId = ++localReqRef.current;
     setLoading(true);
     try {
       const [mods, packs, shaders] = await Promise.all([
@@ -207,11 +223,19 @@ export function ContentManagerPanel({
         onListContent(profile.id, "resource_pack"),
         onListContent(profile.id, "shader"),
       ]);
+      if (reqId !== localReqRef.current) return;
       setInstalledMods(mods);
       setResourcePacks(packs);
       setShaderPacks(shaders);
+    } catch (err) {
+      if (reqId !== localReqRef.current) return;
+      setStatusMessage(
+        err instanceof Error ? err.message : "Error cargando contenido local",
+      );
     } finally {
-      setLoading(false);
+      if (reqId === localReqRef.current) {
+        setLoading(false);
+      }
     }
   }, [onListContent, profile.id]);
 
@@ -224,6 +248,7 @@ export function ContentManagerPanel({
 
   const fetchFeedPage = useCallback(
     async (offset: number, append: boolean, sort: ModrinthSort) => {
+      const reqId = ++feedReqRef.current;
       setLoadingFeed(true);
       try {
         const items = await onGetDynamicRecommendations(
@@ -233,6 +258,7 @@ export function ContentManagerPanel({
           offset,
           sort,
         );
+        if (reqId !== feedReqRef.current) return;
         if (append) {
           setDynamicFeed((prev) => {
             const seen = new Set(prev.map((p) => `${p.kind}:${p.slug}`));
@@ -250,10 +276,13 @@ export function ContentManagerPanel({
         setFeedOffset(offset);
         setFeedHasMore(items.length >= 10);
       } catch {
+        if (reqId !== feedReqRef.current) return;
         if (!append) setDynamicFeed([]);
         setFeedHasMore(false);
       } finally {
-        setLoadingFeed(false);
+        if (reqId === feedReqRef.current) {
+          setLoadingFeed(false);
+        }
       }
     },
     [discoveryChip, discoveryKind, onGetDynamicRecommendations, profile.id],
@@ -269,12 +298,14 @@ export function ContentManagerPanel({
     }
   }, [activeTab, fetchFeedPage, modrinthSort, searchResults]);
 
-  // Native Tauri v2 Drag & Drop listener (respects Shaders tab for .zip files)
+  // Native Tauri v2 Drag & Drop listener (leak-free on fast unmount + respects Shaders tab)
   useEffect(() => {
+    let active = true;
     let unlisten: (() => void) | null = null;
     try {
       void getCurrentWebview()
         .onDragDropEvent((event) => {
+          if (!active) return;
           if (event.payload.type === "over") {
             setDragActive(true);
           } else if (event.payload.type === "leave") {
@@ -288,36 +319,52 @@ export function ContentManagerPanel({
               activeTabRef.current === "shaders" ? "shader" : "resource_pack";
 
             void (async () => {
-              let imported = 0;
-              for (const fullPath of paths) {
-                const lower = fullPath.toLowerCase();
-                if (lower.endsWith(".jar") || lower.endsWith(".jar.disabled")) {
-                  await onImportContent(profile.id, "mod", fullPath);
-                  imported += 1;
-                } else if (
-                  lower.endsWith(".zip") ||
-                  lower.endsWith(".zip.disabled")
-                ) {
-                  await onImportContent(profile.id, zipTargetKind, fullPath);
-                  imported += 1;
+              try {
+                let imported = 0;
+                for (const fullPath of paths) {
+                  const lower = fullPath.toLowerCase();
+                  if (lower.endsWith(".jar") || lower.endsWith(".jar.disabled")) {
+                    await onImportContent(profile.id, "mod", fullPath);
+                    imported += 1;
+                  } else if (
+                    lower.endsWith(".zip") ||
+                    lower.endsWith(".zip.disabled")
+                  ) {
+                    await onImportContent(profile.id, zipTargetKind, fullPath);
+                    imported += 1;
+                  }
                 }
-              }
-              if (imported > 0) {
-                setStatusMessage(
-                  `Importados ${imported} archivo(s) en ${zipTargetKind === "shader" ? "shaderpacks/" : "la instancia"}.`,
-                );
-                await refreshLocal();
+                if (imported > 0 && active) {
+                  setStatusMessage(
+                    `Importados ${imported} archivo(s) en ${zipTargetKind === "shader" ? "shaderpacks/" : "la instancia"}.`,
+                  );
+                  await refreshLocal();
+                }
+              } catch (err) {
+                if (active) {
+                  setStatusMessage(
+                    err instanceof Error ? err.message : JSON.stringify(err),
+                  );
+                }
               }
             })();
           }
         })
         .then((fn) => {
-          unlisten = fn;
+          if (active) {
+            unlisten = fn;
+          } else {
+            fn();
+          }
+        })
+        .catch(() => {
+          // Browser preview fallback
         });
     } catch {
       // Browser preview fallback
     }
     return () => {
+      active = false;
       if (unlisten) unlisten();
     };
   }, [onImportContent, profile.id, refreshLocal]);
@@ -343,20 +390,26 @@ export function ContentManagerPanel({
   );
 
   const handleToggle = async (item: ContentItem, kind: ContentKind) => {
-    const updated = await onToggleContent(
-      profile.id,
-      kind,
-      item.file_name,
-      !item.enabled,
-    );
-    const updater = (prev: ContentItem[]) =>
-      prev.map((c) => (c.file_name === item.file_name ? updated : c));
-    if (kind === "mod") {
-      setInstalledMods(updater);
-    } else if (kind === "resource_pack") {
-      setResourcePacks(updater);
-    } else {
-      setShaderPacks(updater);
+    try {
+      const updated = await onToggleContent(
+        profile.id,
+        kind,
+        item.file_name,
+        !item.enabled,
+      );
+      const updater = (prev: ContentItem[]) =>
+        prev.map((c) => (c.file_name === item.file_name ? updated : c));
+      if (kind === "mod") {
+        setInstalledMods(updater);
+      } else if (kind === "resource_pack") {
+        setResourcePacks(updater);
+      } else {
+        setShaderPacks(updater);
+      }
+    } catch (err) {
+      setStatusMessage(
+        err instanceof Error ? err.message : JSON.stringify(err),
+      );
     }
   };
 
@@ -389,26 +442,33 @@ export function ContentManagerPanel({
     const zipTargetKind: ContentKind =
       activeTab === "shaders" ? "shader" : "resource_pack";
 
-    let count = 0;
-    for (const file of files) {
-      const lower = file.name.toLowerCase();
-      const kind: ContentKind =
-        lower.endsWith(".zip") || lower.endsWith(".zip.disabled")
-          ? zipTargetKind
-          : "mod";
-      const buffer = await file.arrayBuffer();
-      await onImportContentBytes(
-        profile.id,
-        kind,
-        file.name,
-        Array.from(new Uint8Array(buffer)),
+    try {
+      let count = 0;
+      for (const file of files) {
+        const lower = file.name.toLowerCase();
+        const kind: ContentKind =
+          lower.endsWith(".zip") || lower.endsWith(".zip.disabled")
+            ? zipTargetKind
+            : "mod";
+        const buffer = await file.arrayBuffer();
+        await onImportContentBytes(
+          profile.id,
+          kind,
+          file.name,
+          Array.from(new Uint8Array(buffer)),
+        );
+        count += 1;
+      }
+      if (count > 0) {
+        setStatusMessage(`Importados ${count} archivo(s) en la instancia.`);
+        await refreshLocal();
+      }
+    } catch (err) {
+      setStatusMessage(
+        err instanceof Error ? err.message : JSON.stringify(err),
       );
-      count += 1;
-    }
-    if (fileInputRef.current) fileInputRef.current.value = "";
-    if (count > 0) {
-      setStatusMessage(`Importados ${count} archivo(s) en la instancia.`);
-      await refreshLocal();
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -421,11 +481,13 @@ export function ContentManagerPanel({
   ) => {
     const q = query.trim();
     if (!q) {
+      searchReqRef.current += 1;
       setSearchResults(null);
       setSearchOffset(0);
       setSearchHasMore(false);
       return;
     }
+    const reqId = ++searchReqRef.current;
     setSearching(true);
     setStatusMessage(null);
     try {
@@ -438,6 +500,7 @@ export function ContentManagerPanel({
         offset,
         sort,
       );
+      if (reqId !== searchReqRef.current) return;
       if (append) {
         setSearchResults((prev) => {
           const base = prev ?? [];
@@ -456,11 +519,14 @@ export function ContentManagerPanel({
       setSearchOffset(offset);
       setSearchHasMore(hits.length >= 12);
     } catch (err) {
+      if (reqId !== searchReqRef.current) return;
       setStatusMessage(
         err instanceof Error ? err.message : JSON.stringify(err),
       );
     } finally {
-      setSearching(false);
+      if (reqId === searchReqRef.current) {
+        setSearching(false);
+      }
     }
   };
 

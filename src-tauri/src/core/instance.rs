@@ -156,14 +156,46 @@ pub async fn load_or_init_config(
     paths.ensure_base_dirs().await?;
     let config_path = paths.config_path();
 
-    let config = if tokio::fs::try_exists(&config_path).await? {
-        let raw = tokio::fs::read_to_string(&config_path).await?;
-        serde_json::from_str::<LauncherConfig>(&raw)?
+    let mut needs_save = false;
+    let mut config = if tokio::fs::try_exists(&config_path).await? {
+        match tokio::fs::read_to_string(&config_path).await {
+            Ok(raw) => match serde_json::from_str::<LauncherConfig>(&raw) {
+                Ok(parsed) => parsed,
+                Err(err) => {
+                    eprintln!("[Config Recovery] config.json corrupto ({err}); creando backup y reinicializando.");
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_secs());
+                    let backup_path = config_path.with_extension(format!("json.corrupt.{ts}"));
+                    let _ = tokio::fs::rename(&config_path, &backup_path).await;
+                    needs_save = true;
+                    LauncherConfig::default_with_hardware(hw)
+                }
+            },
+            Err(_) => {
+                needs_save = true;
+                LauncherConfig::default_with_hardware(hw)
+            }
+        }
     } else {
-        let initial = LauncherConfig::default_with_hardware(hw);
-        save_config_atomic(paths, &initial).await?;
-        initial
+        needs_save = true;
+        LauncherConfig::default_with_hardware(hw)
     };
+
+    // Migrate legacy close_on_launch: true -> launch_behavior: "hide_and_restore"
+    if config.close_on_launch && config.launch_behavior == "keep_open" {
+        config.launch_behavior = "hide_and_restore".to_string();
+        needs_save = true;
+    }
+
+    if config.profiles.is_empty() {
+        config.profiles = LauncherConfig::default_with_hardware(hw).profiles;
+        needs_save = true;
+    }
+
+    if needs_save {
+        save_config_atomic(paths, &config).await?;
+    }
 
     for profile in &config.profiles {
         validate_profile_id(&profile.id)?;
@@ -226,4 +258,75 @@ pub fn delete_profile(config: &mut LauncherConfig, profile_id: &str) -> AppResul
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{delete_profile, load_or_init_config, upsert_profile, LauncherConfig};
+    use crate::core::hardware::HardwareInfo;
+    use crate::core::paths::LauncherPaths;
+
+    fn sample_hw() -> HardwareInfo {
+        HardwareInfo {
+            total_ram_mb: 16384,
+            available_ram_mb: 10240,
+            logical_cores: 8,
+            recommended_vanilla_mb: 4096,
+            recommended_modded_mb: 6144,
+            max_safe_ram_mb: 8192,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_corrupt_config_recovery_and_legacy_close_on_launch_migration() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = std::env::temp_dir().join(format!(
+            "mc-launcher-cfg-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let paths = LauncherPaths::with_root(tmp.clone());
+        paths.ensure_base_dirs().await?;
+
+        // 1. Corrupt config.json recovers gracefully instead of crashing setup
+        tokio::fs::write(paths.config_path(), b"{ invalid json !!!").await?;
+        let recovered = load_or_init_config(&paths, &sample_hw()).await?;
+        assert!(!recovered.profiles.is_empty());
+
+        // 2. Legacy config with close_on_launch: true and missing launch_behavior migrates cleanly
+        let legacy_json = r#"{
+            "offline_username": "Tester",
+            "process_priority": "above_normal",
+            "close_on_launch": true,
+            "profiles": []
+        }"#;
+        tokio::fs::write(paths.config_path(), legacy_json.as_bytes()).await?;
+        let migrated = load_or_init_config(&paths, &sample_hw()).await?;
+        assert_eq!(migrated.launch_behavior, "hide_and_restore");
+        assert!(!migrated.profiles.is_empty());
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_upsert_and_delete_profile_preserves_default() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = std::env::temp_dir().join(format!(
+            "mc-launcher-prof-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let paths = LauncherPaths::with_root(tmp.clone());
+        let mut cfg = LauncherConfig::default_with_hardware(&sample_hw());
+        let mut third = cfg.profiles[0].clone();
+        third.id = "custom-3".to_string();
+        third.is_default = true;
+        upsert_profile(&paths, &mut cfg, third).await?;
+        assert_eq!(cfg.profiles.len(), 3);
+        assert!(cfg.profiles.iter().find(|p| p.id == "custom-3").is_some_and(|p| p.is_default));
+
+        delete_profile(&mut cfg, "custom-3")?;
+        assert_eq!(cfg.profiles.len(), 2);
+        assert!(cfg.profiles.iter().any(|p| p.is_default));
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        Ok(())
+    }
 }

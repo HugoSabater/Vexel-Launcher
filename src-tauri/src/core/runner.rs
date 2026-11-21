@@ -43,6 +43,7 @@ pub struct LaunchRequest {
     pub window_width: Option<u32>,
     pub window_height: Option<u32>,
     pub fullscreen: bool,
+    pub detached: bool,
 }
 
 #[must_use]
@@ -465,6 +466,14 @@ pub fn build_game_args(req: &LaunchRequest, paths: &LauncherPaths) -> Vec<String
     args
 }
 
+fn quote_arg_if_needed(arg: &str) -> String {
+    if arg.is_empty() || arg.chars().any(char::is_whitespace) {
+        format!("\"{}\"", arg.replace('"', "\\\""))
+    } else {
+        arg.to_string()
+    }
+}
+
 #[must_use]
 pub fn build_full_command_preview(
     req: &LaunchRequest,
@@ -489,8 +498,12 @@ pub fn build_full_command_preview(
 
     let mut parts = Vec::new();
     parts.push(format!("\"{}\"", req.javaw_path.to_string_lossy()));
-    parts.extend(tuning.flags);
-    parts.extend(req.extra_jvm_args.clone());
+    parts.extend(tuning.flags.into_iter().map(|a| quote_arg_if_needed(&a)));
+    parts.extend(
+        req.extra_jvm_args
+            .iter()
+            .map(|a| quote_arg_if_needed(a)),
+    );
     parts.push(format!(
         "\"-Djava.library.path={}\"",
         natives_dir.to_string_lossy()
@@ -498,29 +511,45 @@ pub fn build_full_command_preview(
     parts.push("-cp".to_string());
     parts.push(format!("\"{classpath}\""));
     parts.push(req.main_class.clone());
-    parts.extend(game_args);
+    parts.extend(game_args.into_iter().map(|a| quote_arg_if_needed(&a)));
     parts.join(" ")
 }
 
 #[cfg(windows)]
 pub async fn terminate_process(pid: u32) -> AppResult<()> {
-    use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, TerminateProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        PROCESS_TERMINATE,
+    };
 
     tokio::task::spawn_blocking(move || {
-        // Safety: Opens process with PROCESS_TERMINATE, terminates if alive, and always closes handle.
+        // Safety: Opens process with terminate+query rights, terminates if alive, and always closes handle.
         unsafe {
-            let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+            let handle = OpenProcess(
+                PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                pid,
+            );
             if handle.is_null() {
                 // Process may already have exited; treat as already stopped.
                 return Ok(());
             }
             let term_ok = TerminateProcess(handle, 1);
-            let _ = CloseHandle(handle);
+            let mut already_exited = false;
             if term_ok == 0 {
+                let mut exit_code: u32 = 0;
+                if GetExitCodeProcess(handle, &mut exit_code) != 0
+                    && exit_code != STILL_ACTIVE as u32
+                {
+                    already_exited = true;
+                }
+            }
+            let last_err = std::io::Error::last_os_error();
+            let _ = CloseHandle(handle);
+            if term_ok == 0 && !already_exited {
                 return Err(AppError::Win32Error(format!(
-                    "TerminateProcess failed for PID {pid}: {}",
-                    std::io::Error::last_os_error()
+                    "TerminateProcess failed for PID {pid}: {last_err}"
                 )));
             }
         }
@@ -584,14 +613,26 @@ where
         .arg("-cp")
         .arg(&classpath)
         .arg(&req.main_class)
-        .args(&game_args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .args(&game_args);
+
+    if req.detached {
+        // Detached mode (launch_behavior == "close"): null stdio so closing the launcher never breaks JVM pipes
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    } else {
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    }
 
     #[cfg(windows)]
     {
-        // CREATE_NO_WINDOW prevents flashing console windows when launching java/javaw
-        cmd.creation_flags(0x0800_0000);
+        // CREATE_NO_WINDOW (0x0800_0000); add CREATE_NEW_PROCESS_GROUP (0x0000_0200) when detached
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        let flags = if req.detached {
+            CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+        } else {
+            CREATE_NO_WINDOW
+        };
+        cmd.creation_flags(flags);
     }
 
     let mut child = cmd
@@ -612,6 +653,10 @@ where
             ),
             false,
         );
+    }
+
+    if req.detached {
+        return Ok(pid);
     }
 
     let on_log = std::sync::Arc::new(on_log);
@@ -748,6 +793,7 @@ mod tests {
             window_width: Some(1920),
             window_height: Some(1080),
             fullscreen: true,
+            detached: false,
         };
 
         let args = build_game_args(&req, &paths);
@@ -811,6 +857,7 @@ mod tests {
             window_width: None,
             window_height: None,
             fullscreen: false,
+            detached: false,
         };
 
         let args = build_game_args(&req, &paths);
@@ -818,6 +865,49 @@ mod tests {
         assert!(args.contains(&"MiMundoSurvival".to_string()));
         assert!(!args.contains(&"--quickPlayMultiplayer".to_string()));
         assert!(!args.contains(&"--server".to_string()));
+
+        // Preview command must quote world names containing spaces
+        let mut spaced_req = req;
+        spaced_req.world_folder = Some("Mi Mundo Con Espacios".to_string());
+        let preview = super::build_full_command_preview(&spaced_req, &paths, 8);
+        assert!(preview.contains("\"Mi Mundo Con Espacios\""));
+    }
+
+    #[test]
+    fn test_extract_natives_stamp_skips_redundant_extraction() -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "mc-launcher-natives-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&tmp)?;
+        let jar_path = tmp.join("lwjgl-natives.jar");
+        let natives_dir = tmp.join("out_natives");
+
+        {
+            let file = std::fs::File::create(&jar_path)?;
+            let mut writer = zip::ZipWriter::new(file);
+            writer.start_file("lwjgl.dll", SimpleFileOptions::default())?;
+            writer.write_all(b"ORIGINAL_DLL")?;
+            writer.finish()?;
+        }
+
+        super::extract_natives_blocking(std::slice::from_ref(&jar_path), &natives_dir)?;
+        assert_eq!(std::fs::read(natives_dir.join("lwjgl.dll"))?, b"ORIGINAL_DLL");
+        assert!(natives_dir.join(".natives_stamp").exists());
+
+        // Overwrite extracted DLL marker; second run with identical JAR stamp must skip extraction
+        std::fs::write(natives_dir.join("lwjgl.dll"), b"SENTINEL_CACHED")?;
+        super::extract_natives_blocking(&[jar_path], &natives_dir)?;
+        assert_eq!(
+            std::fs::read(natives_dir.join("lwjgl.dll"))?,
+            b"SENTINEL_CACHED"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+        Ok(())
     }
 
     #[test]

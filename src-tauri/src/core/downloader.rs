@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -12,6 +12,103 @@ use tokio::sync::{Mutex, Semaphore};
 use crate::error::{AppError, AppResult};
 
 const MAX_CONCURRENT_DOWNLOADS: usize = 12;
+const MAX_DOWNLOAD_ATTEMPTS: usize = 3;
+
+#[must_use]
+pub fn append_part_extension(destination: &Path) -> PathBuf {
+    let mut os = destination.as_os_str().to_os_string();
+    os.push(".part");
+    PathBuf::from(os)
+}
+
+fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || status == reqwest::StatusCode::REQUEST_TIMEOUT
+        || status.is_server_error()
+}
+
+async fn download_with_retries(
+    client: &reqwest::Client,
+    artifact: &DownloadArtifact,
+    part_path: &Path,
+    bytes_counter: &std::sync::atomic::AtomicU64,
+) -> AppResult<String> {
+    let mut last_err: Option<AppError> = None;
+
+    for attempt in 1..=MAX_DOWNLOAD_ATTEMPTS {
+        let res = client.get(&artifact.url).send().await;
+        match res {
+            Ok(resp) => {
+                let status = resp.status();
+                if !status.is_success() {
+                    let retryable = is_retryable_status(status);
+                    let err = match resp.error_for_status() {
+                        Err(e) => AppError::Network(e),
+                        Ok(_) => AppError::ContentError(format!("HTTP error {status}")),
+                    };
+                    if retryable && attempt < MAX_DOWNLOAD_ATTEMPTS {
+                        last_err = Some(err);
+                        let backoff_ms = 400_u64.saturating_mul(1_u64 << (attempt - 1));
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+                    return Err(err);
+                }
+
+                let mut stream = resp.bytes_stream();
+                let mut file = tokio::fs::File::create(part_path).await?;
+                let mut hasher = Sha1::new();
+                let mut stream_err: Option<AppError> = None;
+
+                while let Some(chunk_res) = stream.next().await {
+                    match chunk_res {
+                        Ok(chunk) => {
+                            hasher.update(&chunk);
+                            file.write_all(&chunk).await?;
+                            bytes_counter.fetch_add(
+                                chunk.len() as u64,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                        }
+                        Err(err) => {
+                            stream_err = Some(AppError::Network(err));
+                            break;
+                        }
+                    }
+                }
+                let _ = file.flush().await;
+                drop(file);
+
+                if let Some(err) = stream_err {
+                    let _ = tokio::fs::remove_file(part_path).await;
+                    if attempt < MAX_DOWNLOAD_ATTEMPTS {
+                        last_err = Some(err);
+                        let backoff_ms = 400_u64.saturating_mul(1_u64 << (attempt - 1));
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+                    return Err(err);
+                }
+
+                return Ok(hex::encode(hasher.finalize()));
+            }
+            Err(err) => {
+                let _ = tokio::fs::remove_file(part_path).await;
+                if attempt < MAX_DOWNLOAD_ATTEMPTS {
+                    last_err = Some(AppError::Network(err));
+                    let backoff_ms = 400_u64.saturating_mul(1_u64 << (attempt - 1));
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                    continue;
+                }
+                return Err(AppError::Network(err));
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        AppError::ContentError(format!("Download failed after retries: {}", artifact.url))
+    }))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IntegrityEntry {
@@ -243,22 +340,9 @@ where
                 tokio::fs::create_dir_all(parent).await?;
             }
 
-            let part_path = artifact.destination.with_extension("part");
-            let response = client.get(&artifact.url).send().await?.error_for_status()?;
-            let mut stream = response.bytes_stream();
-            let mut file = tokio::fs::File::create(&part_path).await?;
-            let mut hasher = Sha1::new();
-
-            while let Some(chunk_res) = stream.next().await {
-                let chunk = chunk_res?;
-                hasher.update(&chunk);
-                file.write_all(&chunk).await?;
-                bytes_counter.fetch_add(chunk.len() as u64, std::sync::atomic::Ordering::Relaxed);
-            }
-            file.flush().await?;
-            drop(file);
-
-            let actual_sha1 = hex::encode(hasher.finalize());
+            let part_path = append_part_extension(&artifact.destination);
+            let actual_sha1 =
+                download_with_retries(&client, &artifact, &part_path, &bytes_counter).await?;
             if let Some(expected) = &artifact.expected_sha1 {
                 if !actual_sha1.eq_ignore_ascii_case(expected) {
                     let _ = tokio::fs::remove_file(&part_path).await;
@@ -392,5 +476,15 @@ mod tests {
 
         tokio::fs::remove_dir_all(&temp_dir).await?;
         Ok(())
+    }
+
+    #[test]
+    fn test_append_part_extension_avoids_stem_collision() {
+        use std::path::PathBuf;
+        let jar_part = super::append_part_extension(&PathBuf::from("versions/1.21.4/1.21.4.jar"));
+        let json_part = super::append_part_extension(&PathBuf::from("versions/1.21.4/1.21.4.json"));
+        assert_ne!(jar_part, json_part);
+        assert!(jar_part.to_string_lossy().ends_with("1.21.4.jar.part"));
+        assert!(json_part.to_string_lossy().ends_with("1.21.4.json.part"));
     }
 }

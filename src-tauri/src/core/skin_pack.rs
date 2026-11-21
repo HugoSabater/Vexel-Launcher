@@ -60,8 +60,48 @@ fn build_skin_zip_blocking(skin_bytes: &[u8], zip_path: &Path) -> AppResult<()> 
     Ok(())
 }
 
+fn parse_quoted_resource_pack_list(inner: &str) -> Vec<String> {
+    let mut entries = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut escaped = false;
+
+    for ch in inner.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if in_quotes => {
+                current.push(ch);
+                escaped = true;
+            }
+            '"' => {
+                in_quotes = !in_quotes;
+                current.push(ch);
+            }
+            ',' if !in_quotes => {
+                let trimmed = current.trim();
+                if !trimmed.is_empty() {
+                    entries.push(trimmed.to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        entries.push(trimmed.to_string());
+    }
+    entries
+}
+
 #[must_use]
 pub fn update_options_txt_resource_packs(content: &str, include_skin_pack: bool) -> String {
+    let line_ending = if content.contains("\r\n") { "\r\n" } else { "\n" };
     let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
     let mut found = false;
 
@@ -74,12 +114,7 @@ pub fn update_options_txt_resource_packs(content: &str, include_skin_pack: bool)
                 .and_then(|s| s.strip_suffix(']'))
                 .unwrap_or("");
 
-            let mut entries: Vec<String> = inner
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .collect();
+            let mut entries = parse_quoted_resource_pack_list(inner);
 
             entries.retain(|e| e != SKIN_PACK_ENTRY);
             if include_skin_pack {
@@ -101,7 +136,7 @@ pub fn update_options_txt_resource_packs(content: &str, include_skin_pack: bool)
     if lines.is_empty() {
         String::new()
     } else {
-        format!("{}\n", lines.join("\n"))
+        format!("{}{line_ending}", lines.join(line_ending))
     }
 }
 
@@ -196,5 +231,40 @@ mod tests {
             fresh,
             "resourcePacks:[\"vanilla\",\"file/_launcher_skin.zip\"]\n"
         );
+
+        // Preserves CRLF and resource pack names containing commas
+        let crlf_with_comma =
+            "fov:0.0\r\nresourcePacks:[\"vanilla\",\"file/Pack, v2.zip\"]\r\nlang:es_es\r\n";
+        let updated = update_options_txt_resource_packs(crlf_with_comma, true);
+        assert!(updated.contains("\r\n"));
+        assert!(updated.contains(
+            "resourcePacks:[\"vanilla\",\"file/Pack, v2.zip\",\"file/_launcher_skin.zip\"]"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_sync_instance_skin_pack_v2_cache_skips_rebuild() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = std::env::temp_dir().join(format!(
+            "mc-launcher-skin-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let paths = crate::core::paths::LauncherPaths::with_root(tmp.clone());
+        paths.ensure_base_dirs().await?;
+        tokio::fs::write(paths.custom_skin_path(), b"\x89PNG\r\n\x1a\nFAKE_SKIN").await?;
+
+        super::sync_instance_skin_pack(&paths, "demo", true, None).await?;
+        let rp_dir = paths.instance_resourcepacks_dir("demo");
+        let zip_path = rp_dir.join("_launcher_skin.zip");
+        let stamp = tokio::fs::read_to_string(rp_dir.join(".launcher_skin.sha1")).await?;
+        assert!(stamp.starts_with("v2:"));
+        assert!(zip_path.exists());
+
+        // Write sentinel over zip; second sync with identical skin hash must NOT overwrite zip
+        tokio::fs::write(&zip_path, b"SENTINEL_ZIP").await?;
+        super::sync_instance_skin_pack(&paths, "demo", true, None).await?;
+        assert_eq!(tokio::fs::read(&zip_path).await?, b"SENTINEL_ZIP");
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        Ok(())
     }
 }

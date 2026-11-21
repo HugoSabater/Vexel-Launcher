@@ -76,7 +76,9 @@ export function App() {
     useState<SettingsSection>("instance");
   const [skinDataUrl, setSkinDataUrl] = useState<string | null>(null);
   const [jvmTuning, setJvmTuning] = useState<JvmTuningOutput | null>(null);
-  const [launching, setLaunching] = useState(false);
+  const [launchingProfileId, setLaunchingProfileId] = useState<string | null>(
+    null,
+  );
   const [runningProfiles, setRunningProfiles] = useState<
     Record<string, boolean>
   >({});
@@ -91,6 +93,8 @@ export function App() {
   const [bannerError, setBannerError] = useState<string | null>(null);
   const [quickSearchOpen, setQuickSearchOpen] = useState(false);
   const [quickQuery, setQuickQuery] = useState("");
+  const configRef = useRef<LauncherConfig | null>(null);
+  configRef.current = bootstrap?.config ?? null;
   const logStoreRef = useRef<LogStore | null>(null);
   if (logStoreRef.current === null) {
     logStoreRef.current = createLogStore(500);
@@ -192,45 +196,57 @@ export function App() {
     );
   }, [bootstrap, selectedProfileId]);
 
-  const refreshProfileMetadata = useCallback(async (profile: Profile) => {
-    let javaMajor = 21;
-    try {
-      const status = await invoke<JavaRuntimeStatus>("check_profile_java", {
-        mcVersion: profile.mc_version,
-      });
-      javaMajor = status.major;
-    } catch {
-      // Fallback 21
-    }
-
-    try {
-      const tuning = await invoke<JvmTuningOutput>("get_jvm_flags_preview", {
-        javaMajor,
-        ramMb: profile.ram_mb,
-        gcPreset: profile.gc_preset,
-      });
-      setJvmTuning(tuning);
-    } catch {
-      setJvmTuning(null);
-    }
-  }, []);
-
   useEffect(() => {
-    if (selectedProfile) {
-      void refreshProfileMetadata(selectedProfile);
-    }
-  }, [selectedProfile, refreshProfileMetadata]);
+    if (!selectedProfile) return;
+    let cancelled = false;
+
+    void (async () => {
+      let javaMajor = 21;
+      try {
+        const status = await invoke<JavaRuntimeStatus>("check_profile_java", {
+          mcVersion: selectedProfile.mc_version,
+          customJavaPath: selectedProfile.custom_java_path,
+        });
+        javaMajor = status.major;
+      } catch {
+        // Fallback 21
+      }
+
+      if (cancelled) return;
+      try {
+        const tuning = await invoke<JvmTuningOutput>("get_jvm_flags_preview", {
+          javaMajor,
+          ramMb: selectedProfile.ram_mb,
+          gcPreset: selectedProfile.gc_preset,
+        });
+        if (!cancelled) setJvmTuning(tuning);
+      } catch {
+        if (!cancelled) setJvmTuning(null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProfile]);
 
   const updateConfigState = (nextConfig: LauncherConfig) => {
     setBootstrap((prev) => (prev ? { ...prev, config: nextConfig } : prev));
   };
 
   const handleSaveProfile = async (profile: Profile) => {
-    const nextConfig = await invoke<LauncherConfig>(
-      "create_or_update_profile",
-      { profile },
-    );
-    updateConfigState(nextConfig);
+    try {
+      const nextConfig = await invoke<LauncherConfig>(
+        "create_or_update_profile",
+        { profile },
+      );
+      setBannerError(null);
+      updateConfigState(nextConfig);
+    } catch (err) {
+      setBannerError(
+        extractIpcError(err).message ?? "Error al guardar el perfil",
+      );
+    }
   };
 
   const handleDuplicateProfile = async (source: Profile) => {
@@ -245,19 +261,37 @@ export function App() {
   };
 
   const handleSetDefault = async (profileId: string) => {
-    const nextConfig = await invoke<LauncherConfig>("set_default_profile", {
-      profileId,
-    });
-    updateConfigState(nextConfig);
+    try {
+      const nextConfig = await invoke<LauncherConfig>("set_default_profile", {
+        profileId,
+      });
+      setBannerError(null);
+      updateConfigState(nextConfig);
+    } catch (err) {
+      setBannerError(
+        extractIpcError(err).message ?? "No se pudo fijar el perfil predeterminado",
+      );
+    }
   };
 
-  const handleDeleteProfile = async (profileId: string) => {
-    const nextConfig = await invoke<LauncherConfig>("remove_profile", {
-      profileId,
-    });
-    updateConfigState(nextConfig);
-    if (selectedProfileId === profileId && nextConfig.profiles[0]) {
-      setSelectedProfileId(nextConfig.profiles[0].id);
+  const handleDeleteProfile = async (
+    profileId: string,
+    deleteFiles: boolean,
+  ) => {
+    try {
+      const nextConfig = await invoke<LauncherConfig>("remove_profile", {
+        profileId,
+        deleteFiles,
+      });
+      setBannerError(null);
+      updateConfigState(nextConfig);
+      if (selectedProfileId === profileId && nextConfig.profiles[0]) {
+        setSelectedProfileId(nextConfig.profiles[0].id);
+      }
+    } catch (err) {
+      setBannerError(
+        extractIpcError(err).message ?? "No se pudo eliminar el perfil",
+      );
     }
   };
 
@@ -333,10 +367,17 @@ export function App() {
   };
 
   const handleSetSkinModel = async (model: "classic" | "slim") => {
-    const nextConfig = await invoke<LauncherConfig>("set_skin_model", {
-      model,
-    });
-    updateConfigState(nextConfig);
+    try {
+      const nextConfig = await invoke<LauncherConfig>("set_skin_model", {
+        model,
+      });
+      setBannerError(null);
+      updateConfigState(nextConfig);
+    } catch (err) {
+      setBannerError(
+        extractIpcError(err).message ?? "Error al cambiar el modelo de brazos",
+      );
+    }
   };
 
   const handlePlayProfile = async (
@@ -348,7 +389,13 @@ export function App() {
         ? bootstrap?.config.profiles.find((p) => p.id === targetProfileId)
         : selectedProfile) ?? null;
 
-    if (!profileToRun || runningProfiles[profileToRun.id]) return;
+    if (
+      !profileToRun ||
+      runningProfiles[profileToRun.id] ||
+      launchingProfileId !== null
+    ) {
+      return;
+    }
     if (profileToRun.loader === "forge" || profileToRun.loader === "neo_forge") {
       setBannerError(
         "El soporte directo para Forge/NeoForge llegará próximamente. Cambia a Vanilla o Fabric para lanzar.",
@@ -356,12 +403,9 @@ export function App() {
       return;
     }
 
-    const autoOpenCrash =
-      bootstrap?.config.auto_open_console_on_crash ?? true;
-
     setBannerError(null);
     setCrashToast(null);
-    setLaunching(true);
+    setLaunchingProfileId(profileToRun.id);
     logStore.clear();
 
     const onProgress = new Channel<LaunchProgressEvent>();
@@ -384,11 +428,16 @@ export function App() {
       setProgress(null);
 
       if (ev.exit_code !== null && ev.exit_code !== 0) {
+        const latestCfg = configRef.current;
+        const latestName =
+          latestCfg?.profiles.find((p) => p.id === ev.profile_id)?.name ??
+          profileToRun.name;
+        const shouldAutoOpen = latestCfg?.auto_open_console_on_crash ?? true;
         setCrashToast({
-          profileName: profileToRun.name,
+          profileName: latestName,
           exitCode: ev.exit_code,
         });
-        if (autoOpenCrash) {
+        if (shouldAutoOpen) {
           setConsoleOpen(true);
         }
       }
@@ -416,7 +465,7 @@ export function App() {
         setBannerError(parsed.message ?? "Fallo al lanzar Minecraft");
       }
     } finally {
-      setLaunching(false);
+      setLaunchingProfileId(null);
     }
   };
 
@@ -859,10 +908,14 @@ export function App() {
                   profile={selectedProfile}
                   config={bootstrap.config}
                   skinDataUrl={skinDataUrl}
-                  launching={launching}
+                  launching={launchingProfileId === selectedProfile.id}
                   isRunning={Boolean(runningProfiles[selectedProfile.id])}
                   isAnyRunning={isAnyInstanceRunning}
-                  progress={progress}
+                  progress={
+                    launchingProfileId === selectedProfile.id || installingJava
+                      ? progress
+                      : null
+                  }
                   missingJavaMajor={missingJavaMajor}
                   installingJava={installingJava}
                   javaInstallProgress={javaInstallProgress}

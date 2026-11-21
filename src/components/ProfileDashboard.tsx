@@ -153,6 +153,8 @@ export function ProfileDashboard({
     try {
       const buffer = await file.arrayBuffer();
       await onUploadSkinBytes(Array.from(new Uint8Array(buffer)));
+    } catch {
+      // Error surfaced via global banner in App.tsx
     } finally {
       if (quickSkinInputRef.current) quickSkinInputRef.current.value = "";
     }

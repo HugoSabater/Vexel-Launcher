@@ -136,6 +136,10 @@ export function SettingsPerformancePanel({
   }, [initialSection]);
 
   useEffect(() => {
+    if (serverDebounceRef.current !== null) {
+      window.clearTimeout(serverDebounceRef.current);
+      serverDebounceRef.current = null;
+    }
     setNameDraft(profile.name);
     setVersionDraft(profile.mc_version);
     setRamDraft(profile.ram_mb);
@@ -147,6 +151,15 @@ export function SettingsPerformancePanel({
       profile.window_height ? String(profile.window_height) : "720",
     );
   }, [profile]);
+
+  useEffect(() => {
+    return () => {
+      if (serverDebounceRef.current !== null) {
+        window.clearTimeout(serverDebounceRef.current);
+        serverDebounceRef.current = null;
+      }
+    };
+  }, []);
 
   const refreshJavas = useCallback(async () => {
     try {
@@ -231,7 +244,9 @@ export function SettingsPerformancePanel({
       auto_open_console_on_crash:
         patch.auto_open_console_on_crash ?? config.auto_open_console_on_crash,
     };
-    return onSaveGlobalSettings(payload);
+    return onSaveGlobalSettings(payload).catch(() => {
+      // Error already surfaced in global banner
+    });
   };
 
   const commitServer = (val: string) => {
@@ -265,10 +280,14 @@ export function SettingsPerformancePanel({
   };
 
   const handleCopyLaunchCmd = async () => {
-    const cmd = await onGetLaunchCommandPreview(profile.id);
-    await navigator.clipboard.writeText(cmd);
-    setCopiedCmd(true);
-    setTimeout(() => setCopiedCmd(false), 1800);
+    try {
+      const cmd = await onGetLaunchCommandPreview(profile.id);
+      await navigator.clipboard.writeText(cmd);
+      setCopiedCmd(true);
+      setTimeout(() => setCopiedCmd(false), 1800);
+    } catch {
+      // Clipboard or IPC unavailable
+    }
   };
 
   const handleSkinFileSelected = async (
@@ -1097,11 +1116,17 @@ export function SettingsPerformancePanel({
                   <button
                     type="button"
                     onClick={() => {
-                      void onRevalidateCache().then(() =>
-                        setStorageFeedback(
-                          "Índice integrity_index.json reiniciado; se revalidará en el próximo arranque.",
-                        ),
-                      );
+                      void onRevalidateCache()
+                        .then(() =>
+                          setStorageFeedback(
+                            "Índice integrity_index.json reiniciado; se revalidará en el próximo arranque.",
+                          ),
+                        )
+                        .catch(() =>
+                          setStorageFeedback(
+                            "No se pudo reiniciar integrity_index.json.",
+                          ),
+                        );
                     }}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-3 py-1.5 text-xs text-slate-200"
                   >
@@ -1112,12 +1137,18 @@ export function SettingsPerformancePanel({
                   <button
                     type="button"
                     onClick={() => {
-                      void onCleanOldLogs().then((res) => {
-                        setStorageFeedback(
-                          `Eliminados ${res.files_removed} logs antiguos (${formatSize(res.bytes_freed)} liberados).`,
+                      void onCleanOldLogs()
+                        .then((res) => {
+                          setStorageFeedback(
+                            `Eliminados ${res.files_removed} logs antiguos (${formatSize(res.bytes_freed)} liberados).`,
+                          );
+                          void refreshStorage();
+                        })
+                        .catch(() =>
+                          setStorageFeedback(
+                            "No se pudieron limpiar los logs antiguos.",
+                          ),
                         );
-                        void refreshStorage();
-                      });
                     }}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-3 py-1.5 text-xs text-slate-200"
                   >

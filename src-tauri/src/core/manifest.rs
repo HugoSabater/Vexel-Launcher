@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -251,16 +251,36 @@ pub async fn fetch_version_catalog(client: &reqwest::Client) -> AppResult<Versio
     Ok(catalog)
 }
 
+pub fn validate_version_id(version_id: &str) -> AppResult<()> {
+    let trimmed = version_id.trim();
+    if trimmed.is_empty()
+        || trimmed.contains("..")
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains(':')
+    {
+        return Err(AppError::ManifestError(format!(
+            "Invalid Minecraft version identifier: '{version_id}'"
+        )));
+    }
+    Ok(())
+}
+
 pub async fn fetch_or_load_version_manifest(
     client: &reqwest::Client,
     version_id: &str,
     paths: &LauncherPaths,
 ) -> AppResult<VersionManifest> {
+    validate_version_id(version_id)?;
     let cached_path = paths.version_json_path(version_id);
     if tokio::fs::try_exists(&cached_path).await? {
-        let raw = tokio::fs::read_to_string(&cached_path).await?;
-        let manifest: VersionManifest = serde_json::from_str(&raw)?;
-        return Ok(manifest);
+        if let Ok(raw) = tokio::fs::read_to_string(&cached_path).await {
+            if let Ok(manifest) = serde_json::from_str::<VersionManifest>(&raw) {
+                return Ok(manifest);
+            }
+        }
+        // Cached manifest was truncated or corrupted; remove and re-fetch cleanly
+        let _ = tokio::fs::remove_file(&cached_path).await;
     }
 
     let catalog = fetch_version_catalog(client).await?;
@@ -301,14 +321,21 @@ pub async fn fetch_or_load_asset_index(
         ))
     })?;
 
+    let safe_index_id = std::path::Path::new(&index_ref.id)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("legacy");
     let index_path = paths
         .shared_assets_indexes_dir()
-        .join(format!("{}.json", index_ref.id));
+        .join(format!("{safe_index_id}.json"));
 
     if tokio::fs::try_exists(&index_path).await? {
-        let raw = tokio::fs::read_to_string(&index_path).await?;
-        let parsed: AssetIndexFile = serde_json::from_str(&raw)?;
-        return Ok(parsed);
+        if let Ok(raw) = tokio::fs::read_to_string(&index_path).await {
+            if let Ok(parsed) = serde_json::from_str::<AssetIndexFile>(&raw) {
+                return Ok(parsed);
+            }
+        }
+        let _ = tokio::fs::remove_file(&index_path).await;
     }
 
     let raw = client
@@ -417,7 +444,7 @@ pub fn build_download_plan(
     }
 
     for object in asset_index.objects.values() {
-        if object.hash.len() < 2 {
+        if object.hash.len() < 2 || !object.hash.is_ascii() {
             continue;
         }
         let prefix = &object.hash[..2];
@@ -459,6 +486,10 @@ pub fn build_download_plan(
             expected_size: client_log.file.size,
         });
     }
+
+    // Deduplicate artifacts by destination path (Mojang asset indexes map multiple keys to identical hashes)
+    let mut seen_destinations: HashSet<PathBuf> = HashSet::with_capacity(artifacts.len());
+    artifacts.retain(|a| seen_destinations.insert(a.destination.clone()));
 
     Ok(DownloadPlan {
         artifacts,
@@ -577,6 +608,22 @@ mod tests {
             AssetObject {
                 hash: "ab1234567890abcdef1234567890abcdef123456".to_string(),
                 size: 4096,
+            },
+        );
+        // Duplicate hash under second logical asset key must be deduplicated
+        objects.insert(
+            "minecraft/sounds/click_alt.ogg".to_string(),
+            AssetObject {
+                hash: "ab1234567890abcdef1234567890abcdef123456".to_string(),
+                size: 4096,
+            },
+        );
+        // Non-ASCII corrupted hash must be skipped safely without panic
+        objects.insert(
+            "minecraft/sounds/corrupt.ogg".to_string(),
+            AssetObject {
+                hash: "éé1234".to_string(),
+                size: 100,
             },
         );
         let asset_index = AssetIndexFile { objects };

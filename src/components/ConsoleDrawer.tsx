@@ -67,7 +67,7 @@ function classifyLogLine(entry: LogLineEvent): string {
     entry.line.startsWith("[Java Probe]") ||
     entry.line.startsWith("[Launcher]")
   ) {
-    return "text-[#38BDF8]";
+    return "text-[var(--accent-primary)]";
   }
   return "text-slate-300";
 }
