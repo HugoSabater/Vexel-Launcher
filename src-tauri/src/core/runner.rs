@@ -25,6 +25,7 @@ pub enum ProcessPriority {
 pub struct LaunchRequest {
     pub profile_id: String,
     pub mc_version: String,
+    pub version_type: String,
     pub username: String,
     pub ram_mb: u64,
     pub gc_preset: GcPreset,
@@ -91,8 +92,142 @@ pub fn build_quickplay_args(mc_version: &str, server_address: Option<&str>) -> V
     }
 }
 
+const DEFAULT_OPTIMIZED_OPTIONS_TXT: &str = "\
+enableVsync:false\n\
+maxFps:260\n\
+renderDistance:12\n\
+simulationDistance:8\n\
+entityDistanceScaling:1.0\n\
+biomeBlendRadius:2\n\
+mipmapLevels:4\n\
+particles:1\n\
+graphicsMode:1\n\
+prioritizeChunkUpdates:1\n\
+pauseOnLostFocus:true\n";
+
+pub async fn ensure_optimized_options_txt(instance_dir: &Path) -> AppResult<bool> {
+    tokio::fs::create_dir_all(instance_dir).await?;
+    let options_path = instance_dir.join("options.txt");
+    if tokio::fs::try_exists(&options_path).await? {
+        return Ok(false);
+    }
+    tokio::fs::write(&options_path, DEFAULT_OPTIMIZED_OPTIONS_TXT.as_bytes()).await?;
+    Ok(true)
+}
+
+#[must_use]
+pub fn strip_windows_extended_prefix(raw: &str) -> String {
+    raw.strip_prefix(r"\\?\").unwrap_or(raw).to_string()
+}
+
+#[cfg(windows)]
+pub fn register_high_performance_gpu_preference(javaw_path: &Path) -> AppResult<String> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, REG_SZ,
+    };
+
+    let resolved = std::fs::canonicalize(javaw_path).unwrap_or_else(|_| javaw_path.to_path_buf());
+    let normalized_path = strip_windows_extended_prefix(&resolved.to_string_lossy());
+
+    let subkey: Vec<u16> = r"Software\Microsoft\DirectX\UserGpuPreferences"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let value_name: Vec<u16> = normalized_path
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let value_data: Vec<u16> = "GpuPreference=2;"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut hkey: HKEY = std::ptr::null_mut();
+    // Safety: Standard Win32 HKCU registry write with null-terminated UTF-16 buffers; handle always closed.
+    unsafe {
+        let create_status = RegCreateKeyW(HKEY_CURRENT_USER, subkey.as_ptr(), &mut hkey);
+        if create_status != ERROR_SUCCESS {
+            return Err(AppError::Win32Error(format!(
+                "RegCreateKeyW failed with code {create_status}"
+            )));
+        }
+
+        let byte_len = (value_data.len() * std::mem::size_of::<u16>()) as u32;
+        let set_status = RegSetValueExW(
+            hkey,
+            value_name.as_ptr(),
+            0,
+            REG_SZ,
+            value_data.as_ptr().cast::<u8>(),
+            byte_len,
+        );
+        let _ = RegCloseKey(hkey);
+
+        if set_status != ERROR_SUCCESS {
+            return Err(AppError::Win32Error(format!(
+                "RegSetValueExW failed with code {set_status}"
+            )));
+        }
+    }
+
+    Ok(normalized_path)
+}
+
+#[cfg(not(windows))]
+pub fn register_high_performance_gpu_preference(javaw_path: &Path) -> AppResult<String> {
+    Ok(javaw_path.to_string_lossy().into_owned())
+}
+
+fn build_natives_stamp(native_jars: &[PathBuf]) -> String {
+    let mut entries: Vec<String> = native_jars
+        .iter()
+        .filter_map(|p| {
+            let meta = std::fs::metadata(p).ok()?;
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_secs());
+            let name = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown.jar");
+            Some(format!("{name}:{}:{mtime}", meta.len()))
+        })
+        .collect();
+    entries.sort();
+    entries.join("\n")
+}
+
+fn dir_has_any_dll(natives_dir: &Path) -> bool {
+    let Ok(read_dir) = std::fs::read_dir(natives_dir) else {
+        return false;
+    };
+    read_dir.flatten().any(|entry| {
+        entry
+            .path()
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("dll"))
+    })
+}
+
 fn extract_natives_blocking(native_jars: &[PathBuf], natives_dir: &Path) -> AppResult<()> {
     std::fs::create_dir_all(natives_dir)?;
+    if native_jars.is_empty() {
+        return Ok(());
+    }
+
+    let stamp_path = natives_dir.join(".natives_stamp");
+    let expected_stamp = build_natives_stamp(native_jars);
+    if !expected_stamp.is_empty() && dir_has_any_dll(natives_dir) {
+        if let Ok(existing) = std::fs::read_to_string(&stamp_path) {
+            if existing == expected_stamp {
+                return Ok(());
+            }
+        }
+    }
 
     for jar_path in native_jars {
         if !jar_path.exists() {
@@ -124,6 +259,10 @@ fn extract_natives_blocking(native_jars: &[PathBuf], natives_dir: &Path) -> AppR
             let mut out_file = File::create(&out_path)?;
             std::io::copy(&mut entry, &mut out_file)?;
         }
+    }
+
+    if !expected_stamp.is_empty() {
+        let _ = std::fs::write(&stamp_path, expected_stamp.as_bytes());
     }
 
     Ok(())
@@ -229,7 +368,7 @@ fn substitute_game_arg_template(
         .replace("${clientid}", "0")
         .replace("${auth_xuid}", "0")
         .replace("${user_type}", "legacy")
-        .replace("${version_type}", "release")
+        .replace("${version_type}", &req.version_type)
 }
 
 #[must_use]
@@ -250,7 +389,7 @@ pub fn build_game_args(req: &LaunchRequest, paths: &LauncherPaths) -> Vec<String
         ("--uuid", offline_uuid_str.clone()),
         ("--accessToken", "0".to_string()),
         ("--userType", "legacy".to_string()),
-        ("--versionType", "release".to_string()),
+        ("--versionType", req.version_type.clone()),
     ];
 
     for (flag, value) in base_pairs {
@@ -396,6 +535,10 @@ where
     let game_dir = paths.instance_dir(&req.profile_id);
     let natives_dir = paths.instance_natives_version_dir(&req.profile_id, &req.mc_version);
     extract_natives(&req.native_archives, &natives_dir).await?;
+
+    if let Err(err) = register_high_performance_gpu_preference(&req.javaw_path) {
+        on_log(format!("[GPU Preference] Warning: {err}"), false);
+    }
 
     let tuning = generate_jvm_flags(&JvmTuningInput {
         java_major: req.java_major,
@@ -547,6 +690,7 @@ mod tests {
         let req = LaunchRequest {
             profile_id: "vanilla-1-21-4".to_string(),
             mc_version: "1.21.4".to_string(),
+            version_type: "release".to_string(),
             username: "Hugo".to_string(),
             ram_mb: 4096,
             gc_preset: GcPreset::GenerationalZgc,
@@ -625,5 +769,39 @@ mod tests {
         assert!(args.contains(&"1920".to_string()));
         assert!(args.contains(&"1080".to_string()));
         assert!(args.contains(&"--fullscreen".to_string()));
+    }
+
+    #[test]
+    fn test_strip_windows_extended_prefix() {
+        assert_eq!(
+            super::strip_windows_extended_prefix(r"\\?\C:\Users\Hugo\javaw.exe"),
+            r"C:\Users\Hugo\javaw.exe"
+        );
+        assert_eq!(
+            super::strip_windows_extended_prefix(r"C:\Program Files\Java\bin\javaw.exe"),
+            r"C:\Program Files\Java\bin\javaw.exe"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ensure_optimized_options_txt_does_not_overwrite_existing() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = std::env::temp_dir().join(format!(
+            "mc-launcher-opt-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let created = super::ensure_optimized_options_txt(&tmp).await?;
+        assert!(created);
+        let initial = tokio::fs::read_to_string(tmp.join("options.txt")).await?;
+        assert!(initial.contains("enableVsync:false"));
+        assert!(initial.contains("renderDistance:12"));
+
+        tokio::fs::write(tmp.join("options.txt"), b"renderDistance:20\n").await?;
+        let created_again = super::ensure_optimized_options_txt(&tmp).await?;
+        assert!(!created_again);
+        let preserved = tokio::fs::read_to_string(tmp.join("options.txt")).await?;
+        assert_eq!(preserved, "renderDistance:20\n");
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        Ok(())
     }
 }

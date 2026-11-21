@@ -47,6 +47,7 @@ interface SettingsPerformancePanelProps {
   hardware: HardwareInfo;
   jvmTuning: JvmTuningOutput | null;
   skinDataUrl: string | null;
+  isAnyRunning: boolean;
   dataRoot: string;
   initialSection?: SettingsSection;
   onUpdateProfile: (updated: Profile) => Promise<void>;
@@ -83,6 +84,7 @@ export function SettingsPerformancePanel({
   hardware,
   jvmTuning,
   skinDataUrl,
+  isAnyRunning,
   dataRoot,
   initialSection = "instance",
   onUpdateProfile,
@@ -955,6 +957,7 @@ export function SettingsPerformancePanel({
                   skinUrl={skinDataUrl}
                   model={config.skin_model}
                   username={config.offline_username}
+                  paused={isAnyRunning}
                   onUpdateUsername={(nick) =>
                     saveGlobal({ offline_username: nick })
                   }

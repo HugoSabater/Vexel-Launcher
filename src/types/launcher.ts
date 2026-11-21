@@ -2,7 +2,11 @@ export type GcPreset = "generational_zgc" | "aikar_g1_gc";
 export type ProcessPriority = "normal" | "above_normal" | "high";
 export type ModLoaderKind = "vanilla" | "fabric" | "forge" | "neo_forge";
 export type ContentKind = "mod" | "resource_pack";
-export type PerformancePreset = "fps_pure" | "distant_horizons";
+export type PerformancePreset =
+  | "fps_pure"
+  | "distant_horizons"
+  | "c2me_chunk_accel"
+  | "bobby_multiplayer";
 export type AccentColor = "emerald" | "cyan" | "indigo" | "amber" | "crimson";
 export type LaunchBehavior = "keep_open" | "hide_and_restore" | "close";
 

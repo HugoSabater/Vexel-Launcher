@@ -36,6 +36,8 @@ pub struct VersionSummary {
 #[serde(rename_all = "camelCase")]
 pub struct VersionManifest {
     pub id: String,
+    #[serde(rename = "type", default)]
+    pub version_type: Option<String>,
     pub main_class: String,
     pub java_version: Option<JavaVersionSpec>,
     pub asset_index: Option<AssetIndexRef>,
@@ -46,6 +48,28 @@ pub struct VersionManifest {
     pub arguments: Option<ArgumentsBlock>,
     pub minecraft_arguments: Option<String>,
     pub inherits_from: Option<String>,
+    pub logging: Option<LoggingSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoggingSpec {
+    pub client: Option<ClientLoggingSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientLoggingSpec {
+    pub argument: String,
+    pub file: LoggingFile,
+    #[serde(rename = "type")]
+    pub log_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoggingFile {
+    pub id: String,
+    pub sha1: Option<String>,
+    pub size: Option<u64>,
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,6 +152,7 @@ pub struct DownloadPlan {
     pub artifacts: Vec<DownloadArtifact>,
     pub classpath_entries: Vec<PathBuf>,
     pub native_archives: Vec<PathBuf>,
+    pub logging_jvm_arg: Option<String>,
 }
 
 #[must_use]
@@ -415,10 +440,31 @@ pub fn build_download_plan(
         });
     }
 
+    let mut logging_jvm_arg = None;
+    if let Some(client_log) = manifest.logging.as_ref().and_then(|l| l.client.as_ref()) {
+        let safe_name = std::path::Path::new(&client_log.file.id)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("client-log4j.xml");
+        let dest = paths.shared_assets_log_configs_dir().join(safe_name);
+        let resolved_arg = client_log
+            .argument
+            .replace("${path}", &dest.to_string_lossy());
+        logging_jvm_arg = Some(resolved_arg);
+        artifacts.push(DownloadArtifact {
+            relative_key: format!("assets/log_configs/{safe_name}"),
+            url: client_log.file.url.clone(),
+            destination: dest,
+            expected_sha1: client_log.file.sha1.clone(),
+            expected_size: client_log.file.size,
+        });
+    }
+
     Ok(DownloadPlan {
         artifacts,
         classpath_entries,
         native_archives,
+        logging_jvm_arg,
     })
 }
 
@@ -435,10 +481,23 @@ mod tests {
 
     const SAMPLE_MANIFEST_JSON: &str = r#"{
         "id": "1.21.4",
+        "type": "release",
         "mainClass": "net.minecraft.client.main.Main",
         "javaVersion": {
             "component": "java-runtime-delta",
             "majorVersion": 21
+        },
+        "logging": {
+            "client": {
+                "argument": "-Dlog4j.configurationFile=${path}",
+                "file": {
+                    "id": "client-1.12.xml",
+                    "sha1": "1111111111111111111111111111111111111111",
+                    "size": 888,
+                    "url": "https://piston-data.mojang.com/v1/objects/11/client-1.12.xml"
+                },
+                "type": "log4j2-xml"
+            }
         },
         "assetIndex": {
             "id": "19",
@@ -524,9 +583,17 @@ mod tests {
         let paths = LauncherPaths::with_root(PathBuf::from("test-root"));
         let plan = build_download_plan(&manifest, &asset_index, &paths)?;
 
-        // client.jar + 2 windows libs + 1 asset = 4 artifacts
-        assert_eq!(plan.artifacts.len(), 4);
+        // client.jar + 2 windows libs + 1 asset + 1 log4j xml = 5 artifacts
+        assert_eq!(plan.artifacts.len(), 5);
         assert_eq!(plan.classpath_entries.len(), 3);
+        assert_eq!(manifest.version_type.as_deref(), Some("release"));
+        let log_arg = plan
+            .logging_jvm_arg
+            .as_deref()
+            .ok_or("Expected logging_jvm_arg to be present")?;
+        assert!(log_arg.starts_with("-Dlog4j.configurationFile="));
+        assert!(log_arg.ends_with("client-1.12.xml"));
+        assert!(!log_arg.contains('"'));
         Ok(())
     }
 

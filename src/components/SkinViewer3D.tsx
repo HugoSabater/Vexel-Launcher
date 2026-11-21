@@ -6,6 +6,7 @@ interface SkinViewer3DProps {
   skinUrl: string | null;
   model: string;
   username?: string;
+  paused?: boolean;
   onUpdateUsername?: (nextName: string) => Promise<void>;
   onChangeSkinClick?: () => void;
   width?: number;
@@ -59,6 +60,7 @@ export function SkinViewer3D({
   skinUrl,
   model,
   username,
+  paused = false,
   onUpdateUsername,
   onChangeSkinClick,
   width = 220,
@@ -69,6 +71,15 @@ export function SkinViewer3D({
   const viewerRef = useRef<SkinViewer | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(username ?? "");
+  const [docHidden, setDocHidden] = useState(
+    typeof document !== "undefined" ? document.hidden : false,
+  );
+
+  useEffect(() => {
+    const onVisibility = () => setDocHidden(document.hidden);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
 
   useEffect(() => {
     setDraft(username ?? "");
@@ -100,6 +111,7 @@ export function SkinViewer3D({
     viewer.controls.enablePan = false;
     viewer.controls.enableRotate = true;
     viewer.playerObject.rotation.y = -0.35;
+    viewer.renderPaused = paused || docHidden;
 
     viewerRef.current = viewer;
 
@@ -108,6 +120,12 @@ export function SkinViewer3D({
       viewerRef.current = null;
     };
   }, [width, height]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    viewer.renderPaused = paused || docHidden;
+  }, [paused, docHidden]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

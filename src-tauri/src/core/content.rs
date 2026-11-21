@@ -13,16 +13,24 @@ pub const FPS_PURE_STACK_MODS: &[(&str, &str)] = &[
     ("lithium", "Lithium"),
     ("ferrite-core", "FerriteCore"),
     ("immediatelyfast", "ImmediatelyFast"),
-    ("c2me-fabric", "C2ME"),
+    ("modernfix", "ModernFix"),
+    ("entityculling", "Entity Culling"),
+    ("moreculling", "MoreCulling"),
+    ("dynamic-fps", "Dynamic FPS"),
+    ("badoptimizations", "BadOptimizations"),
 ];
 
 pub const DISTANT_HORIZONS_MOD: &[(&str, &str)] = &[("distanthorizons", "Distant Horizons")];
+pub const C2ME_CHUNK_ACCEL_MOD: &[(&str, &str)] = &[("c2me-fabric", "C2ME")];
+pub const BOBBY_MULTIPLAYER_MOD: &[(&str, &str)] = &[("bobby", "Bobby")];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PerformancePreset {
     FpsPure,
     DistantHorizons,
+    C2meChunkAccel,
+    BobbyMultiplayer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,11 +111,20 @@ const CURATED_CATALOG: &[CuratedCatalogEntry] = &[
     CuratedCatalogEntry {
         slug: "c2me-fabric",
         name: "C2ME",
-        description: "Generación y carga multihilo de chunks aprovechando todos los núcleos de CPU.",
-        category: "FPS Puros",
-        badge: "Multithread",
+        description: "Generación y carga multihilo de chunks en Singleplayer (ideal para /tp y exploración rápida).",
+        category: "Chunks Local",
+        badge: "Opcional · Multithread",
         kind: ContentKind::Mod,
         match_tokens: &["c2me"],
+    },
+    CuratedCatalogEntry {
+        slug: "bobby",
+        name: "Bobby",
+        description: "Caché local de chunks para ver más allá de la view-distance limitada por servidores multijugador.",
+        category: "Multijugador",
+        badge: "Opcional · Chunks MP",
+        kind: ContentKind::Mod,
+        match_tokens: &["bobby"],
     },
     CuratedCatalogEntry {
         slug: "distanthorizons",
@@ -197,6 +214,8 @@ pub fn preset_mod_list(preset: PerformancePreset) -> &'static [(&'static str, &'
     match preset {
         PerformancePreset::FpsPure => FPS_PURE_STACK_MODS,
         PerformancePreset::DistantHorizons => DISTANT_HORIZONS_MOD,
+        PerformancePreset::C2meChunkAccel => C2ME_CHUNK_ACCEL_MOD,
+        PerformancePreset::BobbyMultiplayer => BOBBY_MULTIPLAYER_MOD,
     }
 }
 
@@ -955,12 +974,26 @@ mod tests {
     #[test]
     fn test_performance_presets_split_fps_pure_and_distant_horizons() {
         let fps = preset_mod_list(PerformancePreset::FpsPure);
-        assert_eq!(fps.len(), 5);
+        assert_eq!(fps.len(), 9);
         assert!(fps.iter().any(|(slug, _)| *slug == "sodium"));
+        assert!(fps.iter().any(|(slug, _)| *slug == "modernfix"));
+        assert!(fps.iter().any(|(slug, _)| *slug == "entityculling"));
+        assert!(fps.iter().any(|(slug, _)| *slug == "moreculling"));
+        assert!(fps.iter().any(|(slug, _)| *slug == "dynamic-fps"));
+        assert!(fps.iter().any(|(slug, _)| *slug == "badoptimizations"));
+        assert!(!fps.iter().any(|(slug, _)| *slug == "c2me-fabric"));
         assert!(!fps.iter().any(|(slug, _)| *slug == "distanthorizons"));
 
         let dh = preset_mod_list(PerformancePreset::DistantHorizons);
         assert_eq!(dh.len(), 1);
         assert_eq!(dh[0].0, "distanthorizons");
+
+        let c2me = preset_mod_list(PerformancePreset::C2meChunkAccel);
+        assert_eq!(c2me.len(), 1);
+        assert_eq!(c2me[0].0, "c2me-fabric");
+
+        let bobby = preset_mod_list(PerformancePreset::BobbyMultiplayer);
+        assert_eq!(bobby.len(), 1);
+        assert_eq!(bobby[0].0, "bobby");
     }
 }

@@ -279,6 +279,7 @@ mod tests {
             artifacts: Vec::new(),
             classpath_entries: vec![PathBuf::from("vanilla-client.jar")],
             native_archives: Vec::new(),
+            logging_jvm_arg: None,
         };
 
         let (main_class, extra_jvm, _) = merge_overlay_into_plan(&mut base_plan, overlay);

@@ -27,6 +27,7 @@ interface ProfileDashboardProps {
   skinDataUrl: string | null;
   launching: boolean;
   isRunning: boolean;
+  isAnyRunning: boolean;
   progress: LaunchProgressEvent | null;
   missingJavaMajor: number | null;
   installingJava: boolean;
@@ -86,6 +87,7 @@ export function ProfileDashboard({
   skinDataUrl,
   launching,
   isRunning,
+  isAnyRunning,
   progress,
   missingJavaMajor,
   installingJava,
@@ -252,6 +254,7 @@ export function ProfileDashboard({
               skinUrl={skinDataUrl}
               model={config.skin_model}
               username={config.offline_username}
+              paused={isAnyRunning}
               onUpdateUsername={onUpdateUsername}
               onChangeSkinClick={() => quickSkinInputRef.current?.click()}
               width={220}

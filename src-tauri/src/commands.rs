@@ -23,8 +23,8 @@ use crate::core::instance::{
     ModLoaderKind, Profile,
 };
 use crate::core::java::{
-    check_java_runtime, install_java_runtime, list_installed_javas as scan_installed_javas,
-    InstalledJavaRuntime, JavaRuntimeStatus,
+    check_java_runtime, detect_java_major, install_java_runtime,
+    list_installed_javas as scan_installed_javas, InstalledJavaRuntime, JavaRuntimeStatus,
 };
 use crate::core::jvm_optimizer::{generate_jvm_flags, GcPreset, JvmTuningInput, JvmTuningOutput};
 use crate::core::loaders::{merge_overlay_into_plan, resolve_fabric_overlay};
@@ -34,7 +34,8 @@ use crate::core::manifest::{
 };
 use crate::core::paths::LauncherPaths;
 use crate::core::runner::{
-    build_full_command_preview, spawn_minecraft, terminate_process, LaunchRequest, ProcessPriority,
+    build_full_command_preview, ensure_optimized_options_txt, spawn_minecraft, terminate_process,
+    LaunchRequest, ProcessPriority,
 };
 use crate::core::skin_pack::sync_instance_skin_pack;
 use crate::error::{AppError, AppResult};
@@ -450,19 +451,27 @@ pub async fn get_launch_command_preview(
     };
 
     let required_major = infer_java_major_for_mc_version(&profile.mc_version);
-    let javaw_path = profile
+    let custom_java = profile
         .custom_java_path
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
+        .map(PathBuf::from);
+    let (javaw_path, effective_java_major) = if let Some(custom_path) = custom_java {
+        let detected = detect_java_major(&custom_path)
+            .await
+            .unwrap_or(required_major);
+        (custom_path, detected)
+    } else {
+        (
             state
                 .paths
                 .runtime_dir(required_major)
                 .join("bin")
-                .join("javaw.exe")
-        });
+                .join("javaw.exe"),
+            required_major,
+        )
+    };
 
     let custom_jvm_args: Vec<String> = profile
         .custom_jvm_args
@@ -478,6 +487,7 @@ pub async fn get_launch_command_preview(
     let req = LaunchRequest {
         profile_id: profile.id,
         mc_version: profile.mc_version,
+        version_type: "release".to_string(),
         username: config_snapshot.offline_username,
         ram_mb: profile.ram_mb,
         gc_preset: profile.gc_preset,
@@ -485,7 +495,7 @@ pub async fn get_launch_command_preview(
         server_address: profile.server_address,
         javaw_path,
         main_class,
-        java_major: required_major,
+        java_major: effective_java_major,
         classpath_entries: vec![PathBuf::from("<shared/libraries/*>;<client.jar>")],
         native_archives: Vec::new(),
         asset_index_id: "<asset_index>".to_string(),
@@ -944,17 +954,37 @@ pub async fn launch_profile(
         .java_version
         .as_ref()
         .map_or(21, |j| j.major_version);
+    let version_type = manifest
+        .version_type
+        .clone()
+        .unwrap_or_else(|| "release".to_string());
 
-    let javaw_path = if let Some(custom) = profile
+    let (javaw_path, effective_java_major) = if let Some(custom) = profile
         .custom_java_path
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        PathBuf::from(custom)
+        let custom_path = PathBuf::from(custom);
+        let detected = match detect_java_major(&custom_path).await {
+            Ok(major) => major,
+            Err(err) => {
+                let _ = on_log.send(LogLineEvent {
+                    line: format!(
+                        "[Java Probe] Warning: {err}; falling back to manifest Java {required_major}"
+                    ),
+                    is_stderr: true,
+                    timestamp_ms: current_epoch_ms(),
+                });
+                required_major
+            }
+        };
+        (custom_path, detected)
     } else {
         match check_java_runtime(required_major, &state.paths).await? {
-            JavaRuntimeStatus::Installed { javaw_path, .. } => PathBuf::from(javaw_path),
+            JavaRuntimeStatus::Installed { javaw_path, .. } => {
+                (PathBuf::from(javaw_path), required_major)
+            }
             JavaRuntimeStatus::Missing { major, .. } => {
                 return Err(AppError::JavaNotFound {
                     required_major: major,
@@ -962,6 +992,9 @@ pub async fn launch_profile(
             }
         }
     };
+
+    // Seed optimized options.txt ONLY if missing, BEFORE skin pack modifies resourcePacks
+    let _ = ensure_optimized_options_txt(&state.paths.instance_dir(&profile.id)).await;
 
     // Sync offline custom skin micro-resource pack before launching
     let _ = sync_instance_skin_pack(
@@ -983,6 +1016,9 @@ pub async fn launch_profile(
     let mut plan = build_download_plan(&manifest, &asset_index, &state.paths)?;
     let mut main_class = manifest.main_class.clone();
     let mut extra_jvm_args = Vec::new();
+    if let Some(logging_arg) = plan.logging_jvm_arg.take() {
+        extra_jvm_args.push(logging_arg);
+    }
     let mut extra_game_args = extract_game_arguments(&manifest);
 
     match profile.loader {
@@ -1062,6 +1098,7 @@ pub async fn launch_profile(
         LaunchRequest {
             profile_id: profile.id.clone(),
             mc_version: profile.mc_version,
+            version_type,
             username: config_snapshot.offline_username,
             ram_mb: profile.ram_mb,
             gc_preset: profile.gc_preset,
@@ -1069,7 +1106,7 @@ pub async fn launch_profile(
             server_address: profile.server_address,
             javaw_path,
             main_class,
-            java_major: required_major,
+            java_major: effective_java_major,
             classpath_entries: plan.classpath_entries,
             native_archives: plan.native_archives,
             asset_index_id,
@@ -1124,6 +1161,6 @@ pub async fn launch_profile(
         pid,
         fast_path_hits: summary.fast_path_hits,
         downloaded_files: summary.downloaded_files,
-        java_major: required_major,
+        java_major: effective_java_major,
     })
 }

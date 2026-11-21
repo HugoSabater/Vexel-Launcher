@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
+use sha1::{Digest, Sha1};
 use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 
@@ -10,6 +11,8 @@ use crate::core::paths::LauncherPaths;
 use crate::error::{AppError, AppResult};
 
 const SKIN_PACK_FILENAME: &str = "_launcher_skin.zip";
+const SKIN_PACK_STAMP_FILENAME: &str = ".launcher_skin.sha1";
+const SKIN_PACK_FORMAT_VERSION: &str = "v1";
 const SKIN_PACK_ENTRY: &str = "\"file/_launcher_skin.zip\"";
 
 const DEFAULT_SKIN_NAMES: &[&str] = &[
@@ -135,17 +138,30 @@ pub async fn sync_instance_skin_pack(
     }
 
     let skin_bytes = tokio::fs::read(&skin_candidate).await?;
-    let zip_path = paths
-        .instance_resourcepacks_dir(profile_id)
-        .join(SKIN_PACK_FILENAME);
+    let rp_dir = paths.instance_resourcepacks_dir(profile_id);
+    let zip_path = rp_dir.join(SKIN_PACK_FILENAME);
+    let stamp_path = rp_dir.join(SKIN_PACK_STAMP_FILENAME);
 
-    let zip_clone = zip_path.clone();
-    tokio::task::spawn_blocking(move || build_skin_zip_blocking(&skin_bytes, &zip_clone))
-        .await
-        .map_err(|err| AppError::ContentError(format!("Skin pack build task failed: {err}")))??;
+    let expected_stamp = format!("{SKIN_PACK_FORMAT_VERSION}:{}", hex::encode(Sha1::digest(&skin_bytes)));
+    let zip_exists = tokio::fs::try_exists(&zip_path).await?;
+    let existing_stamp = if tokio::fs::try_exists(&stamp_path).await? {
+        tokio::fs::read_to_string(&stamp_path).await.unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    if !zip_exists || existing_stamp.trim() != expected_stamp {
+        let zip_clone = zip_path.clone();
+        tokio::task::spawn_blocking(move || build_skin_zip_blocking(&skin_bytes, &zip_clone))
+            .await
+            .map_err(|err| AppError::ContentError(format!("Skin pack build task failed: {err}")))??;
+        tokio::fs::write(&stamp_path, expected_stamp.as_bytes()).await?;
+    }
 
     let updated_options = update_options_txt_resource_packs(&existing_options, true);
-    tokio::fs::write(&options_path, updated_options.as_bytes()).await?;
+    if updated_options != existing_options {
+        tokio::fs::write(&options_path, updated_options.as_bytes()).await?;
+    }
     Ok(())
 }
 

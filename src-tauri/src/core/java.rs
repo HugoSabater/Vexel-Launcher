@@ -248,3 +248,108 @@ where
 
     Ok(javaw)
 }
+
+#[must_use]
+pub fn parse_java_version_output(output: &str) -> Option<u32> {
+    for line in output.lines() {
+        let Some(start_quote) = line.find('"') else {
+            continue;
+        };
+        let rest = &line[start_quote + 1..];
+        let Some(end_quote) = rest.find('"') else {
+            continue;
+        };
+        let ver_str = &rest[..end_quote];
+        let mut parts = ver_str.split('.');
+        let first_raw = parts.next()?;
+        let first_digits: String = first_raw
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        let Ok(first) = first_digits.parse::<u32>() else {
+            continue;
+        };
+        if first == 1 {
+            if let Some(second_raw) = parts.next() {
+                let second_digits: String = second_raw
+                    .chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect();
+                if let Ok(second) = second_digits.parse::<u32>() {
+                    return Some(second);
+                }
+            }
+        } else if first >= 2 {
+            return Some(first);
+        }
+    }
+    None
+}
+
+pub async fn detect_java_major(java_path: &Path) -> AppResult<u32> {
+    let mut probe_path = java_path.to_path_buf();
+    if java_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case("javaw.exe"))
+    {
+        let sibling_java = java_path.with_file_name("java.exe");
+        if tokio::fs::try_exists(&sibling_java).await.unwrap_or(false) {
+            probe_path = sibling_java;
+        }
+    }
+
+    let mut cmd = tokio::process::Command::new(&probe_path);
+    cmd.arg("-version");
+
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(0x0800_0000);
+    }
+
+    let output = cmd.output().await.map_err(|err| {
+        AppError::ProcessLaunch(format!(
+            "Failed to probe Java version at '{}': {err}",
+            probe_path.to_string_lossy()
+        ))
+    })?;
+
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    parse_java_version_output(&combined).ok_or_else(|| {
+        AppError::ConfigError(format!(
+            "Unable to parse Java major version from '{}'",
+            probe_path.to_string_lossy()
+        ))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_java_version_output;
+
+    #[test]
+    fn test_parse_java_version_outputs() {
+        assert_eq!(
+            parse_java_version_output("java version \"1.8.0_412\"\nJava(TM) SE Runtime"),
+            Some(8)
+        );
+        assert_eq!(
+            parse_java_version_output("openjdk version \"17.0.12\" 2024-07-16\nOpenJDK"),
+            Some(17)
+        );
+        assert_eq!(
+            parse_java_version_output("openjdk version \"21.0.4\" 2024-07-16 LTS"),
+            Some(21)
+        );
+        assert_eq!(
+            parse_java_version_output("openjdk version \"23-ea\" 2024-09-17"),
+            Some(23)
+        );
+        assert_eq!(parse_java_version_output("not a java output"), None);
+    }
+}

@@ -25,19 +25,22 @@ pub struct JvmTuningOutput {
 #[must_use]
 pub fn generate_jvm_flags(input: &JvmTuningInput) -> JvmTuningOutput {
     let ram_mb = input.ram_mb.max(1024);
-    let mut flags = vec![format!("-Xms{ram_mb}M"), format!("-Xmx{ram_mb}M")];
+    let initial_ram_mb = ram_mb.min(1024);
+    let mut flags = vec![format!("-Xms{initial_ram_mb}M"), format!("-Xmx{ram_mb}M")];
 
     if input.gc_preset == GcPreset::GenerationalZgc && input.java_major >= 21 {
         let conc_threads = (input.logical_cores / 4).clamp(1, 4);
         flags.extend([
             "-XX:+UnlockExperimentalVMOptions".to_string(),
             "-XX:+UseZGC".to_string(),
-            "-XX:+ZGenerational".to_string(),
-            "-XX:+AlwaysPreTouch".to_string(),
+        ]);
+        if input.java_major < 23 {
+            flags.push("-XX:+ZGenerational".to_string());
+        }
+        flags.extend([
             "-XX:+DisableExplicitGC".to_string(),
             "-XX:+PerfDisableSharedMem".to_string(),
             format!("-XX:ConcGCThreads={conc_threads}"),
-            "-Dfml.ignoreInvalidMinecraftCertificates=true".to_string(),
         ]);
 
         return JvmTuningOutput {
@@ -59,10 +62,9 @@ pub fn generate_jvm_flags(input: &JvmTuningInput) -> JvmTuningOutput {
     flags.extend([
         "-XX:+UseG1GC".to_string(),
         "-XX:+ParallelRefProcEnabled".to_string(),
-        "-XX:MaxGCPauseMillis=200".to_string(),
+        "-XX:MaxGCPauseMillis=50".to_string(),
         "-XX:+UnlockExperimentalVMOptions".to_string(),
         "-XX:+DisableExplicitGC".to_string(),
-        "-XX:+AlwaysPreTouch".to_string(),
     ]);
 
     if ram_mb >= 12288 {
@@ -117,10 +119,29 @@ mod tests {
 
         assert_eq!(out.effective_gc, GcPreset::GenerationalZgc);
         assert!(out.fallback_notice.is_none());
+        assert!(out.flags.contains(&"-Xms1024M".to_string()));
+        assert!(out.flags.contains(&"-Xmx6144M".to_string()));
         assert!(out.flags.contains(&"-XX:+UseZGC".to_string()));
         assert!(out.flags.contains(&"-XX:+ZGenerational".to_string()));
         assert!(out.flags.contains(&"-XX:ConcGCThreads=4".to_string()));
-        assert!(out.flags.contains(&"-Xmx6144M".to_string()));
+        assert!(!out.flags.contains(&"-XX:+AlwaysPreTouch".to_string()));
+        assert!(!out
+            .flags
+            .contains(&"-Dfml.ignoreInvalidMinecraftCertificates=true".to_string()));
+    }
+
+    #[test]
+    fn test_java_23_zgc_omits_deprecated_generational_flag() {
+        let out = generate_jvm_flags(&JvmTuningInput {
+            java_major: 23,
+            ram_mb: 6144,
+            logical_cores: 8,
+            gc_preset: GcPreset::GenerationalZgc,
+        });
+
+        assert_eq!(out.effective_gc, GcPreset::GenerationalZgc);
+        assert!(out.flags.contains(&"-XX:+UseZGC".to_string()));
+        assert!(!out.flags.contains(&"-XX:+ZGenerational".to_string()));
     }
 
     #[test]
@@ -134,9 +155,12 @@ mod tests {
 
         assert_eq!(out.effective_gc, GcPreset::AikarG1Gc);
         assert!(out.fallback_notice.is_some());
+        assert!(out.flags.contains(&"-Xms1024M".to_string()));
         assert!(out.flags.contains(&"-XX:+UseG1GC".to_string()));
+        assert!(out.flags.contains(&"-XX:MaxGCPauseMillis=50".to_string()));
         assert!(out.flags.contains(&"-XX:G1HeapRegionSize=8M".to_string()));
         assert!(!out.flags.contains(&"-XX:+UseZGC".to_string()));
+        assert!(!out.flags.contains(&"-XX:+AlwaysPreTouch".to_string()));
     }
 
     #[test]

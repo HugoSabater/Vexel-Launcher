@@ -3,15 +3,17 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AlertTriangle,
-  Check,
-  Copy,
   Minus,
   Search,
   Square,
-  Terminal,
-  Trash2,
   X,
 } from "lucide-react";
+import {
+  ConsoleDrawer,
+  createLogStore,
+  formatLocalHms,
+  type LogStore,
+} from "./components/ConsoleDrawer";
 import { ContentManagerPanel } from "./components/ContentManagerPanel";
 import { ProfileDashboard } from "./components/ProfileDashboard";
 import {
@@ -110,34 +112,6 @@ function extractIpcError(err: unknown): IpcErrorPayload {
   return { message: "Error desconocido en IPC" };
 }
 
-function formatLocalHms(timestampMs: number): string {
-  if (!timestampMs) return "READY";
-  return new Date(timestampMs).toLocaleTimeString([], {
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
-function classifyLogLine(entry: LogLineEvent): string {
-  const upper = entry.line.toUpperCase();
-  if (entry.is_stderr || upper.includes("[ERROR]") || upper.includes("FATAL")) {
-    return "text-rose-300";
-  }
-  if (upper.includes("[WARN]") || upper.includes("WARNING")) {
-    return "text-amber-300";
-  }
-  if (
-    entry.line.startsWith("[Win32 Tuning]") ||
-    entry.line.startsWith("[JVM Optimizer]") ||
-    entry.line.startsWith("[Launcher]")
-  ) {
-    return "text-[#38BDF8]";
-  }
-  return "text-slate-300";
-}
-
 export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapState | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string>("");
@@ -155,15 +129,18 @@ export function App() {
   const [javaInstallProgress, setJavaInstallProgress] =
     useState<LaunchProgressEvent | null>(null);
   const [progress, setProgress] = useState<LaunchProgressEvent | null>(null);
-  const [logs, setLogs] = useState<LogLineEvent[]>([]);
   const [consoleOpen, setConsoleOpen] = useState(false);
-  const [autoScroll, setAutoScroll] = useState(true);
   const [copiedLogs, setCopiedLogs] = useState(false);
   const [crashToast, setCrashToast] = useState<CrashToastState | null>(null);
   const [bannerError, setBannerError] = useState<string | null>(null);
   const [quickSearchOpen, setQuickSearchOpen] = useState(false);
   const [quickQuery, setQuickQuery] = useState("");
-  const consoleRef = useRef<HTMLDivElement | null>(null);
+  const logStoreRef = useRef<LogStore | null>(null);
+  if (logStoreRef.current === null) {
+    logStoreRef.current = createLogStore(500);
+  }
+  const logStore = logStoreRef.current;
+  const isAnyInstanceRunning = Object.keys(runningProfiles).length > 0;
 
   const handleWindowMinimize = () => {
     try {
@@ -218,12 +195,6 @@ export function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
-
-  useEffect(() => {
-    if (autoScroll && consoleOpen && consoleRef.current) {
-      consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
-    }
-  }, [logs, autoScroll, consoleOpen]);
 
   const loadBootstrap = useCallback(async () => {
     try {
@@ -418,7 +389,7 @@ export function App() {
     setBannerError(null);
     setCrashToast(null);
     setLaunching(true);
-    setLogs([]);
+    logStore.clear();
 
     const onProgress = new Channel<LaunchProgressEvent>();
     onProgress.onmessage = (ev) => {
@@ -427,7 +398,7 @@ export function App() {
 
     const onLog = new Channel<LogLineEvent>();
     onLog.onmessage = (ev) => {
-      setLogs((prev) => [...prev.slice(-499), ev]);
+      logStore.push(ev);
     };
 
     const onExit = new Channel<InstanceExitEvent>();
@@ -458,14 +429,11 @@ export function App() {
         onExit,
       });
       setRunningProfiles((prev) => ({ ...prev, [profileToRun.id]: true }));
-      setLogs((prev) => [
-        ...prev,
-        {
-          line: `[Launcher] Proceso activo PID ${result.pid} · Fast-Path O(1): ${result.fast_path_hits} · Descargados: ${result.downloaded_files}`,
-          is_stderr: false,
-          timestamp_ms: Date.now(),
-        },
-      ]);
+      logStore.push({
+        line: `[Launcher] Proceso activo PID ${result.pid} · Fast-Path O(1): ${result.fast_path_hits} · Descargados: ${result.downloaded_files}`,
+        is_stderr: false,
+        timestamp_ms: Date.now(),
+      });
     } catch (err) {
       const parsed = extractIpcError(err);
       if (parsed.code === "JAVA_NOT_FOUND" && parsed.required_major) {
@@ -542,7 +510,8 @@ export function App() {
   };
 
   const handleCopyReport = async () => {
-    const report = logs
+    const report = logStore
+      .getSnapshot()
       .map((l) => `[${formatLocalHms(l.timestamp_ms)}] ${l.line}`)
       .join("\n");
     try {
@@ -881,6 +850,7 @@ export function App() {
                   skinDataUrl={skinDataUrl}
                   launching={launching}
                   isRunning={Boolean(runningProfiles[selectedProfile.id])}
+                  isAnyRunning={isAnyInstanceRunning}
                   progress={progress}
                   missingJavaMajor={missingJavaMajor}
                   installingJava={installingJava}
@@ -929,6 +899,7 @@ export function App() {
                   hardware={bootstrap.hardware}
                   jvmTuning={jvmTuning}
                   skinDataUrl={skinDataUrl}
+                  isAnyRunning={isAnyInstanceRunning}
                   dataRoot={bootstrap.data_root}
                   initialSection={settingsSection}
                   onUpdateProfile={handleSaveProfile}
@@ -948,92 +919,10 @@ export function App() {
 
             {/* Slide-Up Console Drawer (Ctrl+L) */}
             {consoleOpen && (
-              <section className="h-56 shrink-0 border-t border-[#1E2534] bg-[#06080C] flex flex-col">
-                <div className="h-9 px-4 bg-[#11151E] border-b border-[#1E2534] flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Terminal className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
-                    <span className="text-[11px] font-medium text-slate-200">
-                      Consola de Ejecución (Hora Local)
-                    </span>
-                    <span className="text-[10px] font-mono text-slate-500">
-                      ({logs.length})
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setAutoScroll((v) => !v)}
-                      className={`rounded px-2 py-0.5 text-[10px] font-mono border ${
-                        autoScroll
-                          ? "bg-[var(--accent-soft)] border-[var(--accent-border)] text-[var(--accent-primary)]"
-                          : "border-[#1E2534] text-slate-500"
-                      }`}
-                    >
-                      auto-scroll
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleCopyReport()}
-                      className="inline-flex items-center gap-1 rounded border border-[#1E2534] px-2 py-0.5 text-[10px] font-mono text-slate-300 hover:bg-[#171D2A]"
-                    >
-                      {copiedLogs ? (
-                        <Check className="h-3 w-3 text-[var(--accent-primary)]" />
-                      ) : (
-                        <Copy className="h-3 w-3" />
-                      )}
-                      copiar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setLogs([])}
-                      title="Limpiar"
-                      className="p-1 rounded text-slate-400 hover:text-white hover:bg-[#171D2A]"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConsoleOpen(false)}
-                      title="Ocultar (Ctrl+L)"
-                      className="p-1 rounded text-slate-400 hover:text-white hover:bg-[#171D2A]"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                <div
-                  ref={consoleRef}
-                  onScroll={(e) => {
-                    const el = e.currentTarget;
-                    const atBottom =
-                      el.scrollHeight - el.scrollTop - el.clientHeight < 20;
-                    if (!atBottom && autoScroll) setAutoScroll(false);
-                  }}
-                  className="selectable-logs flex-1 overflow-y-auto px-4 py-2.5 font-mono text-[11px] leading-relaxed space-y-0.5"
-                >
-                  {logs.length === 0 ? (
-                    <div className="text-slate-600">
-                      $ esperando salida del proceso javaw.exe...
-                    </div>
-                  ) : (
-                    logs.map((entry, idx) => (
-                      <div
-                        key={`${entry.timestamp_ms}-${idx}`}
-                        className="break-all"
-                      >
-                        <span className="text-slate-600 mr-2">
-                          {formatLocalHms(entry.timestamp_ms)}
-                        </span>
-                        <span className={classifyLogLine(entry)}>
-                          {entry.line}
-                        </span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </section>
+              <ConsoleDrawer
+                logStore={logStore}
+                onClose={() => setConsoleOpen(false)}
+              />
             )}
           </div>
         </div>

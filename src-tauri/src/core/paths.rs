@@ -52,6 +52,11 @@ impl LauncherPaths {
     }
 
     #[must_use]
+    pub fn shared_assets_log_configs_dir(&self) -> PathBuf {
+        self.shared_assets_dir().join("log_configs")
+    }
+
+    #[must_use]
     pub fn shared_libraries_dir(&self) -> PathBuf {
         self.shared_dir().join("libraries")
     }
@@ -164,6 +169,7 @@ impl LauncherPaths {
             self.root.clone(),
             self.shared_assets_indexes_dir(),
             self.shared_assets_objects_dir(),
+            self.shared_assets_log_configs_dir(),
             self.shared_libraries_dir(),
             self.shared_versions_dir(),
             self.shared_runtimes_dir(),
