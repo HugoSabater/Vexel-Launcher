@@ -40,6 +40,7 @@ interface ProfileDashboardProps {
   onUpdateUsername: (username: string) => Promise<void>;
   onUploadSkinBytes: (bytes: number[]) => Promise<void>;
   onPlay: () => Promise<void>;
+  onPlayWorld: (worldFolder: string) => Promise<void>;
   onStop: () => Promise<void>;
   onOpenFolder: () => Promise<void>;
   onOpenSavesFolder: () => Promise<void>;
@@ -97,6 +98,7 @@ export function ProfileDashboard({
   onUpdateUsername,
   onUploadSkinBytes,
   onPlay,
+  onPlayWorld,
   onStop,
   onOpenFolder,
   onOpenSavesFolder,
@@ -140,15 +142,20 @@ export function ProfileDashboard({
       ? Math.min(100, Math.round((progress.completed / progress.total) * 100))
       : 0;
   const isWorking = launching || installingJava;
+  const unsupportedLoader =
+    profile.loader === "forge" || profile.loader === "neo_forge";
 
   const handleQuickSkinPick = async (
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const buffer = await file.arrayBuffer();
-    await onUploadSkinBytes(Array.from(new Uint8Array(buffer)));
-    if (quickSkinInputRef.current) quickSkinInputRef.current.value = "";
+    try {
+      const buffer = await file.arrayBuffer();
+      await onUploadSkinBytes(Array.from(new Uint8Array(buffer)));
+    } finally {
+      if (quickSkinInputRef.current) quickSkinInputRef.current.value = "";
+    }
   };
 
   return (
@@ -206,6 +213,15 @@ export function ProfileDashboard({
               </div>
             )}
 
+            {unsupportedLoader && (
+              <div className="inline-flex items-center gap-2 rounded-lg bg-[#F59E0B]/10 border border-[#F59E0B]/35 px-3 py-1.5 text-xs text-amber-200">
+                <span>
+                  {LOADER_LABEL[profile.loader]} estará disponible próximamente.
+                  Cambia el loader a Vanilla o Fabric en Ajustes para jugar.
+                </span>
+              </div>
+            )}
+
             <div className="flex items-center gap-2.5 pt-1">
               {isRunning ? (
                 <button
@@ -219,12 +235,16 @@ export function ProfileDashboard({
               ) : (
                 <button
                   type="button"
-                  disabled={isWorking}
+                  disabled={isWorking || unsupportedLoader}
                   onClick={() => void onPlay()}
                   className="btn-accent h-12 min-w-[180px] px-7 rounded-xl active:scale-[0.99] disabled:opacity-50 inline-flex items-center justify-center gap-2.5 text-sm font-bold tracking-wider transition-all"
                 >
                   <Play className="h-4 w-4 fill-current" />
-                  {launching ? "INICIANDO..." : "JUGAR"}
+                  {unsupportedLoader
+                    ? "PRÓXIMAMENTE"
+                    : launching
+                      ? "INICIANDO..."
+                      : "JUGAR"}
                 </button>
               )}
 
@@ -302,9 +322,12 @@ export function ProfileDashboard({
                   <button
                     key={world.folder_name}
                     type="button"
-                    onClick={() => void onOpenSavesFolder()}
-                    className="rounded-lg bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-2.5 py-1.5 text-xs flex items-center gap-2 transition-colors"
+                    disabled={isWorking || isRunning || unsupportedLoader}
+                    onClick={() => void onPlayWorld(world.folder_name)}
+                    title={`Entrar directamente a ${world.folder_name}`}
+                    className="rounded-lg bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] hover:border-[var(--accent-border)] disabled:opacity-50 px-2.5 py-1.5 text-xs flex items-center gap-2 transition-colors"
                   >
+                    <Play className="h-2.5 w-2.5 text-[var(--accent-primary)] fill-current shrink-0" />
                     <span className="text-slate-200 font-medium truncate max-w-[140px]">
                       {world.folder_name}
                     </span>

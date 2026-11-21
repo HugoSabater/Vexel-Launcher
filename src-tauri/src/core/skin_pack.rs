@@ -12,7 +12,7 @@ use crate::error::{AppError, AppResult};
 
 const SKIN_PACK_FILENAME: &str = "_launcher_skin.zip";
 const SKIN_PACK_STAMP_FILENAME: &str = ".launcher_skin.sha1";
-const SKIN_PACK_FORMAT_VERSION: &str = "v1";
+const SKIN_PACK_FORMAT_VERSION: &str = "v2";
 const SKIN_PACK_ENTRY: &str = "\"file/_launcher_skin.zip\"";
 
 const DEFAULT_SKIN_NAMES: &[&str] = &[
@@ -31,7 +31,9 @@ fn build_skin_zip_blocking(skin_bytes: &[u8], zip_path: &Path) -> AppResult<()> 
     let mcmeta = r#"{
   "pack": {
     "pack_format": 34,
-    "supported_formats": [15, 64],
+    "supported_formats": [15, 69],
+    "min_format": 15,
+    "max_format": 99,
     "description": "MC Launcher Rust Custom Offline Skin"
   }
 }"#;

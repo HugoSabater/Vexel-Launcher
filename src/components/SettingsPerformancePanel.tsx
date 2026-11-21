@@ -18,8 +18,8 @@ import {
   Upload,
 } from "lucide-react";
 import { SkinViewer3D } from "./SkinViewer3D";
+import { ACCENT_OPTIONS } from "../theme/accents";
 import type {
-  AccentColor,
   GcPreset,
   GlobalSettingsPayload,
   HardwareInfo,
@@ -27,6 +27,7 @@ import type {
   JvmTuningOutput,
   LaunchBehavior,
   LauncherConfig,
+  LiveMemoryTelemetry,
   LogCleanupResult,
   ModLoaderKind,
   ProcessPriority,
@@ -61,15 +62,8 @@ interface SettingsPerformancePanelProps {
   onRevalidateCache: () => Promise<void>;
   onCleanOldLogs: () => Promise<LogCleanupResult>;
   onGetLaunchCommandPreview: (profileId: string) => Promise<string>;
+  onGetLiveMemoryTelemetry: () => Promise<LiveMemoryTelemetry>;
 }
-
-const ACCENT_OPTIONS: { id: AccentColor; label: string; hex: string }[] = [
-  { id: "emerald", label: "Esmeralda", hex: "#10B981" },
-  { id: "cyan", label: "Cian", hex: "#38BDF8" },
-  { id: "indigo", label: "Índigo", hex: "#6366F1" },
-  { id: "amber", label: "Ámbar", hex: "#F59E0B" },
-  { id: "crimson", label: "Carmesí", hex: "#F43F5E" },
-];
 
 function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -98,6 +92,7 @@ export function SettingsPerformancePanel({
   onRevalidateCache,
   onCleanOldLogs,
   onGetLaunchCommandPreview,
+  onGetLiveMemoryTelemetry,
 }: SettingsPerformancePanelProps) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [expertOpen, setExpertOpen] = useState(false);
@@ -120,14 +115,18 @@ export function SettingsPerformancePanel({
     profile.window_height ? String(profile.window_height) : "720",
   );
 
+  const [liveTelemetry, setLiveTelemetry] =
+    useState<LiveMemoryTelemetry | null>(null);
   const [installedJavas, setInstalledJavas] = useState<InstalledJavaRuntime[]>(
     [],
   );
   const [installingMajor, setInstallingMajor] = useState<number | null>(null);
+  const [jdkError, setJdkError] = useState<string | null>(null);
   const [storage, setStorage] = useState<StorageBreakdown | null>(null);
   const [storageFeedback, setStorageFeedback] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [uploadingSkin, setUploadingSkin] = useState(false);
+  const [skinError, setSkinError] = useState<string | null>(null);
 
   const serverDebounceRef = useRef<number | null>(null);
   const skinInputRef = useRef<HTMLInputElement | null>(null);
@@ -150,19 +149,76 @@ export function SettingsPerformancePanel({
   }, [profile]);
 
   const refreshJavas = useCallback(async () => {
-    const list = await onListInstalledJavas();
-    setInstalledJavas(list);
+    try {
+      const list = await onListInstalledJavas();
+      setInstalledJavas(list);
+    } catch {
+      // Non-fatal
+    }
   }, [onListInstalledJavas]);
 
   const refreshStorage = useCallback(async () => {
-    const data = await onGetStorageBreakdown();
-    setStorage(data);
+    try {
+      const data = await onGetStorageBreakdown();
+      setStorage(data);
+    } catch {
+      // Non-fatal
+    }
   }, [onGetStorageBreakdown]);
 
   useEffect(() => {
     if (section === "performance") void refreshJavas();
     if (section === "storage") void refreshStorage();
   }, [section, refreshJavas, refreshStorage]);
+
+  // Live memory telemetry polling every 2500ms while Performance tab is active & window visible
+  useEffect(() => {
+    if (section !== "performance") return;
+    let cancelled = false;
+    let timerId: number | null = null;
+
+    const sample = async () => {
+      if (cancelled || document.hidden) return;
+      try {
+        const snap = await onGetLiveMemoryTelemetry();
+        if (!cancelled) setLiveTelemetry(snap);
+      } catch {
+        // Fallback to static bootstrap snapshot
+      }
+    };
+
+    const startPolling = () => {
+      if (timerId !== null) window.clearInterval(timerId);
+      void sample();
+      timerId = window.setInterval(() => void sample(), 2500);
+    };
+
+    const stopPolling = () => {
+      if (timerId !== null) {
+        window.clearInterval(timerId);
+        timerId = null;
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        startPolling();
+      }
+    };
+
+    if (!document.hidden) {
+      startPolling();
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      cancelled = true;
+      stopPolling();
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [section, onGetLiveMemoryTelemetry]);
 
   const saveGlobal = (patch: Partial<GlobalSettingsPayload>) => {
     const payload: GlobalSettingsPayload = {
@@ -221,9 +277,14 @@ export function SettingsPerformancePanel({
     const file = event.target.files?.[0];
     if (!file) return;
     setUploadingSkin(true);
+    setSkinError(null);
     try {
       const buffer = await file.arrayBuffer();
       await onUploadSkinBytes(Array.from(new Uint8Array(buffer)));
+    } catch (err) {
+      setSkinError(
+        err instanceof Error ? err.message : "No se pudo cargar la skin PNG",
+      );
     } finally {
       setUploadingSkin(false);
       if (skinInputRef.current) skinInputRef.current.value = "";
@@ -234,21 +295,36 @@ export function SettingsPerformancePanel({
     profile.loader === "vanilla"
       ? hardware.recommended_vanilla_mb
       : hardware.recommended_modded_mb;
-  const totalMb = Math.max(hardware.total_ram_mb, 4096);
-  const systemUsedMb = Math.max(1024, totalMb - hardware.available_ram_mb);
-  const freeMb = Math.max(0, totalMb - systemUsedMb - ramDraft);
+  const totalMb = Math.max(
+    liveTelemetry?.total_ram_mb ?? hardware.total_ram_mb,
+    4096,
+  );
+  const systemUsedMb = liveTelemetry
+    ? liveTelemetry.system_used_mb
+    : Math.max(1024, totalMb - hardware.available_ram_mb);
+  const gameDisplayMb =
+    liveTelemetry && liveTelemetry.game_running
+      ? liveTelemetry.game_rss_mb
+      : ramDraft;
+  const freeMb = Math.max(0, totalMb - systemUsedMb - gameDisplayMb);
   const sysPct = Math.min(100, (systemUsedMb / totalMb) * 100);
-  const mcPct = Math.min(100 - sysPct, (ramDraft / totalMb) * 100);
+  const mcPct = Math.min(100 - sysPct, (gameDisplayMb / totalMb) * 100);
   const freePct = Math.max(0, 100 - sysPct - mcPct);
+
   const overSafeThreshold = ramDraft > hardware.max_safe_ram_mb;
+  const sliderMin = 1024;
   const sliderMax = Math.max(hardware.max_safe_ram_mb, totalMb - 2048);
+  const sliderSpan = Math.max(1024, sliderMax - sliderMin);
+  const sliderFillPct = Math.min(
+    100,
+    Math.max(0, ((ramDraft - sliderMin) / sliderSpan) * 100),
+  );
   const recommendedTickPct = Math.min(
     100,
-    Math.max(
-      0,
-      ((recommendedMb - 1024) / Math.max(1024, sliderMax - 1024)) * 100,
-    ),
+    Math.max(0, ((recommendedMb - sliderMin) / sliderSpan) * 100),
   );
+  const clampedOptLabelPct = Math.min(88, Math.max(12, recommendedTickPct));
+  const safeBarPct = Math.min(100, (hardware.max_safe_ram_mb / totalMb) * 100);
 
   const lightRam = Math.max(2048, Math.min(3072, hardware.max_safe_ram_mb));
   const balancedRam = recommendedMb;
@@ -283,39 +359,49 @@ export function SettingsPerformancePanel({
   ];
 
   return (
-    <div className="h-full w-full flex bg-[#080A0F] overflow-hidden">
-      {/* 180px Fixed Internal Settings Sidebar */}
-      <aside className="w-[180px] shrink-0 border-r border-[#1E2534] bg-[#0B0E14] p-3 space-y-1">
-        <div className="px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
-          Ajustes
+    <div className="h-full w-full flex flex-col bg-[#080A0F] overflow-hidden">
+      {/* Clean Horizontal Top Sub-Navigation (Eliminates Triple-Column Layout) */}
+      <header className="shrink-0 border-b border-[#1E2534] bg-[#0B0E14] px-6 py-3">
+        <div className="max-w-4xl mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
+          <div>
+            <h1 className="text-sm font-semibold text-white">
+              Ajustes y Rendimiento
+            </h1>
+            <p className="text-[11px] font-mono text-slate-500">
+              {profile.name} · MC {profile.mc_version}
+            </p>
+          </div>
+
+          <nav className="inline-flex flex-wrap items-center gap-1 rounded-lg bg-[#11151E] border border-[#1E2534] p-0.5">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setSection(item.id)}
+                className={`rounded-md px-2.5 py-1.5 inline-flex items-center gap-1.5 text-xs font-medium transition-colors ${
+                  section === item.id
+                    ? "bg-[var(--accent-soft)] text-[var(--accent-primary)] border border-[var(--accent-border)]"
+                    : "text-slate-400 hover:text-slate-200 border border-transparent"
+                }`}
+              >
+                {item.icon}
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </nav>
         </div>
-        {navItems.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => setSection(item.id)}
-            className={`w-full rounded-lg px-2.5 py-2 flex items-center gap-2 text-xs font-medium transition-colors ${
-              section === item.id
-                ? "bg-[var(--accent-soft)] text-[var(--accent-primary)] border border-[var(--accent-border)]"
-                : "text-slate-400 hover:text-slate-200 hover:bg-[#11151E] border border-transparent"
-            }`}
-          >
-            {item.icon}
-            <span className="truncate">{item.label}</span>
-          </button>
-        ))}
-      </aside>
+      </header>
 
       {/* Settings Content Area */}
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-3xl space-y-5">
+        <div className="max-w-4xl mx-auto space-y-5">
           {/* 1. INSTANCIA */}
           {section === "instance" && (
             <section className="space-y-4">
               <div>
-                <h1 className="text-base font-semibold text-white">
+                <h2 className="text-base font-semibold text-white">
                   Configuración de la Instancia
-                </h1>
+                </h2>
                 <p className="text-xs text-slate-500">
                   Edita en caliente los metadatos, resolución y servidor directo
                   de <span className="font-mono text-slate-300">{profile.id}</span>.
@@ -377,8 +463,12 @@ export function SettingsPerformancePanel({
                     >
                       <option value="vanilla">Vanilla</option>
                       <option value="fabric">Fabric</option>
-                      <option value="forge">Forge</option>
-                      <option value="neo_forge">NeoForge</option>
+                      <option value="forge" disabled>
+                        Forge (Próximamente)
+                      </option>
+                      <option value="neo_forge" disabled>
+                        NeoForge (Próximamente)
+                      </option>
                     </select>
                   </div>
                 </div>
@@ -542,12 +632,20 @@ export function SettingsPerformancePanel({
                 ))}
               </div>
 
-              {/* Segmented RAM Meter */}
+              {/* Live Segmented RAM Meter */}
               <section className="rounded-xl bg-[#11151E] border border-[#1E2534] p-4 space-y-3">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-medium text-slate-300">
-                    Memoria RAM Asignada
-                  </span>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-slate-300">
+                      Memoria RAM Asignada
+                    </span>
+                    {liveTelemetry?.game_running && (
+                      <span className="inline-flex items-center gap-1 rounded bg-[var(--accent-soft)] border border-[var(--accent-border)] px-1.5 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
+                        <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent-primary)] animate-pulse" />
+                        RSS en vivo: {(liveTelemetry.game_rss_mb / 1024).toFixed(2)} GB
+                      </span>
+                    )}
+                  </div>
                   <span
                     className={`font-mono font-semibold ${
                       overSafeThreshold
@@ -555,44 +653,83 @@ export function SettingsPerformancePanel({
                         : "text-[var(--accent-primary)]"
                     }`}
                   >
-                    {ramDraft} MB ({(ramDraft / 1024).toFixed(1)} GB)
+                    {ramDraft} MB ({(ramDraft / 1024).toFixed(1)} GB máx)
                   </span>
                 </div>
 
-                <div className="h-3.5 w-full rounded-lg bg-[#080A0F] border border-[#1E2534] overflow-hidden flex">
-                  <div
-                    style={{ width: `${sysPct}%` }}
-                    className="h-full bg-slate-600/70 border-r border-[#080A0F]"
-                  />
-                  <div
-                    style={{ width: `${mcPct}%` }}
-                    className={`h-full border-r border-[#080A0F] ${
-                      overSafeThreshold
-                        ? "bg-[#F59E0B]"
-                        : "bg-[var(--accent-primary)]"
-                    }`}
-                  />
-                  <div style={{ width: `${freePct}%` }} className="h-full" />
+                {/* Bar with Safe-Threshold Marker */}
+                <div className="space-y-1">
+                  <div className="relative h-4 w-full rounded-lg bg-[#080A0F] border border-[#1E2534] overflow-hidden flex">
+                    <div
+                      style={{ width: `${sysPct}%` }}
+                      title={`Sistema: ${(systemUsedMb / 1024).toFixed(1)} GB`}
+                      className="h-full bg-slate-600/80 border-r border-[#080A0F] transition-all duration-300"
+                    />
+                    <div
+                      style={{ width: `${mcPct}%` }}
+                      title={`Minecraft: ${(gameDisplayMb / 1024).toFixed(1)} GB`}
+                      className={`h-full border-r border-[#080A0F] transition-all duration-300 ${
+                        overSafeThreshold
+                          ? "bg-[#F59E0B]"
+                          : "bg-[var(--accent-primary)]"
+                      }`}
+                    />
+                    <div style={{ width: `${freePct}%` }} className="h-full" />
+
+                    {/* Safe threshold vertical tick */}
+                    <div
+                      style={{ left: `${safeBarPct}%` }}
+                      title={`Umbral seguro: ${(hardware.max_safe_ram_mb / 1024).toFixed(1)} GB`}
+                      className="pointer-events-none absolute top-0 bottom-0 w-0.5 bg-[#F59E0B]/70"
+                    />
+                  </div>
+
+                  {/* GB Scale Ticks */}
+                  <div className="flex items-center justify-between text-[9px] font-mono text-slate-600">
+                    <span>0 GB</span>
+                    <span>{(totalMb / 2048).toFixed(0)} GB</span>
+                    <span>
+                      Umbral seguro {(hardware.max_safe_ram_mb / 1024).toFixed(0)} GB
+                    </span>
+                    <span>{(totalMb / 1024).toFixed(0)} GB total</span>
+                  </div>
                 </div>
 
-                <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
-                  <span>Sistema: {(systemUsedMb / 1024).toFixed(1)} GB</span>
+                {/* Color Legend */}
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-slate-400">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-slate-500" />
+                    Sistema: {(systemUsedMb / 1024).toFixed(1)} GB
+                  </span>
                   <span
-                    className={
+                    className={`inline-flex items-center gap-1.5 ${
                       overSafeThreshold
                         ? "text-[#F59E0B]"
                         : "text-[var(--accent-primary)]"
-                    }
+                    }`}
                   >
-                    Minecraft: {(ramDraft / 1024).toFixed(1)} GB
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        overSafeThreshold
+                          ? "bg-[#F59E0B]"
+                          : "bg-[var(--accent-primary)]"
+                      }`}
+                    />
+                    {liveTelemetry?.game_running
+                      ? `Minecraft (real): ${(liveTelemetry.game_rss_mb / 1024).toFixed(2)} GB`
+                      : `Minecraft (asignado): ${(ramDraft / 1024).toFixed(1)} GB`}
                   </span>
-                  <span>Libre: {(freeMb / 1024).toFixed(1)} GB</span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-[#1E2534] border border-slate-600" />
+                    Libre: {(freeMb / 1024).toFixed(1)} GB
+                  </span>
                 </div>
 
-                <div className="relative pt-1 pb-5">
+                {/* Slider with Dynamic Filled Track & Clamped Optimal Marker */}
+                <div className="relative pt-1 pb-6">
                   <input
                     type="range"
-                    min={1024}
+                    min={sliderMin}
                     max={sliderMax}
                     step={512}
                     value={ramDraft}
@@ -607,11 +744,25 @@ export function SettingsPerformancePanel({
                         void onUpdateProfile({ ...profile, ram_mb: ramDraft });
                       }
                     }}
+                    style={
+                      {
+                        background: `linear-gradient(to right, ${
+                          overSafeThreshold ? "#f59e0b" : "var(--accent-primary)"
+                        } ${sliderFillPct}%, #1e2534 ${sliderFillPct}%)`,
+                        "--slider-thumb-color": overSafeThreshold
+                          ? "#f59e0b"
+                          : "var(--accent-primary)",
+                      } as React.CSSProperties
+                    }
                     className="w-full forge-slider"
                   />
+                  <div className="flex items-center justify-between text-[9px] font-mono text-slate-600 mt-1">
+                    <span>1 GB</span>
+                    <span>{(sliderMax / 1024).toFixed(1)} GB</span>
+                  </div>
                   <div
                     className="absolute top-6 -translate-x-1/2 flex flex-col items-center pointer-events-none"
-                    style={{ left: `${recommendedTickPct}%` }}
+                    style={{ left: `${clampedOptLabelPct}%` }}
                   >
                     <span className="h-1.5 w-px bg-[var(--accent-primary)]" />
                     <span className="text-[10px] font-mono text-[var(--accent-primary)] whitespace-nowrap">
@@ -648,8 +799,16 @@ export function SettingsPerformancePanel({
                           disabled={already || installingMajor !== null}
                           onClick={() => {
                             setInstallingMajor(major);
+                            setJdkError(null);
                             void onInstallJavaMajor(major)
                               .then(() => refreshJavas())
+                              .catch((err) =>
+                                setJdkError(
+                                  err instanceof Error
+                                    ? err.message
+                                    : `No se pudo instalar Java ${major}`,
+                                ),
+                              )
                               .finally(() => setInstallingMajor(null));
                           }}
                           className="rounded-md bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] disabled:opacity-45 px-2 py-1 text-[10px] font-mono text-slate-300 inline-flex items-center gap-1"
@@ -665,6 +824,12 @@ export function SettingsPerformancePanel({
                     })}
                   </div>
                 </div>
+
+                {jdkError && (
+                  <div className="rounded-lg bg-rose-950/50 border border-rose-500/35 px-3 py-2 text-[11px] text-rose-200">
+                    {jdkError}
+                  </div>
+                )}
 
                 {installedJavas.length === 0 ? (
                   <p className="text-[11px] font-mono text-slate-500">
@@ -756,29 +921,40 @@ export function SettingsPerformancePanel({
                       ))}
                     </div>
 
-                    <div className="grid grid-cols-3 gap-1 rounded-lg bg-[#080A0F] border border-[#1E2534] p-1">
-                      {(
-                        [
-                          { id: "normal", label: "Normal" },
-                          { id: "above_normal", label: "Above Normal" },
-                          { id: "high", label: "High" },
-                        ] as { id: ProcessPriority; label: string }[]
-                      ).map((opt) => (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() =>
-                            void saveGlobal({ process_priority: opt.id })
-                          }
-                          className={`rounded-md py-1.5 text-[11px] font-medium ${
-                            config.process_priority === opt.id
-                              ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
-                              : "text-slate-400"
-                          }`}
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-3 gap-1 rounded-lg bg-[#080A0F] border border-[#1E2534] p-1">
+                        {(
+                          [
+                            { id: "normal", label: "Normal" },
+                            { id: "above_normal", label: "Above Normal" },
+                            { id: "high", label: "High" },
+                          ] as { id: ProcessPriority; label: string }[]
+                        ).map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() =>
+                              void saveGlobal({ process_priority: opt.id })
+                            }
+                            className={`rounded-md py-1.5 text-[11px] font-medium ${
+                              config.process_priority === opt.id
+                                ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
+                                : "text-slate-400"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {config.process_priority === "high" && (
+                        <div className="rounded-lg bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-3 py-2 flex items-center gap-2 text-[11px] text-amber-200">
+                          <AlertTriangle className="h-3.5 w-3.5 text-[#F59E0B] shrink-0" />
+                          La prioridad High puede restar CPU al audio o drivers
+                          de entrada en equipos con pocos núcleos. Se recomienda{" "}
+                          <span className="font-mono">Above Normal</span>.
+                        </div>
+                      )}
                     </div>
 
                     <div className="space-y-1">
@@ -830,9 +1006,9 @@ export function SettingsPerformancePanel({
           {section === "storage" && (
             <section className="space-y-4">
               <div>
-                <h1 className="text-base font-semibold text-white">
+                <h2 className="text-base font-semibold text-white">
                   Almacenamiento y Caché Híbrida
-                </h1>
+                </h2>
                 <p className="text-xs font-mono text-slate-500">{dataRoot}</p>
               </div>
 
@@ -848,12 +1024,19 @@ export function SettingsPerformancePanel({
                       </span>
                     </div>
 
+                    {/* Sober Accent-Harmonious Bar (No Amber Reuse) */}
                     <div className="h-4 w-full rounded-lg bg-[#080A0F] border border-[#1E2534] overflow-hidden flex">
                       {[
-                        { val: storage.assets_bytes, color: "bg-[#38BDF8]" },
-                        { val: storage.libraries_bytes, color: "bg-indigo-400" },
-                        { val: storage.runtimes_bytes, color: "bg-[#10B981]" },
-                        { val: storage.instances_bytes, color: "bg-amber-400" },
+                        {
+                          val: storage.instances_bytes,
+                          color: "bg-[var(--accent-primary)]",
+                        },
+                        { val: storage.assets_bytes, color: "bg-slate-400" },
+                        {
+                          val: storage.libraries_bytes,
+                          color: "bg-indigo-400/80",
+                        },
+                        { val: storage.runtimes_bytes, color: "bg-teal-400/80" },
                       ].map((seg, i) => (
                         <div
                           key={i}
@@ -867,27 +1050,39 @@ export function SettingsPerformancePanel({
 
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
                       <div className="rounded-lg bg-[#080A0F] border border-[#1E2534] p-2.5">
-                        <div className="text-[#38BDF8]">Assets</div>
+                        <div className="inline-flex items-center gap-1.5 text-[var(--accent-primary)]">
+                          <span className="h-2 w-2 rounded-full bg-[var(--accent-primary)]" />
+                          Instancias
+                        </div>
+                        <div className="text-white mt-0.5">
+                          {formatSize(storage.instances_bytes)}
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-[#080A0F] border border-[#1E2534] p-2.5">
+                        <div className="inline-flex items-center gap-1.5 text-slate-300">
+                          <span className="h-2 w-2 rounded-full bg-slate-400" />
+                          Assets
+                        </div>
                         <div className="text-white mt-0.5">
                           {formatSize(storage.assets_bytes)}
                         </div>
                       </div>
                       <div className="rounded-lg bg-[#080A0F] border border-[#1E2534] p-2.5">
-                        <div className="text-indigo-400">Librerías</div>
+                        <div className="inline-flex items-center gap-1.5 text-indigo-300">
+                          <span className="h-2 w-2 rounded-full bg-indigo-400/80" />
+                          Librerías
+                        </div>
                         <div className="text-white mt-0.5">
                           {formatSize(storage.libraries_bytes)}
                         </div>
                       </div>
                       <div className="rounded-lg bg-[#080A0F] border border-[#1E2534] p-2.5">
-                        <div className="text-[#10B981]">Runtimes</div>
+                        <div className="inline-flex items-center gap-1.5 text-teal-300">
+                          <span className="h-2 w-2 rounded-full bg-teal-400/80" />
+                          Runtimes
+                        </div>
                         <div className="text-white mt-0.5">
                           {formatSize(storage.runtimes_bytes)}
-                        </div>
-                      </div>
-                      <div className="rounded-lg bg-[#080A0F] border border-[#1E2534] p-2.5">
-                        <div className="text-amber-400">Instancias</div>
-                        <div className="text-white mt-0.5">
-                          {formatSize(storage.instances_bytes)}
                         </div>
                       </div>
                     </div>
@@ -998,14 +1193,15 @@ export function SettingsPerformancePanel({
                   </div>
                 </div>
 
-                <label className="flex items-center justify-between rounded-lg bg-[#080A0F] border border-[#1E2534] px-3.5 py-3 cursor-pointer">
-                  <div>
+                <label className="flex items-start justify-between gap-3 rounded-lg bg-[#080A0F] border border-[#1E2534] px-3.5 py-3 cursor-pointer">
+                  <div className="space-y-1">
                     <div className="text-xs font-medium text-white">
                       Aplicar skin dentro del juego
                     </div>
                     <div className="text-[11px] text-slate-500">
-                      Genera y activa automáticamente{" "}
-                      <code>_launcher_skin.zip</code> en offline.
+                      Genera y activa <code>_launcher_skin.zip</code> localmente
+                      en modo offline (solo visible para ti; sustituye las
+                      texturas por defecto sin requerir cuenta Mojang).
                     </div>
                   </div>
                   <input
@@ -1014,9 +1210,15 @@ export function SettingsPerformancePanel({
                     onChange={(e) =>
                       void saveGlobal({ apply_skin_ingame: e.target.checked })
                     }
-                    className="h-4 w-4 accent-[var(--accent-primary)]"
+                    className="h-4 w-4 mt-0.5 shrink-0 accent-[var(--accent-primary)]"
                   />
                 </label>
+
+                {skinError && (
+                  <div className="rounded-lg bg-rose-950/50 border border-rose-500/35 px-3 py-2 text-[11px] text-rose-200">
+                    {skinError}
+                  </div>
+                )}
 
                 <input
                   ref={skinInputRef}
@@ -1034,7 +1236,7 @@ export function SettingsPerformancePanel({
                   <Upload className="h-3.5 w-3.5" />
                   {uploadingSkin
                     ? "Guardando skin..."
-                    : "Subir skin personalizada (.png)"}
+                    : "Subir skin personalizada (.png 64×64 / 64×32 / HD)"}
                 </button>
               </div>
             </section>
@@ -1061,7 +1263,7 @@ export function SettingsPerformancePanel({
                     >
                       <span
                         className="h-4 w-4 rounded-full"
-                        style={{ backgroundColor: opt.hex }}
+                        style={{ backgroundColor: opt.main }}
                       />
                       <span>{opt.label}</span>
                     </button>

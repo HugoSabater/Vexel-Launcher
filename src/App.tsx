@@ -24,6 +24,7 @@ import {
   SidebarProfiles,
   type MainView,
 } from "./components/SidebarProfiles";
+import { ACCENT_PALETTE } from "./theme/accents";
 import type {
   BootstrapState,
   ContentItem,
@@ -38,6 +39,7 @@ import type {
   LauncherConfig,
   LaunchProgressEvent,
   LaunchResult,
+  LiveMemoryTelemetry,
   LogCleanupResult,
   LogLineEvent,
   ModrinthSearchResult,
@@ -51,53 +53,6 @@ interface CrashToastState {
   profileName: string;
   exitCode: number;
 }
-
-const ACCENT_PALETTE: Record<
-  string,
-  {
-    main: string;
-    hover: string;
-    soft: string;
-    border: string;
-    foreground: string;
-  }
-> = {
-  emerald: {
-    main: "#10b981",
-    hover: "#059669",
-    soft: "rgba(16, 185, 129, 0.15)",
-    border: "rgba(16, 185, 129, 0.35)",
-    foreground: "#090b10",
-  },
-  cyan: {
-    main: "#38bdf8",
-    hover: "#0284c7",
-    soft: "rgba(56, 189, 248, 0.15)",
-    border: "rgba(56, 189, 248, 0.35)",
-    foreground: "#090b10",
-  },
-  indigo: {
-    main: "#6366f1",
-    hover: "#4f46e5",
-    soft: "rgba(99, 102, 241, 0.15)",
-    border: "rgba(99, 102, 241, 0.35)",
-    foreground: "#ffffff",
-  },
-  amber: {
-    main: "#f59e0b",
-    hover: "#d97706",
-    soft: "rgba(245, 158, 11, 0.15)",
-    border: "rgba(245, 158, 11, 0.35)",
-    foreground: "#090b10",
-  },
-  crimson: {
-    main: "#f43f5e",
-    hover: "#e11d48",
-    soft: "rgba(244, 63, 94, 0.15)",
-    border: "rgba(244, 63, 94, 0.35)",
-    foreground: "#ffffff",
-  },
-};
 
 function extractIpcError(err: unknown): IpcErrorPayload {
   if (typeof err === "object" && err !== null) {
@@ -337,10 +292,17 @@ export function App() {
   };
 
   const handleSaveGlobalSettings = async (settings: GlobalSettingsPayload) => {
-    const nextConfig = await invoke<LauncherConfig>("save_global_settings", {
-      settings,
-    });
-    updateConfigState(nextConfig);
+    try {
+      const nextConfig = await invoke<LauncherConfig>("save_global_settings", {
+        settings,
+      });
+      setBannerError(null);
+      updateConfigState(nextConfig);
+    } catch (err) {
+      const msg = extractIpcError(err).message ?? "Error guardando ajustes";
+      setBannerError(msg);
+      throw new Error(msg);
+    }
   };
 
   const handleUpdateUsername = async (nick: string) => {
@@ -361,11 +323,12 @@ export function App() {
       const dataUrl = await invoke<string>("upload_custom_skin_bytes", {
         bytes,
       });
+      setBannerError(null);
       setSkinDataUrl(dataUrl);
     } catch (err) {
-      setBannerError(
-        extractIpcError(err).message ?? "Error al subir skin PNG",
-      );
+      const msg = extractIpcError(err).message ?? "Error al subir skin PNG";
+      setBannerError(msg);
+      throw new Error(msg);
     }
   };
 
@@ -376,13 +339,22 @@ export function App() {
     updateConfigState(nextConfig);
   };
 
-  const handlePlayProfile = async (targetProfileId?: string) => {
+  const handlePlayProfile = async (
+    targetProfileId?: string,
+    worldFolder?: string,
+  ) => {
     const profileToRun =
       (targetProfileId
         ? bootstrap?.config.profiles.find((p) => p.id === targetProfileId)
         : selectedProfile) ?? null;
 
     if (!profileToRun || runningProfiles[profileToRun.id]) return;
+    if (profileToRun.loader === "forge" || profileToRun.loader === "neo_forge") {
+      setBannerError(
+        "El soporte directo para Forge/NeoForge llegará próximamente. Cambia a Vanilla o Fabric para lanzar.",
+      );
+      return;
+    }
 
     const autoOpenCrash =
       bootstrap?.config.auto_open_console_on_crash ?? true;
@@ -425,6 +397,7 @@ export function App() {
     try {
       const result = await invoke<LaunchResult>("launch_profile", {
         profileId: profileToRun.id,
+        worldFolder: worldFolder ?? null,
         onProgress,
         onLog,
         onExit,
@@ -469,11 +442,21 @@ export function App() {
     onProgress.onmessage = (ev) => {
       setProgress(ev);
     };
-    await invoke<JavaRuntimeStatus>("install_adoptium_java", {
-      major,
-      onProgress,
-    });
-    setProgress(null);
+    try {
+      setBannerError(null);
+      await invoke<JavaRuntimeStatus>("install_adoptium_java", {
+        major,
+        onProgress,
+      });
+    } catch (err) {
+      const msg =
+        extractIpcError(err).message ??
+        `Error instalando Eclipse Temurin Java ${major}`;
+      setBannerError(msg);
+      throw new Error(msg);
+    } finally {
+      setProgress(null);
+    }
   };
 
   const handleConfirmInstallJava = async (major: number) => {
@@ -690,6 +673,11 @@ export function App() {
     [],
   );
 
+  const handleGetLiveMemoryTelemetry = useCallback(
+    async () => invoke<LiveMemoryTelemetry>("get_live_memory_telemetry"),
+    [],
+  );
+
   const filteredProfiles = useMemo(() => {
     if (!bootstrap) return [];
     const q = quickQuery.trim().toLowerCase();
@@ -883,6 +871,9 @@ export function App() {
                   onUpdateUsername={handleUpdateUsername}
                   onUploadSkinBytes={handleUploadSkinBytes}
                   onPlay={() => handlePlayProfile()}
+                  onPlayWorld={(folder) =>
+                    handlePlayProfile(selectedProfile.id, folder)
+                  }
                   onStop={() => handleStopProfile()}
                   onOpenFolder={() => handleOpenFolder(selectedProfile.id)}
                   onOpenSavesFolder={() =>
@@ -937,6 +928,7 @@ export function App() {
                   onRevalidateCache={handleRevalidateCache}
                   onCleanOldLogs={handleCleanOldLogs}
                   onGetLaunchCommandPreview={handleGetLaunchCommandPreview}
+                  onGetLiveMemoryTelemetry={handleGetLiveMemoryTelemetry}
                 />
               )}
             </div>

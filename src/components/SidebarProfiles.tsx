@@ -17,6 +17,7 @@ import {
   User,
   X,
 } from "lucide-react";
+import { USERNAME_REGEX } from "../theme/accents";
 import type {
   GcPreset,
   HardwareInfo,
@@ -170,7 +171,16 @@ export function SidebarProfiles({
     setEditingNick(false);
     const trimmed = nickDraft.trim();
     if (trimmed && trimmed !== offlineUsername) {
-      await onUpdateUsername(trimmed);
+      if (!USERNAME_REGEX.test(trimmed)) {
+        setNickDraft(offlineUsername);
+        await onUpdateUsername(trimmed);
+        return;
+      }
+      try {
+        await onUpdateUsername(trimmed);
+      } catch {
+        setNickDraft(offlineUsername);
+      }
     } else {
       setNickDraft(offlineUsername);
     }
@@ -196,6 +206,7 @@ export function SidebarProfiles({
                 <input
                   type="text"
                   autoFocus
+                  maxLength={16}
                   value={nickDraft}
                   onChange={(e) => setNickDraft(e.target.value)}
                   onBlur={() => void handleCommitNick()}
@@ -526,8 +537,12 @@ export function SidebarProfiles({
                   >
                     <option value="vanilla">Vanilla</option>
                     <option value="fabric">Fabric</option>
-                    <option value="forge">Forge</option>
-                    <option value="neo_forge">NeoForge</option>
+                    <option value="forge" disabled>
+                      Forge (Próximamente)
+                    </option>
+                    <option value="neo_forge" disabled>
+                      NeoForge (Próximamente)
+                    </option>
                   </select>
                 </div>
               </div>

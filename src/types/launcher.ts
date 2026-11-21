@@ -20,6 +20,14 @@ export interface HardwareInfo {
   max_safe_ram_mb: number;
 }
 
+export interface LiveMemoryTelemetry {
+  total_ram_mb: number;
+  available_ram_mb: number;
+  system_used_mb: number;
+  game_rss_mb: number;
+  game_running: boolean;
+}
+
 export interface Profile {
   id: string;
   name: string;

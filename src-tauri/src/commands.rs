@@ -17,7 +17,9 @@ use crate::core::content::{
     ModrinthSearchResult, PerformancePreset,
 };
 use crate::core::downloader::{verify_and_download_all, DownloadProgress};
-use crate::core::hardware::HardwareInfo;
+use crate::core::hardware::{
+    sample_live_memory_telemetry, HardwareInfo, LiveMemoryTelemetry,
+};
 use crate::core::instance::{
     delete_profile, save_config_atomic, upsert_profile, validate_profile_id, LauncherConfig,
     ModLoaderKind, Profile,
@@ -153,20 +155,46 @@ pub async fn get_bootstrap_state(state: State<'_, AppState>) -> AppResult<Bootst
     })
 }
 
+fn validate_offline_username(raw: &str) -> AppResult<String> {
+    let trimmed = raw.trim();
+    if trimmed.len() < 3 || trimmed.len() > 16 {
+        return Err(AppError::ConfigError(
+            "El nick debe tener entre 3 y 16 caracteres".to_string(),
+        ));
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(AppError::ConfigError(
+            "El nick solo puede contener letras, números y guion bajo (_)".to_string(),
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
+#[tauri::command]
+pub async fn get_live_memory_telemetry(
+    state: State<'_, AppState>,
+) -> AppResult<LiveMemoryTelemetry> {
+    let active_pids: Vec<u32> = {
+        let guard = state.running_processes.lock().await;
+        guard.values().copied().collect()
+    };
+    tokio::task::spawn_blocking(move || sample_live_memory_telemetry(&active_pids))
+        .await
+        .map_err(|err| AppError::ConfigError(format!("Telemetry task failed: {err}")))
+}
+
 #[tauri::command]
 pub async fn save_global_settings(
     state: State<'_, AppState>,
     settings: GlobalSettingsPayload,
 ) -> AppResult<LauncherConfig> {
-    let trimmed = settings.offline_username.trim();
-    if trimmed.is_empty() {
-        return Err(AppError::ConfigError(
-            "Offline username cannot be empty".to_string(),
-        ));
-    }
+    let valid_username = validate_offline_username(&settings.offline_username)?;
 
     let mut guard = state.config.lock().await;
-    guard.offline_username = trimmed.to_string();
+    guard.offline_username = valid_username;
     guard.process_priority = settings.process_priority;
     guard.launch_behavior = match settings.launch_behavior.as_str() {
         "hide_and_restore" | "close" => settings.launch_behavior,
@@ -512,6 +540,7 @@ pub async fn get_launch_command_preview(
         gc_preset: profile.gc_preset,
         process_priority: config_snapshot.process_priority,
         server_address: profile.server_address,
+        world_folder: None,
         javaw_path,
         main_class,
         java_major: effective_java_major,
@@ -547,6 +576,28 @@ fn validate_png_signature(bytes: &[u8]) -> AppResult<()> {
     Ok(())
 }
 
+fn validate_skin_png(bytes: &[u8]) -> AppResult<(u32, u32)> {
+    validate_png_signature(bytes)?;
+    if bytes.len() < 24 || &bytes[12..16] != b"IHDR" {
+        return Err(AppError::ContentError(
+            "El archivo PNG no contiene una cabecera IHDR válida".to_string(),
+        ));
+    }
+
+    let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+    let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+
+    let valid_dimensions = (64..=1024).contains(&width)
+        && width.is_multiple_of(64)
+        && (height == width || height == width / 2);
+    if !valid_dimensions {
+        return Err(AppError::ContentError(format!(
+            "Dimensiones de skin inválidas ({width}×{height}). Usa 64×64, 64×32 o múltiplos HD válidos (hasta 1024×1024)."
+        )));
+    }
+    Ok((width, height))
+}
+
 #[tauri::command]
 pub async fn upload_custom_skin(
     state: State<'_, AppState>,
@@ -554,7 +605,7 @@ pub async fn upload_custom_skin(
 ) -> AppResult<String> {
     let src = PathBuf::from(&source_path);
     let bytes = tokio::fs::read(&src).await?;
-    validate_png_signature(&bytes)?;
+    validate_skin_png(&bytes)?;
 
     state.paths.ensure_base_dirs().await?;
     let dest = state.paths.custom_skin_path();
@@ -574,7 +625,7 @@ pub async fn upload_custom_skin_bytes(
     state: State<'_, AppState>,
     bytes: Vec<u8>,
 ) -> AppResult<String> {
-    validate_png_signature(&bytes)?;
+    validate_skin_png(&bytes)?;
 
     state.paths.ensure_base_dirs().await?;
     let dest = state.paths.custom_skin_path();
@@ -950,10 +1001,26 @@ pub async fn launch_profile(
     window: Window,
     state: State<'_, AppState>,
     profile_id: String,
+    world_folder: Option<String>,
     on_progress: Channel<LaunchProgressEvent>,
     on_log: Channel<LogLineEvent>,
     on_exit: Channel<InstanceExitEvent>,
 ) -> AppResult<LaunchResult> {
+    let sanitized_world_folder = match world_folder
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(folder) => {
+            if folder.contains("..") || folder.contains('/') || folder.contains('\\') {
+                return Err(AppError::ConfigError(format!(
+                    "Invalid world folder name: '{folder}'"
+                )));
+            }
+            Some(folder.to_string())
+        }
+        None => None,
+    };
     {
         let running = state.running_processes.lock().await;
         if running.contains_key(&profile_id) {
@@ -1032,13 +1099,20 @@ pub async fn launch_profile(
     let _ = ensure_optimized_options_txt(&state.paths.instance_dir(&profile.id)).await;
 
     // Sync offline custom skin micro-resource pack before launching
-    let _ = sync_instance_skin_pack(
+    if let Err(err) = sync_instance_skin_pack(
         &state.paths,
         &profile.id,
         config_snapshot.apply_skin_ingame,
         config_snapshot.skin_path.as_deref(),
     )
-    .await;
+    .await
+    {
+        let _ = on_log.send(LogLineEvent {
+            line: format!("[Skin Sync] Warning: no se pudo sincronizar la skin in-game: {err}"),
+            is_stderr: true,
+            timestamp_ms: current_epoch_ms(),
+        });
+    }
 
     let asset_index = fetch_or_load_asset_index(&state.client, &manifest, &state.paths).await?;
     let asset_index_id = manifest
@@ -1139,6 +1213,7 @@ pub async fn launch_profile(
             gc_preset: profile.gc_preset,
             process_priority: config_snapshot.process_priority,
             server_address: profile.server_address,
+            world_folder: sanitized_world_folder,
             javaw_path,
             main_class,
             java_major: effective_java_major,
@@ -1198,4 +1273,48 @@ pub async fn launch_profile(
         downloaded_files: summary.downloaded_files,
         java_major: effective_java_major,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_offline_username, validate_skin_png};
+
+    fn make_png_header(width: u32, height: u32) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(24);
+        buf.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+        buf.extend_from_slice(&13_u32.to_be_bytes());
+        buf.extend_from_slice(b"IHDR");
+        buf.extend_from_slice(&width.to_be_bytes());
+        buf.extend_from_slice(&height.to_be_bytes());
+        buf
+    }
+
+    #[test]
+    fn test_validate_offline_username() {
+        assert_eq!(validate_offline_username("Hugo_01").ok().as_deref(), Some("Hugo_01"));
+        assert_eq!(validate_offline_username("  Steve  ").ok().as_deref(), Some("Steve"));
+        assert!(validate_offline_username("ab").is_err());
+        assert!(validate_offline_username("NombreDemasiadoLargo123").is_err());
+        assert!(validate_offline_username("Hugo Dev").is_err());
+        assert!(validate_offline_username("Hugó").is_err());
+    }
+
+    #[test]
+    fn test_validate_skin_png_ihdr_dimensions() {
+        assert_eq!(validate_skin_png(&make_png_header(64, 64)).ok(), Some((64, 64)));
+        assert_eq!(validate_skin_png(&make_png_header(64, 32)).ok(), Some((64, 32)));
+        assert_eq!(validate_skin_png(&make_png_header(128, 128)).ok(), Some((128, 128)));
+        assert_eq!(validate_skin_png(&make_png_header(256, 128)).ok(), Some((256, 128)));
+
+        // Truncated or missing IHDR must never panic
+        assert!(validate_skin_png(b"\x89PNG\r\n\x1a\nshort").is_err());
+        let mut bad_chunk = make_png_header(64, 64);
+        bad_chunk[12..16].copy_from_slice(b"IDAT");
+        assert!(validate_skin_png(&bad_chunk).is_err());
+
+        // Invalid dimensions
+        assert!(validate_skin_png(&make_png_header(100, 100)).is_err());
+        assert!(validate_skin_png(&make_png_header(32, 32)).is_err());
+        assert!(validate_skin_png(&make_png_header(2048, 2048)).is_err());
+    }
 }

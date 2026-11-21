@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Shirt } from "lucide-react";
 import { IdleAnimation, SkinViewer } from "skinview3d";
+import { USERNAME_REGEX } from "../theme/accents";
 
 interface SkinViewer3DProps {
   skinUrl: string | null;
@@ -71,6 +72,7 @@ export function SkinViewer3D({
   const viewerRef = useRef<SkinViewer | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(username ?? "");
+  const [nameError, setNameError] = useState<string | null>(null);
   const [docHidden, setDocHidden] = useState(
     typeof document !== "undefined" ? document.hidden : false,
   );
@@ -134,12 +136,25 @@ export function SkinViewer3D({
   }, [effectiveTexture, effectiveModel]);
 
   const commitName = async () => {
-    setEditing(false);
     const trimmed = draft.trim();
-    if (trimmed && trimmed !== username && onUpdateUsername) {
-      await onUpdateUsername(trimmed);
-    } else {
+    if (!trimmed || trimmed === username) {
+      setEditing(false);
+      setNameError(null);
       setDraft(username ?? "");
+      return;
+    }
+    if (!USERNAME_REGEX.test(trimmed)) {
+      setNameError("3-16 chars (A-Z, 0-9, _)");
+      return;
+    }
+    setEditing(false);
+    setNameError(null);
+    if (onUpdateUsername) {
+      try {
+        await onUpdateUsername(trimmed);
+      } catch {
+        setDraft(username ?? "");
+      }
     }
   };
 
@@ -150,7 +165,7 @@ export function SkinViewer3D({
     >
       {/* Minecraft-Style Floating Nametag directly above head */}
       {username !== undefined && (
-        <div className="absolute top-1 z-20">
+        <div className="absolute top-3 z-20 flex flex-col items-center gap-1">
           {editing && onUpdateUsername ? (
             <form
               onSubmit={(e) => {
@@ -161,23 +176,44 @@ export function SkinViewer3D({
               <input
                 type="text"
                 autoFocus
+                maxLength={16}
                 value={draft}
-                onChange={(e) => setDraft(e.target.value)}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  if (nameError) setNameError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setEditing(false);
+                    setNameError(null);
+                    setDraft(username ?? "");
+                  }
+                }}
                 onBlur={() => void commitName()}
-                className="w-32 rounded bg-black/80 border border-[var(--accent-primary)] px-2 py-0.5 text-center text-xs font-mono text-white focus:outline-none"
+                className="mc-nametag w-36 text-center bg-black/50 border-0 focus:outline-none"
               />
             </form>
           ) : (
             <button
               type="button"
               onClick={() => {
-                if (onUpdateUsername) setEditing(true);
+                if (onUpdateUsername) {
+                  setNameError(null);
+                  setEditing(true);
+                }
               }}
-              title={onUpdateUsername ? "Clic para editar nombre offline" : undefined}
-              className="rounded bg-black/60 hover:bg-black/80 px-2.5 py-0.5 text-xs font-mono text-slate-100 tracking-wide transition-colors"
+              title={
+                onUpdateUsername ? "Clic para editar nombre offline" : undefined
+              }
+              className="mc-nametag hover:bg-black/45 transition-colors cursor-pointer"
             >
               {username}
             </button>
+          )}
+          {nameError && (
+            <span className="bg-black/80 px-1.5 py-0.5 text-[10px] font-mono text-amber-300">
+              {nameError}
+            </span>
           )}
         </div>
       )}

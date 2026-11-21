@@ -31,6 +31,7 @@ pub struct LaunchRequest {
     pub gc_preset: GcPreset,
     pub process_priority: ProcessPriority,
     pub server_address: Option<String>,
+    pub world_folder: Option<String>,
     pub javaw_path: PathBuf,
     pub main_class: String,
     pub java_major: u32,
@@ -337,6 +338,7 @@ const SINGLE_VALUE_GAME_OPTIONS: &[&str] = &[
     "--clientId",
     "--xuid",
     "--quickPlayMultiplayer",
+    "--quickPlaySingleplayer",
     "--server",
     "--port",
     "--width",
@@ -398,7 +400,20 @@ pub fn build_game_args(req: &LaunchRequest, paths: &LauncherPaths) -> Vec<String
         args.push(value);
     }
 
-    let quickplay_args = build_quickplay_args(&req.mc_version, req.server_address.as_deref());
+    let quickplay_args = if let Some(world) = req
+        .world_folder
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if supports_modern_quickplay(&req.mc_version) {
+            vec!["--quickPlaySingleplayer".to_string(), world.to_string()]
+        } else {
+            Vec::new()
+        }
+    } else {
+        build_quickplay_args(&req.mc_version, req.server_address.as_deref())
+    };
     let mut combined_extra: Vec<String> = req
         .extra_game_args
         .iter()
@@ -696,6 +711,7 @@ mod tests {
             gc_preset: GcPreset::GenerationalZgc,
             process_priority: ProcessPriority::AboveNormal,
             server_address: Some("play.example.net:25565".to_string()),
+            world_folder: None,
             javaw_path: PathBuf::from("javaw.exe"),
             main_class: "net.minecraft.client.main.Main".to_string(),
             java_major: 21,
@@ -769,6 +785,39 @@ mod tests {
         assert!(args.contains(&"1920".to_string()));
         assert!(args.contains(&"1080".to_string()));
         assert!(args.contains(&"--fullscreen".to_string()));
+    }
+
+    #[test]
+    fn test_world_folder_uses_quickplay_singleplayer_and_omits_server() {
+        let paths = LauncherPaths::with_root(PathBuf::from("test-root"));
+        let req = LaunchRequest {
+            profile_id: "survival".to_string(),
+            mc_version: "1.21.4".to_string(),
+            version_type: "release".to_string(),
+            username: "Hugo".to_string(),
+            ram_mb: 4096,
+            gc_preset: GcPreset::GenerationalZgc,
+            process_priority: ProcessPriority::AboveNormal,
+            server_address: Some("play.example.net:25565".to_string()),
+            world_folder: Some("MiMundoSurvival".to_string()),
+            javaw_path: PathBuf::from("javaw.exe"),
+            main_class: "net.minecraft.client.main.Main".to_string(),
+            java_major: 21,
+            classpath_entries: Vec::new(),
+            native_archives: Vec::new(),
+            asset_index_id: "19".to_string(),
+            extra_jvm_args: Vec::new(),
+            extra_game_args: Vec::new(),
+            window_width: None,
+            window_height: None,
+            fullscreen: false,
+        };
+
+        let args = build_game_args(&req, &paths);
+        assert!(args.contains(&"--quickPlaySingleplayer".to_string()));
+        assert!(args.contains(&"MiMundoSurvival".to_string()));
+        assert!(!args.contains(&"--quickPlayMultiplayer".to_string()));
+        assert!(!args.contains(&"--server".to_string()));
     }
 
     #[test]

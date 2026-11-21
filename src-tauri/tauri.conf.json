@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; img-src 'self' data: blob: https://cdn.modrinth.com; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' data: blob: ipc: http://ipc.localhost https://ipc.localhost; font-src 'self' data:;",
       "capabilities": ["default"]
     }
   },

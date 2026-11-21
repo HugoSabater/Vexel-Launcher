@@ -39,6 +39,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_bootstrap_state,
+            commands::get_live_memory_telemetry,
             commands::save_global_settings,
             commands::create_or_update_profile,
             commands::set_default_profile,
