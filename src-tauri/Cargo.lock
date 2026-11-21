@@ -1988,6 +1988,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "directories",
+ "flate2",
  "futures-util",
  "hex",
  "md-5",

@@ -64,6 +64,7 @@ function classifyLogLine(entry: LogLineEvent): string {
     entry.line.startsWith("[Win32 Tuning]") ||
     entry.line.startsWith("[JVM Optimizer]") ||
     entry.line.startsWith("[GPU Preference]") ||
+    entry.line.startsWith("[WorldGen Tuning]") ||
     entry.line.startsWith("[Java Probe]") ||
     entry.line.startsWith("[Launcher]")
   ) {
@@ -129,11 +130,11 @@ export const ConsoleDrawer = memo(function ConsoleDrawer({
   };
 
   return (
-    <section className="h-56 shrink-0 border-t border-[#1E2534] bg-[#06080C] flex flex-col">
-      <div className="h-9 px-4 bg-[#11151E] border-b border-[#1E2534] flex items-center justify-between">
+    <section className="h-56 shrink-0 border-t border-white/[0.06] bg-[#05070B] flex flex-col">
+      <div className="h-9 px-4 bg-[#0D1118] border-b border-white/[0.06] flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Terminal className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
-          <span className="text-[11px] font-medium text-slate-200">
+          <span className="text-xs font-medium text-slate-200">
             Consola de Ejecución (Hora Local)
           </span>
           <span className="text-[10px] font-mono text-slate-500">
@@ -145,10 +146,10 @@ export const ConsoleDrawer = memo(function ConsoleDrawer({
           <button
             type="button"
             onClick={() => setAutoScroll((v) => !v)}
-            className={`rounded px-2 py-0.5 text-[10px] font-mono border ${
+            className={`rounded-md px-2 py-0.5 text-[10px] font-mono transition-colors ${
               autoScroll
-                ? "bg-[var(--accent-soft)] border-[var(--accent-border)] text-[var(--accent-primary)]"
-                : "border-[#1E2534] text-slate-500"
+                ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
+                : "bg-white/[0.04] text-slate-500 hover:text-slate-300"
             }`}
           >
             auto-scroll
@@ -156,7 +157,7 @@ export const ConsoleDrawer = memo(function ConsoleDrawer({
           <button
             type="button"
             onClick={() => void handleCopy()}
-            className="inline-flex items-center gap-1 rounded border border-[#1E2534] px-2 py-0.5 text-[10px] font-mono text-slate-300 hover:bg-[#171D2A]"
+            className="inline-flex items-center gap-1 rounded-md bg-white/[0.04] hover:bg-white/[0.08] px-2 py-0.5 text-[10px] font-mono text-slate-300 transition-colors"
           >
             {copied ? (
               <Check className="h-3 w-3 text-[var(--accent-primary)]" />
@@ -172,7 +173,7 @@ export const ConsoleDrawer = memo(function ConsoleDrawer({
               setLines([]);
             }}
             title="Limpiar"
-            className="p-1 rounded text-slate-400 hover:text-white hover:bg-[#171D2A]"
+            className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors"
           >
             <Trash2 className="h-3 w-3" />
           </button>
@@ -180,7 +181,7 @@ export const ConsoleDrawer = memo(function ConsoleDrawer({
             type="button"
             onClick={onClose}
             title="Ocultar (Ctrl+L)"
-            className="p-1 rounded text-slate-400 hover:text-white hover:bg-[#171D2A]"
+            className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors"
           >
             <X className="h-3.5 w-3.5" />
           </button>

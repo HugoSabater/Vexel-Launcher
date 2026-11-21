@@ -39,6 +39,8 @@ use crate::core::runner::{
     LaunchRequest, ProcessPriority,
 };
 use crate::core::skin_pack::sync_instance_skin_pack;
+use crate::core::worldgen_configs::ensure_worldgen_mod_configs;
+use crate::core::worlds::{scan_recent_worlds_blocking, WorldSummary};
 use crate::error::{AppError, AppResult};
 
 pub struct AppState {
@@ -53,12 +55,6 @@ pub struct AppState {
 pub struct InstanceExitEvent {
     pub profile_id: String,
     pub exit_code: Option<i32>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct WorldSummary {
-    pub folder_name: String,
-    pub last_modified_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -82,6 +78,10 @@ pub struct LogCleanupResult {
     pub bytes_freed: u64,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct GlobalSettingsPayload {
     pub offline_username: String,
@@ -91,6 +91,8 @@ pub struct GlobalSettingsPayload {
     pub accent_color: String,
     pub launch_behavior: String,
     pub auto_open_console_on_crash: bool,
+    #[serde(default = "default_true")]
+    pub auto_tune_mod_configs: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -203,6 +205,7 @@ pub async fn save_global_settings(
     guard.apply_skin_ingame = settings.apply_skin_ingame;
     guard.accent_color = settings.accent_color;
     guard.auto_open_console_on_crash = settings.auto_open_console_on_crash;
+    guard.auto_tune_mod_configs = settings.auto_tune_mod_configs;
     save_config_atomic(&state.paths, &guard).await?;
     Ok(guard.clone())
 }
@@ -703,27 +706,9 @@ pub async fn get_instance_summary(
     state.paths.ensure_instance_dirs(&profile_id).await?;
 
     let saves_dir = state.paths.instance_saves_dir(&profile_id);
-    let mut worlds = Vec::new();
-    if tokio::fs::try_exists(&saves_dir).await? {
-        let mut entries = tokio::fs::read_dir(&saves_dir).await?;
-        while let Some(entry) = entries.next_entry().await? {
-            let meta = entry.metadata().await?;
-            if !meta.is_dir() {
-                continue;
-            }
-            let modified_ms = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map_or(0, |d| d.as_millis() as u64);
-            worlds.push(WorldSummary {
-                folder_name: entry.file_name().to_string_lossy().into_owned(),
-                last_modified_ms: modified_ms,
-            });
-        }
-    }
-    worlds.sort_by_key(|w| std::cmp::Reverse(w.last_modified_ms));
-    worlds.truncate(3);
+    let worlds = tokio::task::spawn_blocking(move || scan_recent_worlds_blocking(&saves_dir))
+        .await
+        .map_err(|err| AppError::ConfigError(format!("World scan task failed: {err}")))?;
 
     let screenshots_dir = state.paths.instance_screenshots_dir(&profile_id);
     let mut latest_shot: Option<(u64, PathBuf)> = None;
@@ -819,14 +804,15 @@ pub async fn inject_performance_preset(
     preset: PerformancePreset,
     on_progress: Channel<LaunchProgressEvent>,
 ) -> AppResult<Vec<String>> {
-    let profile = {
+    let (profile, auto_tune) = {
         let guard = state.config.lock().await;
-        guard
+        let profile = guard
             .profiles
             .iter()
             .find(|p| p.id == profile_id)
             .cloned()
-            .ok_or_else(|| AppError::ConfigError(format!("Profile '{profile_id}' not found")))?
+            .ok_or_else(|| AppError::ConfigError(format!("Profile '{profile_id}' not found")))?;
+        (profile, guard.auto_tune_mod_configs)
     };
 
     let loader_str = match profile.loader {
@@ -836,7 +822,7 @@ pub async fn inject_performance_preset(
         ModLoaderKind::NeoForge => "neoforge",
     };
 
-    inject_modrinth_preset(
+    let installed = inject_modrinth_preset(
         &state.client,
         &state.paths,
         &profile.id,
@@ -847,7 +833,13 @@ pub async fn inject_performance_preset(
             let _ = on_progress.send(progress.into());
         },
     )
-    .await
+    .await?;
+
+    if auto_tune && profile.loader == ModLoaderKind::Fabric {
+        let _ = ensure_worldgen_mod_configs(&state.paths, &profile.id, &state.hardware).await;
+    }
+
+    Ok(installed)
 }
 
 #[tauri::command]
@@ -858,14 +850,15 @@ pub async fn install_modrinth_item(
     kind: ContentKind,
     on_progress: Channel<LaunchProgressEvent>,
 ) -> AppResult<Vec<String>> {
-    let profile = {
+    let (profile, auto_tune) = {
         let guard = state.config.lock().await;
-        guard
+        let profile = guard
             .profiles
             .iter()
             .find(|p| p.id == profile_id)
             .cloned()
-            .ok_or_else(|| AppError::ConfigError(format!("Profile '{profile_id}' not found")))?
+            .ok_or_else(|| AppError::ConfigError(format!("Profile '{profile_id}' not found")))?;
+        (profile, guard.auto_tune_mod_configs)
     };
 
     let loader_str = match profile.loader {
@@ -875,7 +868,7 @@ pub async fn install_modrinth_item(
         ModLoaderKind::NeoForge => "neoforge",
     };
 
-    install_single_modrinth_item(
+    let installed = install_single_modrinth_item(
         &state.client,
         &state.paths,
         &profile.id,
@@ -887,7 +880,13 @@ pub async fn install_modrinth_item(
             let _ = on_progress.send(progress.into());
         },
     )
-    .await
+    .await?;
+
+    if auto_tune && kind == ContentKind::Mod && profile.loader == ModLoaderKind::Fabric {
+        let _ = ensure_worldgen_mod_configs(&state.paths, &profile.id, &state.hardware).await;
+    }
+
+    Ok(installed)
 }
 
 #[must_use]
@@ -1126,6 +1125,28 @@ pub async fn launch_profile(
 
     // Seed optimized options.txt ONLY if missing, BEFORE skin pack modifies resourcePacks
     let _ = ensure_optimized_options_txt(&state.paths.instance_dir(&profile.id)).await;
+
+    // Seed hardware-tuned worldgen mod configs (Sodium, C2ME, DH) ONLY if missing & opt-in enabled
+    if config_snapshot.auto_tune_mod_configs && profile.loader == ModLoaderKind::Fabric {
+        match ensure_worldgen_mod_configs(&state.paths, &profile.id, &state.hardware).await {
+            Ok(created) => {
+                for item in created {
+                    let _ = on_log.send(LogLineEvent {
+                        line: format!("[WorldGen Tuning] Generado {item}"),
+                        is_stderr: false,
+                        timestamp_ms: current_epoch_ms(),
+                    });
+                }
+            }
+            Err(err) => {
+                let _ = on_log.send(LogLineEvent {
+                    line: format!("[WorldGen Tuning] Warning: {err}"),
+                    is_stderr: true,
+                    timestamp_ms: current_epoch_ms(),
+                });
+            }
+        }
+    }
 
     // Sync offline custom skin micro-resource pack before launching
     if let Err(err) = sync_instance_skin_pack(

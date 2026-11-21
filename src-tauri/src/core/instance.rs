@@ -72,6 +72,8 @@ pub struct LauncherConfig {
     pub launch_behavior: String,
     #[serde(default = "default_true")]
     pub auto_open_console_on_crash: bool,
+    #[serde(default = "default_true")]
+    pub auto_tune_mod_configs: bool,
     pub profiles: Vec<Profile>,
 }
 
@@ -88,6 +90,7 @@ impl LauncherConfig {
             accent_color: default_accent_color(),
             launch_behavior: default_launch_behavior(),
             auto_open_console_on_crash: true,
+            auto_tune_mod_configs: true,
             profiles: vec![
                 Profile {
                     id: "vanilla-1-21-4".to_string(),

@@ -136,6 +136,7 @@ export function App() {
     root.setProperty("--accent-soft", theme.soft);
     root.setProperty("--accent-border", theme.border);
     root.setProperty("--accent-foreground", theme.foreground);
+    root.setProperty("--accent-rgb", theme.rgb);
   }, [bootstrap?.config.accent_color]);
 
   useEffect(() => {
@@ -349,6 +350,7 @@ export function App() {
       accent_color: bootstrap.config.accent_color,
       launch_behavior: bootstrap.config.launch_behavior,
       auto_open_console_on_crash: bootstrap.config.auto_open_console_on_crash,
+      auto_tune_mod_configs: bootstrap.config.auto_tune_mod_configs,
     });
   };
 
@@ -740,26 +742,26 @@ export function App() {
   }, [bootstrap, quickQuery]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[#080A0F] text-slate-100 flex flex-col border border-[#1E2534]">
+    <div className="h-screen w-screen overflow-hidden bg-[#07090D] text-slate-100 flex flex-col border border-white/[0.06]">
       {/* 36px Frameless Top Titlebar with Quick Search (Ctrl+K) */}
       <header
         data-tauri-drag-region
-        className="h-9 shrink-0 bg-[#080A0F] border-b border-[#1E2534] px-3 flex items-center justify-between gap-4"
+        className="h-9 shrink-0 bg-[#07090D] border-b border-white/[0.06] px-3 flex items-center justify-between gap-4"
       >
         <div data-tauri-drag-region className="flex items-center gap-2 pl-0.5">
           <span
-            className="h-2.5 w-2.5 rounded-sm"
+            className="h-2.5 w-2.5 rounded-[3px] shadow-[0_0_8px_rgba(var(--accent-rgb),0.6)]"
             style={{ backgroundColor: "var(--accent-primary)" }}
           />
           <span
             data-tauri-drag-region
-            className="text-xs font-semibold tracking-tight text-slate-200"
+            className="text-[13px] font-semibold tracking-tight text-slate-100"
           >
             MC Launcher
           </span>
           <span
             data-tauri-drag-region
-            className="rounded bg-[var(--accent-soft)] border border-[var(--accent-border)] px-1.5 py-0.5 text-[9px] font-mono text-[var(--accent-primary)]"
+            className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[9px] font-mono font-semibold tracking-wider text-[var(--accent-primary)]"
           >
             RUST
           </span>
@@ -771,13 +773,15 @@ export function App() {
             setQuickQuery("");
             setQuickSearchOpen(true);
           }}
-          className="h-6 w-72 max-w-[40vw] rounded-md bg-[#11151E] hover:bg-[#171D2A] border border-[#1E2534] px-2.5 flex items-center justify-between text-[11px] text-slate-500 transition-colors"
+          className="h-6 w-72 max-w-[40vw] rounded-md bg-[#121722]/90 hover:bg-[#171D2B] border border-white/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] px-2.5 flex items-center justify-between text-[11.5px] text-slate-400 hover:text-slate-200 transition-colors"
         >
           <span className="inline-flex items-center gap-1.5 truncate">
             <Search className="h-3 w-3 text-slate-500" />
             Buscar instancias...
           </span>
-          <span className="font-mono text-[10px] text-slate-600">Ctrl+K</span>
+          <kbd className="rounded bg-white/[0.05] px-1.5 py-[1px] font-mono text-[10px] text-slate-400">
+            Ctrl+K
+          </kbd>
         </button>
 
         <div className="flex items-center gap-0.5">
@@ -785,7 +789,7 @@ export function App() {
             type="button"
             onClick={handleWindowMinimize}
             title="Minimizar"
-            className="h-6 w-8 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-[#171D2A]"
+            className="h-6 w-8 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors"
           >
             <Minus className="h-3 w-3" />
           </button>
@@ -793,7 +797,7 @@ export function App() {
             type="button"
             onClick={handleWindowToggleMaximize}
             title="Maximizar"
-            className="h-6 w-8 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-[#171D2A]"
+            className="h-6 w-8 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors"
           >
             <Square className="h-2.5 w-2.5" />
           </button>
@@ -801,7 +805,7 @@ export function App() {
             type="button"
             onClick={handleWindowClose}
             title="Cerrar"
-            className="h-6 w-8 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-rose-600"
+            className="h-6 w-8 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-rose-600 transition-colors"
           >
             <X className="h-3 w-3" />
           </button>
@@ -843,7 +847,7 @@ export function App() {
 
           <div className="relative flex-1 flex flex-col min-w-0 min-h-0">
             {bannerError && (
-              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 rounded-lg bg-[#11151E] border border-rose-500/40 px-4 py-2 text-xs font-mono text-rose-200 flex items-center gap-3 shadow-xl">
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 rounded-lg bg-[#121722] border border-rose-500/35 px-4 py-2 text-xs font-mono text-rose-200 flex items-center gap-3 shadow-2xl">
                 <span>{bannerError}</span>
                 <button
                   type="button"
@@ -857,12 +861,12 @@ export function App() {
 
             {/* Smart Crash Toast */}
             {crashToast && (
-              <div className="absolute top-4 right-4 z-40 w-80 rounded-xl bg-[#11151E] border border-rose-500/40 p-3.5 shadow-2xl space-y-2.5">
+              <div className="absolute top-4 right-4 z-40 w-80 rounded-xl forge-card border-rose-500/35 p-4 shadow-2xl space-y-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-start gap-2.5">
                     <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
                     <div>
-                      <div className="text-xs font-semibold text-white">
+                      <div className="text-[13px] font-semibold text-white">
                         El juego se cerró inesperadamente (Código{" "}
                         {crashToast.exitCode})
                       </div>
@@ -880,21 +884,21 @@ export function App() {
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2 pt-1">
+                <div className="flex items-center gap-2 pt-0.5">
                   <button
                     type="button"
                     onClick={() => {
                       setConsoleOpen(true);
                       setCrashToast(null);
                     }}
-                    className="flex-1 rounded-lg bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] py-1.5 text-[11px] font-medium text-white"
+                    className="flex-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.09] py-1.5 text-xs font-medium text-white transition-colors"
                   >
                     Ver consola
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleCopyReport()}
-                    className="flex-1 rounded-lg bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] py-1.5 text-[11px] font-medium text-[var(--accent-primary)]"
+                    className="flex-1 rounded-lg bg-[var(--accent-soft)] hover:brightness-110 py-1.5 text-xs font-medium text-[var(--accent-primary)] transition-all"
                   >
                     {copiedLogs ? "Copiado" : "Copiar reporte"}
                   </button>
@@ -1005,9 +1009,9 @@ export function App() {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-xl bg-[#11151E] border border-[#1E2534] overflow-hidden shadow-2xl"
+            className="w-full max-w-md rounded-xl forge-card overflow-hidden shadow-2xl"
           >
-            <div className="px-3.5 py-2.5 border-b border-[#1E2534] flex items-center gap-2">
+            <div className="px-4 py-3 border-b border-white/[0.06] flex items-center gap-2.5">
               <Search className="h-4 w-4 text-[var(--accent-primary)]" />
               <input
                 type="text"
@@ -1015,9 +1019,11 @@ export function App() {
                 value={quickQuery}
                 onChange={(e) => setQuickQuery(e.target.value)}
                 placeholder="Cambiar instancia por nombre, versión o loader..."
-                className="flex-1 bg-transparent text-xs text-white placeholder:text-slate-500 focus:outline-none"
+                className="flex-1 bg-transparent text-[13px] text-white placeholder:text-slate-500 focus:outline-none"
               />
-              <span className="text-[10px] font-mono text-slate-600">ESC</span>
+              <kbd className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[10px] font-mono text-slate-400">
+                ESC
+              </kbd>
             </div>
 
             <div className="max-h-64 overflow-y-auto p-1.5 space-y-0.5">
@@ -1030,10 +1036,10 @@ export function App() {
                     setActiveView("home");
                     setQuickSearchOpen(false);
                   }}
-                  className="w-full rounded-lg px-3 py-2 flex items-center justify-between text-left hover:bg-[#171D2A] text-xs"
+                  className="w-full rounded-lg px-3 py-2 flex items-center justify-between text-left hover:bg-white/[0.05] text-[13px] transition-colors"
                 >
-                  <span className="text-slate-200 font-medium">{p.name}</span>
-                  <span className="font-mono text-[10px] text-slate-500">
+                  <span className="text-slate-100 font-medium">{p.name}</span>
+                  <span className="font-mono text-[11px] text-slate-400">
                     {p.mc_version} · {p.loader}
                   </span>
                 </button>

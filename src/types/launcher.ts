@@ -55,6 +55,7 @@ export interface LauncherConfig {
   accent_color: string;
   launch_behavior: string;
   auto_open_console_on_crash: boolean;
+  auto_tune_mod_configs: boolean;
   profiles: Profile[];
 }
 
@@ -66,6 +67,7 @@ export interface GlobalSettingsPayload {
   accent_color: string;
   launch_behavior: string;
   auto_open_console_on_crash: boolean;
+  auto_tune_mod_configs: boolean;
 }
 
 export interface BootstrapState {
@@ -119,9 +121,22 @@ export interface LogCleanupResult {
   bytes_freed: number;
 }
 
+export type WorldGameType =
+  | "survival"
+  | "creative"
+  | "adventure"
+  | "spectator";
+
 export interface WorldSummary {
   folder_name: string;
+  level_name: string;
+  game_type: WorldGameType | null;
+  hardcore: boolean;
+  last_played_ms: number;
   last_modified_ms: number;
+  mc_version: string | null;
+  seed: string | null;
+  icon_data_url: string | null;
 }
 
 export interface InstanceSummary {

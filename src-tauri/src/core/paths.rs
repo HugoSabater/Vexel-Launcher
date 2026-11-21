@@ -145,6 +145,11 @@ impl LauncherPaths {
     }
 
     #[must_use]
+    pub fn instance_config_dir(&self, profile_id: &str) -> PathBuf {
+        self.instance_dir(profile_id).join("config")
+    }
+
+    #[must_use]
     pub fn instance_screenshots_dir(&self, profile_id: &str) -> PathBuf {
         self.instance_dir(profile_id).join("screenshots")
     }

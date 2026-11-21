@@ -25,6 +25,7 @@ md-5 = "0.10"
 hex = "0.4"
 uuid = { version = "1", features = ["v3", "v4", "serde"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
 directories = "5"
 futures-util = "0.3"
 base64 = "0.22"

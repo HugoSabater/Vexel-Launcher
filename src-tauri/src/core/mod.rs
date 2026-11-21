@@ -9,3 +9,5 @@ pub mod manifest;
 pub mod paths;
 pub mod runner;
 pub mod skin_pack;
+pub mod worldgen_configs;
+pub mod worlds;

@@ -660,7 +660,7 @@ export function ContentManagerPanel({
   }, [activeTab, installedMods, resourcePacks, shaderPacks, localQuery, localSort]);
 
   return (
-    <div className="h-full overflow-y-auto p-5 bg-[#080A0F]">
+    <div className="h-full overflow-y-auto px-6 py-5 bg-[#07090D]">
       <input
         ref={fileInputRef}
         type="file"
@@ -670,11 +670,11 @@ export function ContentManagerPanel({
         className="hidden"
       />
 
-      <div className="max-w-5xl mx-auto space-y-4">
+      <div className="max-w-5xl mx-auto space-y-5">
         {/* Header & Segmented Tabs */}
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           <div>
-            <h1 className="text-lg font-semibold text-white">
+            <h1 className="text-[18px] font-semibold tracking-tight text-white">
               Mods, Resource Packs y Shaders
             </h1>
             <p className="text-[11px] font-mono text-slate-500">
@@ -683,7 +683,7 @@ export function ContentManagerPanel({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-lg bg-[#11151E] border border-[#1E2534] p-0.5">
+            <div className="inline-flex rounded-lg bg-[#0D1118] border border-white/[0.06] p-0.5">
               <button
                 type="button"
                 onClick={() => {
@@ -692,7 +692,7 @@ export function ContentManagerPanel({
                 }}
                 className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
                   activeTab === "installed"
-                    ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
+                    ? "bg-[#121722] text-[var(--accent-primary)] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
@@ -703,7 +703,7 @@ export function ContentManagerPanel({
                 onClick={() => setActiveTab("recommended")}
                 className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
                   activeTab === "recommended"
-                    ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
+                    ? "bg-[#121722] text-[var(--accent-primary)] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
@@ -717,7 +717,7 @@ export function ContentManagerPanel({
                 }}
                 className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
                   activeTab === "resource_packs"
-                    ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
+                    ? "bg-[#121722] text-[var(--accent-primary)] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
@@ -731,7 +731,7 @@ export function ContentManagerPanel({
                 }}
                 className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
                   activeTab === "shaders"
-                    ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
+                    ? "bg-[#121722] text-[var(--accent-primary)] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
@@ -742,7 +742,7 @@ export function ContentManagerPanel({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="h-8 px-3 rounded-lg bg-[#11151E] hover:bg-[#171D2A] border border-[#1E2534] inline-flex items-center gap-1.5 text-xs text-slate-200"
+              className="h-8 px-3 rounded-lg bg-[#121722] hover:bg-[#171D2B] border border-white/[0.07] inline-flex items-center gap-1.5 text-xs font-medium text-slate-200 transition-colors"
             >
               <FolderPlus className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
               Importar
@@ -757,7 +757,7 @@ export function ContentManagerPanel({
                 }
               }}
               title="Recargar"
-              className="h-8 w-8 rounded-lg bg-[#11151E] border border-[#1E2534] flex items-center justify-center text-slate-400 hover:text-white"
+              className="h-8 w-8 rounded-lg bg-[#121722] hover:bg-[#171D2B] border border-white/[0.07] flex items-center justify-center text-slate-400 hover:text-white transition-colors"
             >
               <RefreshCw
                 className={`h-3.5 w-3.5 ${loading || loadingFeed ? "animate-spin" : ""}`}
@@ -774,8 +774,8 @@ export function ContentManagerPanel({
         )}
 
         {progress && busySlug && (
-          <div className="rounded-lg bg-[#11151E] border border-[#1E2534] px-4 py-2.5 space-y-1.5">
-            <div className="flex items-center justify-between text-[11px]">
+          <div className="rounded-xl forge-card px-4 py-3 space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
               <span className="font-medium text-[var(--accent-primary)]">
                 {progress.phase}
               </span>
@@ -783,27 +783,27 @@ export function ContentManagerPanel({
                 {progress.completed}/{progress.total}
               </span>
             </div>
-            <div className="text-[10px] font-mono text-slate-500 truncate">
+            <div className="text-[11px] font-mono text-slate-500 truncate">
               {progress.detail}
             </div>
           </div>
         )}
 
         {statusMessage && (
-          <div className="rounded-lg bg-[#11151E] border border-[#1E2534] px-4 py-2.5 text-xs font-mono text-slate-300">
+          <div className="rounded-xl forge-panel px-4 py-2.5 text-xs font-mono text-slate-300">
             {statusMessage}
           </div>
         )}
 
         {/* TAB: RECOMENDADOS & SMART SEARCH */}
         {activeTab === "recommended" && (
-          <div className="space-y-4">
+          <div className="space-y-5">
             {/* Performance & Chunk Presets (Fabric) */}
             {profile.loader === "fabric" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {fpsPureInstalled ? (
-                  <div className="rounded-xl bg-[#11151E] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-2 text-xs font-medium text-[var(--accent-primary)]">
+                  <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
                       <Check className="h-4 w-4" />
                       Stack FPS Puros instalado (9 mods)
                     </span>
@@ -811,24 +811,24 @@ export function ContentManagerPanel({
                       type="button"
                       disabled={busySlug !== null}
                       onClick={() => void handlePreset("fps_pure")}
-                      className="rounded-md bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-2.5 py-1 text-[11px] text-slate-300"
+                      className="rounded-md bg-[#07090D]/70 hover:bg-[#07090D] px-2.5 py-1 text-[11px] font-medium text-slate-200 transition-colors"
                     >
                       Actualizar
                     </button>
                   </div>
                 ) : (
-                  <div className="rounded-xl bg-[#11151E] border border-[#1E2534] p-4 flex flex-col justify-between gap-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-white">
+                  <div className="rounded-xl forge-card p-4 flex flex-col justify-between gap-3.5">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
                           <Rocket className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                           FPS Puros (Core Estable)
                         </span>
-                        <span className="rounded bg-[var(--accent-soft)] border border-[var(--accent-border)] px-1.5 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
+                        <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
                           9 mods + deps
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-400">
+                      <p className="text-xs text-slate-400 leading-relaxed">
                         Sodium, Lithium, FerriteCore, ImmediatelyFast,
                         ModernFix, EntityCulling, MoreCulling, Dynamic FPS y
                         BadOptimizations.
@@ -848,32 +848,32 @@ export function ContentManagerPanel({
                 )}
 
                 {c2meInstalled ? (
-                  <div className="rounded-xl bg-[#11151E] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-2 text-xs font-medium text-[var(--accent-primary)]">
+                  <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
                       <Check className="h-4 w-4" />
                       Acelerador C2ME instalado
                     </span>
                     <button
                       type="button"
                       onClick={() => setActiveTab("installed")}
-                      className="rounded-md bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-2.5 py-1 text-[11px] text-slate-300"
+                      className="rounded-md bg-[#07090D]/70 hover:bg-[#07090D] px-2.5 py-1 text-[11px] font-medium text-slate-200 transition-colors"
                     >
                       Gestionar
                     </button>
                   </div>
                 ) : (
-                  <div className="rounded-xl bg-[#11151E] border border-[#1E2534] p-4 flex flex-col justify-between gap-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-white">
+                  <div className="rounded-xl forge-card p-4 flex flex-col justify-between gap-3.5">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
                           <Cpu className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                           Acelerador de Chunks Singleplayer
                         </span>
-                        <span className="rounded bg-[var(--accent-soft)] border border-[var(--accent-border)] px-1.5 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
+                        <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
                           C2ME · Multihilo
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-400">
+                      <p className="text-xs text-slate-400 leading-relaxed">
                         Generación y carga paralela de chunks en local (ideal
                         para /tp y vuelos rápidos). Experimental en snapshots.
                       </p>
@@ -882,7 +882,7 @@ export function ContentManagerPanel({
                       type="button"
                       disabled={busySlug !== null}
                       onClick={() => void handlePreset("c2me_chunk_accel")}
-                      className="w-full rounded-lg bg-[#171D2A] hover:bg-[#1E2534] border border-[var(--accent-border)] disabled:opacity-45 py-2 text-xs font-semibold text-[var(--accent-primary)] transition-colors"
+                      className="w-full rounded-lg bg-white/[0.05] hover:bg-white/[0.09] disabled:opacity-45 py-2 text-xs font-semibold text-[var(--accent-primary)] transition-colors"
                     >
                       {busySlug === "c2me_chunk_accel"
                         ? "Instalando C2ME..."
@@ -892,32 +892,32 @@ export function ContentManagerPanel({
                 )}
 
                 {bobbyInstalled ? (
-                  <div className="rounded-xl bg-[#11151E] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-2 text-xs font-medium text-[var(--accent-primary)]">
+                  <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
                       <Check className="h-4 w-4" />
                       Bobby (Chunks Multijugador) instalado
                     </span>
                     <button
                       type="button"
                       onClick={() => setActiveTab("installed")}
-                      className="rounded-md bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-2.5 py-1 text-[11px] text-slate-300"
+                      className="rounded-md bg-[#07090D]/70 hover:bg-[#07090D] px-2.5 py-1 text-[11px] font-medium text-slate-200 transition-colors"
                     >
                       Gestionar
                     </button>
                   </div>
                 ) : (
-                  <div className="rounded-xl bg-[#11151E] border border-[#1E2534] p-4 flex flex-col justify-between gap-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-white">
+                  <div className="rounded-xl forge-card p-4 flex flex-col justify-between gap-3.5">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
                           <Globe2 className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                           Horizonte Multijugador (Bobby)
                         </span>
-                        <span className="rounded bg-[var(--accent-soft)] border border-[var(--accent-border)] px-1.5 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
+                        <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
                           Caché MP
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-400">
+                      <p className="text-xs text-slate-400 leading-relaxed">
                         Guarda chunks en caché local para ver más allá del
                         límite de view-distance de servidores multijugador.
                       </p>
@@ -926,7 +926,7 @@ export function ContentManagerPanel({
                       type="button"
                       disabled={busySlug !== null}
                       onClick={() => void handlePreset("bobby_multiplayer")}
-                      className="w-full rounded-lg bg-[#171D2A] hover:bg-[#1E2534] border border-[var(--accent-border)] disabled:opacity-45 py-2 text-xs font-semibold text-[var(--accent-primary)] transition-colors"
+                      className="w-full rounded-lg bg-white/[0.05] hover:bg-white/[0.09] disabled:opacity-45 py-2 text-xs font-semibold text-[var(--accent-primary)] transition-colors"
                     >
                       {busySlug === "bobby_multiplayer"
                         ? "Instalando Bobby..."
@@ -936,32 +936,32 @@ export function ContentManagerPanel({
                 )}
 
                 {distantHorizonsInstalled ? (
-                  <div className="rounded-xl bg-[#11151E] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-2 text-xs font-medium text-[var(--accent-primary)]">
+                  <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
                       <Check className="h-4 w-4" />
                       Distant Horizons instalado
                     </span>
                     <button
                       type="button"
                       onClick={() => setActiveTab("installed")}
-                      className="rounded-md bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-2.5 py-1 text-[11px] text-slate-300"
+                      className="rounded-md bg-[#07090D]/70 hover:bg-[#07090D] px-2.5 py-1 text-[11px] font-medium text-slate-200 transition-colors"
                     >
                       Gestionar
                     </button>
                   </div>
                 ) : (
-                  <div className="rounded-xl bg-[#11151E] border border-[#1E2534] p-4 flex flex-col justify-between gap-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-white">
+                  <div className="rounded-xl forge-card p-4 flex flex-col justify-between gap-3.5">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
                           <Compass className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                           Horizonte Opcional (LODs)
                         </span>
-                        <span className="rounded bg-[var(--accent-soft)] border border-[var(--accent-border)] px-1.5 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
+                        <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
                           64+ chunks
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-400">
+                      <p className="text-xs text-slate-400 leading-relaxed">
                         Distant Horizons independiente del pack base para
                         horizontes masivos bajo demanda.
                       </p>
@@ -970,7 +970,7 @@ export function ContentManagerPanel({
                       type="button"
                       disabled={busySlug !== null}
                       onClick={() => void handlePreset("distant_horizons")}
-                      className="w-full rounded-lg bg-[#171D2A] hover:bg-[#1E2534] border border-[var(--accent-border)] disabled:opacity-45 py-2 text-xs font-semibold text-[var(--accent-primary)] transition-colors"
+                      className="w-full rounded-lg bg-white/[0.05] hover:bg-white/[0.09] disabled:opacity-45 py-2 text-xs font-semibold text-[var(--accent-primary)] transition-colors"
                     >
                       {busySlug === "distant_horizons"
                         ? "Instalando Distant Horizons..."
@@ -1000,14 +1000,14 @@ export function ContentManagerPanel({
                     }
                   }}
                   placeholder={`Buscar en Modrinth para ${profile.loader} ${profile.mc_version}...`}
-                  className="w-full rounded-lg bg-[#11151E] border border-[#1E2534] pl-9 pr-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-[var(--accent-primary)] focus:outline-none"
+                  className="w-full rounded-lg bg-[#0D1118] border border-white/[0.08] pl-9 pr-3 py-2 text-[13px] text-white placeholder:text-slate-500 focus:border-[var(--accent-primary)] focus:outline-none"
                 />
               </div>
 
               <select
                 value={searchKind}
                 onChange={(e) => setSearchKind(e.target.value as ContentKind)}
-                className="rounded-lg bg-[#11151E] border border-[#1E2534] px-3 py-2 text-xs text-slate-200 focus:border-[var(--accent-primary)] focus:outline-none"
+                className="rounded-lg bg-[#0D1118] border border-white/[0.08] px-3 py-2 text-xs text-slate-200 focus:border-[var(--accent-primary)] focus:outline-none"
               >
                 <option value="mod">Mods</option>
                 <option value="resource_pack">Resource Packs</option>
@@ -1030,7 +1030,7 @@ export function ContentManagerPanel({
                   }
                 }}
                 title="Ordenar resultados"
-                className="rounded-lg bg-[#11151E] border border-[#1E2534] px-3 py-2 text-xs text-slate-200 focus:border-[var(--accent-primary)] focus:outline-none"
+                className="rounded-lg bg-[#0D1118] border border-white/[0.08] px-3 py-2 text-xs text-slate-200 focus:border-[var(--accent-primary)] focus:outline-none"
               >
                 <option value="downloads">Descargas</option>
                 <option value="relevance">Relevancia</option>
@@ -1041,7 +1041,7 @@ export function ContentManagerPanel({
               <button
                 type="submit"
                 disabled={searching}
-                className="rounded-lg bg-[#171D2A] hover:bg-[#1E2534] border border-[#1E2534] px-4 py-2 text-xs font-medium text-white disabled:opacity-50"
+                className="rounded-lg bg-[#121722] hover:bg-[#171D2B] border border-white/[0.08] px-4 py-2 text-xs font-medium text-white disabled:opacity-50 transition-colors"
               >
                 {searching ? "Buscando..." : "Buscar"}
               </button>
@@ -1065,10 +1065,10 @@ export function ContentManagerPanel({
                       key={chip.id}
                       type="button"
                       onClick={() => setDiscoveryChip(chip.id)}
-                      className={`rounded-full px-3 py-1 text-[11px] font-medium border transition-colors ${
+                      className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
                         discoveryChip === chip.id
-                          ? "bg-[var(--accent-soft)] text-[var(--accent-primary)] border-[var(--accent-border)]"
-                          : "bg-[#11151E] text-slate-400 border-[#1E2534] hover:text-slate-200"
+                          ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
+                          : "bg-white/[0.03] text-slate-400 hover:text-slate-200 hover:bg-white/[0.06]"
                       }`}
                     >
                       {chip.label}
@@ -1080,7 +1080,7 @@ export function ContentManagerPanel({
                   type="button"
                   disabled={loadingFeed}
                   onClick={() => void handleRefreshSuggestions()}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#11151E] hover:bg-[#171D2A] border border-[#1E2534] px-3 py-1 text-[11px] font-medium text-slate-200 disabled:opacity-45 transition-colors"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#121722] hover:bg-[#171D2B] border border-white/[0.07] px-3 py-1.5 text-xs font-medium text-slate-200 disabled:opacity-45 transition-colors"
                 >
                   <Shuffle className="h-3 w-3 text-[var(--accent-primary)]" />
                   Renovar sugerencias
@@ -1089,9 +1089,9 @@ export function ContentManagerPanel({
             )}
 
             {/* Dynamic "Te podría gustar" / Search Results Grid */}
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
                   <Sparkles className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                   {searchResults
                     ? `Resultados de Modrinth (${searchResults.length})`
@@ -1106,7 +1106,7 @@ export function ContentManagerPanel({
                       setSearchOffset(0);
                       setSearchHasMore(false);
                     }}
-                    className="text-[11px] text-[var(--accent-primary)] hover:underline"
+                    className="text-xs text-[var(--accent-primary)] hover:underline"
                   >
                     Volver a descubrimiento
                   </button>
@@ -1114,11 +1114,11 @@ export function ContentManagerPanel({
               </div>
 
               {loadingFeed && displayList.length === 0 && !searchResults ? (
-                <div className="rounded-xl bg-[#11151E] border border-[#1E2534] p-6 text-center text-xs font-mono text-slate-500">
+                <div className="rounded-xl forge-panel p-6 text-center text-xs font-mono text-slate-500">
                   Consultando Modrinth API v2...
                 </div>
               ) : displayList.length === 0 ? (
-                <div className="rounded-xl bg-[#11151E] border border-[#1E2534] p-6 text-center text-xs font-mono text-slate-500">
+                <div className="rounded-xl forge-panel p-6 text-center text-xs font-mono text-slate-500">
                   No se encontraron resultados nuevos para esta categoría.
                 </div>
               ) : (
@@ -1132,17 +1132,17 @@ export function ContentManagerPanel({
                       return (
                         <div
                           key={`${item.kind}-${item.slug}`}
-                          className="rounded-xl bg-[#11151E] border border-[#1E2534] p-3.5 flex items-center justify-between gap-3"
+                          className="rounded-xl forge-card-interactive p-3.5 flex items-center justify-between gap-3"
                         >
                           <div className="min-w-0 flex items-center gap-3">
                             {item.icon_url ? (
                               <img
                                 src={item.icon_url}
                                 alt={item.title}
-                                className="h-9 w-9 rounded-lg object-cover border border-[#1E2534] shrink-0 bg-[#080A0F]"
+                                className="h-10 w-10 rounded-lg object-cover shrink-0 bg-[#07090D] border border-white/[0.06]"
                               />
                             ) : (
-                              <div className="h-9 w-9 rounded-lg bg-[#080A0F] border border-[#1E2534] flex items-center justify-center text-[var(--accent-primary)] shrink-0">
+                              <div className="h-10 w-10 rounded-lg bg-[#07090D] border border-white/[0.06] flex items-center justify-center text-[var(--accent-primary)] shrink-0">
                                 {item.kind === "mod" ? (
                                   <Package className="h-4 w-4" />
                                 ) : item.kind === "shader" ? (
@@ -1154,26 +1154,26 @@ export function ContentManagerPanel({
                             )}
 
                             <div className="min-w-0 space-y-0.5">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="text-xs font-semibold text-white truncate">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-[13px] font-semibold text-white truncate">
                                   {item.title}
                                 </span>
-                                <span className="shrink-0 rounded bg-[#080A0F] border border-[#1E2534] px-1.5 py-0.5 text-[9px] font-mono text-slate-400">
+                                <span className="shrink-0 text-[10px] font-mono text-slate-500">
                                   {formatDownloads(item.downloads)} DL
                                 </span>
                               </div>
-                              <p className="text-[11px] text-slate-400 line-clamp-1">
+                              <p className="text-xs text-slate-400 line-clamp-1">
                                 {item.description}
                               </p>
-                              <div className="flex flex-wrap items-center gap-1">
+                              <div className="flex flex-wrap items-center gap-1 pt-0.5">
                                 {!item.compatible && item.compatibility_note && (
-                                  <span className="inline-flex items-center gap-1 rounded bg-[#F59E0B]/12 border border-[#F59E0B]/35 px-1.5 py-0.5 text-[9px] font-mono text-[#F59E0B]">
+                                  <span className="inline-flex items-center gap-1 rounded bg-[#F59E0B]/12 px-1.5 py-0.5 text-[10px] font-mono text-[#F59E0B]">
                                     <AlertTriangle className="h-2.5 w-2.5" />
                                     {item.compatibility_note}
                                   </span>
                                 )}
                                 {item.performance_warning && (
-                                  <span className="inline-flex items-center gap-1 rounded bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-1.5 py-0.5 text-[9px] font-mono text-[#F59E0B]">
+                                  <span className="inline-flex items-center gap-1 rounded bg-[#F59E0B]/10 px-1.5 py-0.5 text-[10px] font-mono text-[#F59E0B]">
                                     <AlertTriangle className="h-2.5 w-2.5" />
                                     {item.performance_warning}
                                   </span>
@@ -1183,7 +1183,7 @@ export function ContentManagerPanel({
                           </div>
 
                           {item.installed ? (
-                            <span className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-soft)] border border-[var(--accent-border)] px-2.5 py-1.5 text-[11px] font-mono text-[var(--accent-primary)]">
+                            <span className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-soft)] px-2.5 py-1.5 text-[11px] font-mono text-[var(--accent-primary)]">
                               <Check className="h-3 w-3" />
                               Instalado
                             </span>
@@ -1196,7 +1196,7 @@ export function ContentManagerPanel({
                                 !item.compatible
                               }
                               onClick={() => void handleInstallSingle(item)}
-                              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-[#171D2A] hover:bg-[#1E2534] border border-[#1E2534] disabled:opacity-40 px-3 py-1.5 text-[11px] font-medium text-white transition-colors"
+                              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.11] disabled:opacity-40 px-3 py-1.5 text-xs font-medium text-white transition-colors"
                             >
                               <Download className="h-3 w-3 text-[var(--accent-primary)]" />
                               {isInstalling ? "..." : "Instalar"}
@@ -1213,7 +1213,7 @@ export function ContentManagerPanel({
                         type="button"
                         disabled={loadingFeed || searching}
                         onClick={() => void handleLoadMore()}
-                        className="rounded-lg bg-[#11151E] hover:bg-[#171D2A] border border-[#1E2534] px-5 py-2 text-xs font-medium text-slate-200 disabled:opacity-45 transition-colors"
+                        className="rounded-lg bg-[#121722] hover:bg-[#171D2B] border border-white/[0.07] px-5 py-2 text-xs font-medium text-slate-200 disabled:opacity-45 transition-colors"
                       >
                         {loadingFeed || searching
                           ? "Cargando..."
@@ -1231,7 +1231,7 @@ export function ContentManagerPanel({
         {(activeTab === "installed" ||
           activeTab === "resource_packs" ||
           activeTab === "shaders") && (
-          <div className="space-y-3">
+          <div className="space-y-3.5">
             {/* Local Search & Sort Controls */}
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative flex-1 min-w-[200px]">
@@ -1241,14 +1241,14 @@ export function ContentManagerPanel({
                   value={localQuery}
                   onChange={(e) => setLocalQuery(e.target.value)}
                   placeholder="Filtrar elementos instalados por nombre o archivo..."
-                  className="w-full rounded-lg bg-[#11151E] border border-[#1E2534] pl-9 pr-3 py-1.5 text-xs text-white placeholder:text-slate-500 focus:border-[var(--accent-primary)] focus:outline-none"
+                  className="w-full rounded-lg bg-[#0D1118] border border-white/[0.08] pl-9 pr-3 py-2 text-[13px] text-white placeholder:text-slate-500 focus:border-[var(--accent-primary)] focus:outline-none"
                 />
               </div>
 
               <select
                 value={localSort}
                 onChange={(e) => setLocalSort(e.target.value as LocalSort)}
-                className="rounded-lg bg-[#11151E] border border-[#1E2534] px-3 py-1.5 text-xs text-slate-200 focus:border-[var(--accent-primary)] focus:outline-none"
+                className="rounded-lg bg-[#0D1118] border border-white/[0.08] px-3 py-2 text-xs text-slate-200 focus:border-[var(--accent-primary)] focus:outline-none"
               >
                 <option value="name">Nombre (A-Z)</option>
                 <option value="size">Tamaño (mayor)</option>
@@ -1256,7 +1256,7 @@ export function ContentManagerPanel({
               </select>
             </div>
 
-            <div className="rounded-xl border border-dashed border-[#1E2534] bg-[#11151E]/60 px-4 py-3 flex items-center justify-between gap-3 text-xs text-slate-400">
+            <div className="rounded-xl border border-dashed border-white/[0.08] bg-[#0D1118]/70 px-4 py-3 flex items-center justify-between gap-3 text-xs text-slate-400">
               <span className="inline-flex items-center gap-2">
                 <Upload className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                 Arrastra archivos{" "}
@@ -1281,7 +1281,7 @@ export function ContentManagerPanel({
               </button>
             </div>
 
-            <div className="divide-y divide-[#1E2534] rounded-xl border border-[#1E2534] bg-[#11151E] overflow-hidden">
+            <div className="divide-y divide-white/[0.05] rounded-xl forge-panel overflow-hidden">
               {filteredLocalItems.length === 0 ? (
                 <div className="p-8 text-center text-xs font-mono text-slate-500">
                   {localQuery.trim()
@@ -1294,9 +1294,9 @@ export function ContentManagerPanel({
                   return (
                     <div
                       key={item.file_name}
-                      className="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-[#171D2A]/60 transition-colors"
+                      className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-white/[0.025] transition-colors"
                     >
-                      <div className="min-w-0 pr-2 flex items-center gap-2.5">
+                      <div className="min-w-0 pr-2 flex items-center gap-3">
                         {currentLocalKind === "mod" ? (
                           <Package className="h-4 w-4 text-slate-500 shrink-0" />
                         ) : currentLocalKind === "shader" ? (
@@ -1305,9 +1305,9 @@ export function ContentManagerPanel({
                           <FileArchive className="h-4 w-4 text-slate-500 shrink-0" />
                         )}
                         <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-2">
                             <span
-                              className={`text-xs font-medium truncate ${
+                              className={`text-[13px] font-medium truncate ${
                                 item.enabled
                                   ? "text-slate-100"
                                   : "text-slate-500 line-through"
@@ -1316,12 +1316,12 @@ export function ContentManagerPanel({
                               {item.display_name}
                             </span>
                             {item.version && (
-                              <span className="shrink-0 rounded bg-[#080A0F] border border-[#1E2534] px-1.5 py-0.5 text-[9px] font-mono text-slate-400">
+                              <span className="shrink-0 rounded bg-white/[0.04] px-1.5 py-0.5 text-[10px] font-mono text-slate-400">
                                 v{item.version}
                               </span>
                             )}
                           </div>
-                          <div className="text-[10px] font-mono text-slate-500 truncate">
+                          <div className="mt-0.5 text-[11px] font-mono text-slate-500 truncate">
                             {item.file_name} · {formatSize(item.size_bytes)}
                             {item.mod_id ? ` · ${item.mod_id}` : ""}
                           </div>
@@ -1336,14 +1336,14 @@ export function ContentManagerPanel({
                               onClick={() =>
                                 void handleDelete(item, currentLocalKind)
                               }
-                              className="rounded-md bg-rose-600 hover:bg-rose-500 px-2 py-1 text-[10px] font-semibold text-white transition-colors"
+                              className="rounded-md bg-rose-600 hover:bg-rose-500 px-2.5 py-1 text-[11px] font-semibold text-white transition-colors"
                             >
                               Eliminar
                             </button>
                             <button
                               type="button"
                               onClick={() => setConfirmDeleteFile(null)}
-                              className="rounded-md bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] px-2 py-1 text-[10px] text-slate-300"
+                              className="rounded-md bg-white/[0.06] hover:bg-white/[0.1] px-2.5 py-1 text-[11px] text-slate-300 transition-colors"
                             >
                               Cancelar
                             </button>
@@ -1369,7 +1369,7 @@ export function ContentManagerPanel({
                           className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
                             item.enabled
                               ? "bg-[var(--accent-soft)] border-[var(--accent-border)]"
-                              : "bg-[#080A0F] border-[#1E2534]"
+                              : "bg-[#07090D] border-white/[0.12]"
                           }`}
                         >
                           <span

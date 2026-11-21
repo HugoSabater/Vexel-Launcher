@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   ArrowUpRight,
+  Check,
   Download,
   FolderOpen,
   Globe2,
+  KeyRound,
   Package,
   Play,
   Radio,
@@ -19,6 +22,7 @@ import type {
   LaunchProgressEvent,
   ModLoaderKind,
   Profile,
+  WorldSummary,
 } from "../types/launcher";
 
 interface ProfileDashboardProps {
@@ -52,13 +56,13 @@ interface ProfileDashboardProps {
 
 const LOADER_VIGNETTE: Record<ModLoaderKind, string> = {
   vanilla:
-    "radial-gradient(90% 100% at 75% 20%, rgba(16, 185, 129, 0.16) 0%, rgba(8, 10, 15, 0.85) 65%, #080A0F 100%)",
+    "radial-gradient(85% 95% at 74% 34%, rgba(16, 185, 129, 0.14) 0%, rgba(7, 9, 13, 0.88) 64%, #07090D 100%)",
   fabric:
-    "radial-gradient(90% 100% at 75% 20%, rgba(56, 189, 248, 0.16) 0%, rgba(8, 10, 15, 0.85) 65%, #080A0F 100%)",
+    "radial-gradient(85% 95% at 74% 34%, rgba(56, 189, 248, 0.14) 0%, rgba(7, 9, 13, 0.88) 64%, #07090D 100%)",
   forge:
-    "radial-gradient(90% 100% at 75% 20%, rgba(245, 158, 11, 0.15) 0%, rgba(8, 10, 15, 0.85) 65%, #080A0F 100%)",
+    "radial-gradient(85% 95% at 74% 34%, rgba(245, 158, 11, 0.13) 0%, rgba(7, 9, 13, 0.88) 64%, #07090D 100%)",
   neo_forge:
-    "radial-gradient(90% 100% at 75% 20%, rgba(249, 115, 22, 0.15) 0%, rgba(8, 10, 15, 0.85) 65%, #080A0F 100%)",
+    "radial-gradient(85% 95% at 74% 34%, rgba(249, 115, 22, 0.13) 0%, rgba(7, 9, 13, 0.88) 64%, #07090D 100%)",
 };
 
 const LOADER_LABEL: Record<ModLoaderKind, string> = {
@@ -74,12 +78,57 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatWorldDate(ms: number): string {
-  if (!ms) return "";
-  return new Date(ms).toLocaleDateString([], {
+function formatRelativeTimeEs(ms: number): string {
+  if (!ms) return "Sin fecha";
+  const diffSec = Math.floor((Date.now() - ms) / 1000);
+  if (diffSec < 60) return "Ahora mismo";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `Hace ${diffMin} min`;
+  const diffHrs = Math.floor(diffMin / 60);
+  if (diffHrs < 24) return `Hace ${diffHrs} h`;
+  const diffDays = Math.floor(diffHrs / 24);
+  if (diffDays === 1) return "Ayer";
+  if (diffDays < 30) return `Hace ${diffDays} días`;
+  return new Date(ms).toLocaleDateString("es-ES", {
     day: "2-digit",
     month: "short",
   });
+}
+
+function getWorldModeBadge(world: WorldSummary): {
+  label: string;
+  classes: string;
+} | null {
+  if (world.hardcore) {
+    return {
+      label: "Hardcore",
+      classes: "bg-rose-500/15 text-rose-300 border-rose-500/30",
+    };
+  }
+  switch (world.game_type) {
+    case "survival":
+      return {
+        label: "Survival",
+        classes: "bg-emerald-500/15 text-emerald-300 border-emerald-500/25",
+      };
+    case "creative":
+      return {
+        label: "Creativo",
+        classes: "bg-sky-500/15 text-sky-300 border-sky-500/25",
+      };
+    case "adventure":
+      return {
+        label: "Aventura",
+        classes: "bg-violet-500/15 text-violet-300 border-violet-500/25",
+      };
+    case "spectator":
+      return {
+        label: "Espectador",
+        classes: "bg-slate-500/15 text-slate-300 border-slate-500/25",
+      };
+    default:
+      return null;
+  }
 }
 
 export function ProfileDashboard({
@@ -112,6 +161,7 @@ export function ProfileDashboard({
     recent_worlds: [],
     latest_screenshot_data_url: null,
   });
+  const [copiedSeedFolder, setCopiedSeedFolder] = useState<string | null>(null);
   const quickSkinInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -160,8 +210,25 @@ export function ProfileDashboard({
     }
   };
 
+  const handleCopySeed = async (
+    event: React.MouseEvent,
+    folderName: string,
+    seed: string,
+  ) => {
+    event.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(seed);
+      setCopiedSeedFolder(folderName);
+      window.setTimeout(() => {
+        setCopiedSeedFolder((curr) => (curr === folderName ? null : curr));
+      }, 1500);
+    } catch {
+      // Clipboard unavailable
+    }
+  };
+
   return (
-    <div className="h-full w-full flex flex-col bg-[#080A0F] overflow-hidden">
+    <div className="h-full w-full flex flex-col bg-[#07090D] overflow-hidden">
       <input
         ref={quickSkinInputRef}
         type="file"
@@ -174,7 +241,7 @@ export function ProfileDashboard({
       <section className="relative flex-1 min-h-0 overflow-hidden flex items-center px-8 py-6">
         {summary.latest_screenshot_data_url && (
           <div
-            className="pointer-events-none absolute inset-0 bg-cover bg-center scale-105 opacity-25 blur-xl"
+            className="pointer-events-none absolute inset-0 bg-cover bg-center scale-105 opacity-20 blur-2xl"
             style={{
               backgroundImage: `url(${summary.latest_screenshot_data_url})`,
             }}
@@ -189,22 +256,42 @@ export function ProfileDashboard({
         <div className="relative z-10 w-full max-w-5xl mx-auto grid grid-cols-12 items-center gap-6">
           {/* Left 7 Cols */}
           <div className="col-span-12 md:col-span-7 space-y-5">
-            <div className="space-y-2">
-              {profile.server_address && (
-                <div className="inline-flex items-center gap-2 rounded-full bg-[var(--accent-soft)] border border-[var(--accent-border)] px-3 py-1 text-[11px] font-mono text-[var(--accent-primary)]">
-                  <Radio className="h-3 w-3" />
-                  <span>QuickPlay · {profile.server_address}</span>
-                </div>
-              )}
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                {profile.is_default && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-soft)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent-primary)]" />
+                    Perfil predeterminado
+                  </span>
+                )}
+                {profile.server_address && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.04] border border-white/[0.08] px-2.5 py-0.5 text-[11px] font-mono text-slate-300">
+                    <Radio className="h-3 w-3 text-[var(--accent-primary)]" />
+                    QuickPlay · {profile.server_address}
+                  </span>
+                )}
+              </div>
 
-              <h1 className="text-4xl font-bold tracking-tight text-white leading-tight">
+              <h1 className="text-[2.125rem] font-bold tracking-[-0.025em] text-white leading-[1.12]">
                 {profile.name}
               </h1>
 
-              <p className="text-sm font-mono text-slate-400">
-                MC {profile.mc_version} · {LOADER_LABEL[profile.loader]} ·{" "}
-                {activeMods.length} {activeMods.length === 1 ? "mod" : "mods"}
-              </p>
+              {/* Technical Metadata Chips (Real Engine Metrics Only) */}
+              <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                <span className="rounded-md bg-white/[0.04] border border-white/[0.06] px-2.5 py-1 text-[11px] font-mono text-slate-200">
+                  MC {profile.mc_version}
+                </span>
+                <span className="rounded-md bg-white/[0.04] border border-white/[0.06] px-2.5 py-1 text-[11px] font-mono text-slate-300">
+                  {LOADER_LABEL[profile.loader]}
+                </span>
+                <span className="rounded-md bg-white/[0.04] border border-white/[0.06] px-2.5 py-1 text-[11px] font-mono text-slate-300">
+                  {activeMods.length}{" "}
+                  {activeMods.length === 1 ? "mod activo" : "mods activos"}
+                </span>
+                <span className="rounded-md bg-white/[0.04] border border-white/[0.06] px-2.5 py-1 text-[11px] font-mono text-slate-400">
+                  {(profile.ram_mb / 1024).toFixed(1)} GB RAM
+                </span>
+              </div>
             </div>
 
             {isWorking && progress && (
@@ -216,7 +303,8 @@ export function ProfileDashboard({
             )}
 
             {unsupportedLoader && (
-              <div className="inline-flex items-center gap-2 rounded-lg bg-[#F59E0B]/10 border border-[#F59E0B]/35 px-3 py-1.5 text-xs text-amber-200">
+              <div className="inline-flex items-center gap-2 rounded-lg bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-3.5 py-2 text-xs text-amber-200">
+                <AlertTriangle className="h-3.5 w-3.5 text-[#F59E0B] shrink-0" />
                 <span>
                   {LOADER_LABEL[profile.loader]} estará disponible próximamente.
                   Cambia el loader a Vanilla o Fabric en Ajustes para jugar.
@@ -224,12 +312,13 @@ export function ProfileDashboard({
               </div>
             )}
 
-            <div className="flex items-center gap-2.5 pt-1">
+            {/* Primary CTA + Grouped Utility Toolbar */}
+            <div className="flex items-center gap-3 pt-1">
               {isRunning ? (
                 <button
                   type="button"
                   onClick={() => void onStop()}
-                  className="h-12 min-w-[180px] px-7 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-[0.99] inline-flex items-center justify-center gap-2.5 text-sm font-bold tracking-wider text-white transition-all"
+                  className="h-12 min-w-[196px] px-7 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-[0.985] shadow-[0_10px_28px_-8px_rgba(244,63,94,0.55)] inline-flex items-center justify-center gap-2.5 text-[13px] font-bold tracking-[0.06em] text-white transition-all"
                 >
                   <Square className="h-4 w-4 fill-current" />
                   DETENER
@@ -239,7 +328,7 @@ export function ProfileDashboard({
                   type="button"
                   disabled={isWorking || unsupportedLoader}
                   onClick={() => void onPlay()}
-                  className="btn-accent h-12 min-w-[180px] px-7 rounded-xl active:scale-[0.99] disabled:opacity-50 inline-flex items-center justify-center gap-2.5 text-sm font-bold tracking-wider transition-all"
+                  className="btn-play-hero h-12 min-w-[196px] px-7 rounded-xl disabled:opacity-50 inline-flex items-center justify-center gap-2.5 text-[13px] font-bold tracking-[0.06em]"
                 >
                   <Play className="h-4 w-4 fill-current" />
                   {unsupportedLoader
@@ -250,27 +339,29 @@ export function ProfileDashboard({
                 </button>
               )}
 
-              <button
-                type="button"
-                onClick={() => void onOpenFolder()}
-                title="Abrir carpeta de la instancia"
-                className="h-12 w-12 rounded-xl bg-[#11151E]/85 hover:bg-[#171D2A] border border-[#1E2534] flex items-center justify-center text-slate-300 hover:text-white transition-colors"
-              >
-                <FolderOpen className="h-4 w-4" />
-              </button>
+              <div className="inline-flex items-center rounded-xl bg-[#121722]/90 border border-white/[0.07] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] p-1 gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => void onOpenFolder()}
+                  title="Abrir carpeta de la instancia"
+                  className="h-10 w-10 rounded-lg hover:bg-white/[0.06] flex items-center justify-center text-slate-300 hover:text-white transition-colors"
+                >
+                  <FolderOpen className="h-4 w-4" />
+                </button>
 
-              <button
-                type="button"
-                onClick={onOpenSettings}
-                title="Ajustes del perfil"
-                className="h-12 w-12 rounded-xl bg-[#11151E]/85 hover:bg-[#171D2A] border border-[#1E2534] flex items-center justify-center text-slate-300 hover:text-white transition-colors"
-              >
-                <SlidersHorizontal className="h-4 w-4" />
-              </button>
+                <button
+                  type="button"
+                  onClick={onOpenSettings}
+                  title="Ajustes del perfil"
+                  className="h-10 w-10 rounded-lg hover:bg-white/[0.06] flex items-center justify-center text-slate-300 hover:text-white transition-colors"
+                >
+                  <SlidersHorizontal className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* Right 5 Cols: 3D Character with Floating Nametag + Hover Skin Pill */}
+          {/* Right 5 Cols: 3D Character on Obsidian Pedestal + Floating Micro-Controls */}
           <div className="hidden md:flex col-span-5 items-center justify-center">
             <SkinViewer3D
               skinUrl={skinDataUrl}
@@ -279,15 +370,15 @@ export function ProfileDashboard({
               paused={isAnyRunning}
               onUpdateUsername={onUpdateUsername}
               onChangeSkinClick={() => quickSkinInputRef.current?.click()}
-              width={220}
-              height={295}
+              width={235}
+              height={310}
             />
           </div>
         </div>
 
         {/* 2px Accent Progress Line on Bottom Edge */}
         {isWorking && (
-          <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#1E2534]">
+          <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-white/[0.06]">
             <div
               className="h-full bg-[var(--accent-primary)] transition-all duration-150"
               style={{ width: `${Math.max(8, progressPct)}%` }}
@@ -296,14 +387,20 @@ export function ProfileDashboard({
         )}
       </section>
 
-      {/* Compact Player Content Bottom Strip */}
-      <footer className="shrink-0 bg-[#11151E] border-t border-[#1E2534] px-8 py-4">
-        <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-2">
+      {/* Bottom Surface: Rich Recent Worlds + Active Mods */}
+      <footer className="shrink-0 bg-[#0D1118] border-t border-white/[0.06] px-8 py-4">
+        <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Left 8 Cols: Rich Recent Worlds */}
+          <div className="lg:col-span-8 space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-slate-400">
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400">
                 <Globe2 className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                 Mundos Recientes
+                {summary.recent_worlds.length > 0 && (
+                  <span className="font-mono text-slate-500">
+                    · {summary.recent_worlds.length}
+                  </span>
+                )}
               </span>
               <button
                 type="button"
@@ -315,79 +412,175 @@ export function ProfileDashboard({
             </div>
 
             {summary.recent_worlds.length === 0 ? (
-              <p className="text-xs text-slate-500">
+              <div className="rounded-xl bg-white/[0.02] border border-dashed border-white/[0.07] px-4 py-3 text-xs text-slate-500">
                 Todavía no hay mundos guardados en esta instancia.
-              </p>
+              </div>
             ) : (
-              <div className="flex flex-wrap gap-2">
-                {summary.recent_worlds.map((world) => (
-                  <button
-                    key={world.folder_name}
-                    type="button"
-                    disabled={isWorking || isRunning || unsupportedLoader}
-                    onClick={() => void onPlayWorld(world.folder_name)}
-                    title={`Entrar directamente a ${world.folder_name}`}
-                    className="rounded-lg bg-[#080A0F] hover:bg-[#171D2A] border border-[#1E2534] hover:border-[var(--accent-border)] disabled:opacity-50 px-2.5 py-1.5 text-xs flex items-center gap-2 transition-colors"
-                  >
-                    <Play className="h-2.5 w-2.5 text-[var(--accent-primary)] fill-current shrink-0" />
-                    <span className="text-slate-200 font-medium truncate max-w-[140px]">
-                      {world.folder_name}
-                    </span>
-                    {world.last_modified_ms > 0 && (
-                      <span className="text-[10px] font-mono text-slate-500">
-                        {formatWorldDate(world.last_modified_ms)}
-                      </span>
-                    )}
-                  </button>
-                ))}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                {summary.recent_worlds.map((world) => {
+                  const modeBadge = getWorldModeBadge(world);
+                  const versionMismatch =
+                    Boolean(world.mc_version) &&
+                    world.mc_version !== profile.mc_version;
+                  const canLaunchWorld =
+                    !isWorking && !isRunning && !unsupportedLoader;
+                  const isSeedCopied = copiedSeedFolder === world.folder_name;
+
+                  return (
+                    <div
+                      key={world.folder_name}
+                      role="button"
+                      tabIndex={canLaunchWorld ? 0 : -1}
+                      aria-disabled={!canLaunchWorld}
+                      onClick={() => {
+                        if (canLaunchWorld) {
+                          void onPlayWorld(world.folder_name);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (
+                          canLaunchWorld &&
+                          (e.key === "Enter" || e.key === " ")
+                        ) {
+                          e.preventDefault();
+                          void onPlayWorld(world.folder_name);
+                        }
+                      }}
+                      title={`Entrar directamente a "${world.level_name}"`}
+                      className={`group forge-card-interactive rounded-xl p-3 flex flex-col justify-between gap-2.5 text-left ${
+                        canLaunchWorld
+                          ? "cursor-pointer"
+                          : "opacity-50 pointer-events-none"
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        {world.icon_data_url ? (
+                          <img
+                            src={world.icon_data_url}
+                            alt={world.level_name}
+                            className="h-10 w-10 rounded-lg object-cover pixelated shrink-0 bg-[#07090D] border border-white/[0.08]"
+                          />
+                        ) : (
+                          <div className="h-10 w-10 rounded-lg bg-[#07090D] border border-white/[0.06] flex items-center justify-center text-slate-500 group-hover:text-[var(--accent-primary)] shrink-0 transition-colors">
+                            <Globe2 className="h-4 w-4" />
+                          </div>
+                        )}
+
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-[13px] font-semibold text-slate-100 group-hover:text-white truncate">
+                              {world.level_name}
+                            </span>
+                            <Play className="h-3 w-3 text-[var(--accent-primary)] fill-current shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-1">
+                            {modeBadge && (
+                              <span
+                                className={`inline-flex items-center rounded border px-1.5 py-[1px] text-[10px] font-medium ${modeBadge.classes}`}
+                              >
+                                {modeBadge.label}
+                              </span>
+                            )}
+                            {versionMismatch && world.mc_version && (
+                              <span
+                                title={`Jugado en MC ${world.mc_version} (instancia actual: ${profile.mc_version})`}
+                                className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 border border-amber-500/35 px-1.5 py-[1px] text-[10px] font-mono text-amber-300"
+                              >
+                                <AlertTriangle className="h-2.5 w-2.5" />
+                                {world.mc_version}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 pt-0.5 border-t border-white/[0.04]">
+                        <span className="text-[11px] font-mono text-slate-500 truncate">
+                          {formatRelativeTimeEs(world.last_played_ms)}
+                        </span>
+
+                        {world.seed !== null && (
+                          <button
+                            type="button"
+                            onClick={(e) =>
+                              void handleCopySeed(
+                                e,
+                                world.folder_name,
+                                world.seed as string,
+                              )
+                            }
+                            title={`Copiar semilla: ${world.seed}`}
+                            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-mono text-slate-400 hover:text-[var(--accent-primary)] hover:bg-white/[0.05] transition-colors shrink-0"
+                          >
+                            {isSeedCopied ? (
+                              <>
+                                <Check className="h-2.5 w-2.5 text-[var(--accent-primary)]" />
+                                <span className="text-[var(--accent-primary)]">
+                                  Copiada
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <KeyRound className="h-2.5 w-2.5" />
+                                <span>Seed</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
 
-          <div className="space-y-2">
+          {/* Right 4 Cols: Active Mods */}
+          <div className="lg:col-span-4 space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-slate-400">
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400">
                 <Package className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                 Mods Activos
               </span>
               <button
                 type="button"
                 onClick={onOpenMods}
-                className="inline-flex items-center gap-1 text-[11px] text-[var(--accent-primary)] hover:underline"
+                className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--accent-primary)] hover:underline"
               >
-                Explorar / Gestionar
+                Gestionar
                 <ArrowUpRight className="h-3 w-3" />
               </button>
             </div>
 
             {activeMods.length === 0 ? (
-              <p className="text-xs text-slate-500">
+              <div className="rounded-xl bg-white/[0.02] border border-dashed border-white/[0.07] px-4 py-3 text-xs text-slate-500">
                 Sin mods activos ·{" "}
                 <button
                   type="button"
                   onClick={onOpenMods}
-                  className="text-[var(--accent-primary)] hover:underline"
+                  className="text-[var(--accent-primary)] hover:underline font-medium"
                 >
                   Explorar Modrinth
                 </button>
-              </p>
+              </div>
             ) : (
               <div className="flex flex-wrap items-center gap-1.5">
-                {activeMods.slice(0, 5).map((mod) => (
+                {activeMods.slice(0, 6).map((mod) => (
                   <span
                     key={mod.file_name}
-                    className="rounded-md bg-[#080A0F] border border-[#1E2534] px-2.5 py-1 text-[11px] font-mono text-slate-300 truncate max-w-[160px]"
+                    className="rounded-md bg-[#121722] border border-white/[0.06] px-2.5 py-1 text-[11px] font-mono text-slate-300 truncate max-w-[150px]"
                   >
                     {mod.display_name}
                   </span>
                 ))}
-                {activeMods.length > 5 && (
+                {activeMods.length > 6 && (
                   <button
                     type="button"
                     onClick={onOpenMods}
-                    className="rounded-md bg-[var(--accent-soft)] border border-[var(--accent-border)] px-2 py-1 text-[11px] font-mono text-[var(--accent-primary)]"
+                    className="rounded-md bg-[var(--accent-soft)] hover:brightness-110 px-2.5 py-1 text-[11px] font-mono font-medium text-[var(--accent-primary)] transition-all"
                   >
-                    +{activeMods.length - 5}
+                    +{activeMods.length - 6} más
                   </button>
                 )}
               </div>
@@ -399,15 +592,15 @@ export function ProfileDashboard({
       {/* Adoptium JRE Confirmation & Progress Modal */}
       {missingJavaMajor !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md rounded-xl bg-[#11151E] border border-[#1E2534] p-6 space-y-4">
+          <div className="w-full max-w-md rounded-xl forge-card p-6 space-y-4 shadow-2xl">
             <div className="flex items-center gap-3">
-              <div className="h-9 w-9 rounded-lg bg-[var(--accent-soft)] border border-[var(--accent-border)] flex items-center justify-center text-[var(--accent-primary)]">
+              <div className="h-9 w-9 rounded-lg bg-[var(--accent-soft)] flex items-center justify-center text-[var(--accent-primary)]">
                 <Download
                   className={`h-4 w-4 ${installingJava ? "animate-bounce" : ""}`}
                 />
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-white">
+                <h3 className="text-[14px] font-semibold text-white">
                   Eclipse Temurin Java {missingJavaMajor} Requerido
                 </h3>
                 <p className="text-[11px] font-mono text-slate-400">
@@ -417,15 +610,17 @@ export function ProfileDashboard({
               </div>
             </div>
 
-            <p className="text-xs text-slate-400 leading-relaxed">
+            <p className="text-[13px] text-slate-400 leading-relaxed">
               No se detectó un runtime local para Java {missingJavaMajor}. Se
               descargará el JRE oficial x64 desde{" "}
-              <span className="font-mono text-[var(--accent-primary)]">api.adoptium.net</span>{" "}
+              <span className="font-mono text-[var(--accent-primary)]">
+                api.adoptium.net
+              </span>{" "}
               sin alterar tu sistema.
             </p>
 
             {installingJava && javaInstallProgress && (
-              <div className="rounded-lg bg-[#080A0F] border border-[#1E2534] p-3.5 space-y-2">
+              <div className="rounded-lg bg-[#07090D] border border-white/[0.06] p-3.5 space-y-2">
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="font-medium text-[var(--accent-primary)]">
                     {javaInstallProgress.phase}
@@ -437,7 +632,7 @@ export function ProfileDashboard({
                   </span>
                 </div>
 
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#1E2534]">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.08]">
                   <div
                     className={`h-full rounded-full bg-[var(--accent-primary)] transition-all duration-150 ${
                       javaInstallProgress.total === 0
@@ -466,12 +661,12 @@ export function ProfileDashboard({
               </div>
             )}
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-[#1E2534]">
+            <div className="flex justify-end gap-2 pt-3 border-t border-white/[0.06]">
               <button
                 type="button"
                 disabled={installingJava}
                 onClick={onDismissJavaModal}
-                className="rounded-lg border border-[#1E2534] px-3.5 py-1.5 text-xs text-slate-300 hover:bg-[#171D2A] disabled:opacity-40"
+                className="rounded-lg bg-white/[0.05] hover:bg-white/[0.09] px-3.5 py-1.5 text-xs font-medium text-slate-300 disabled:opacity-40 transition-colors"
               >
                 Cancelar
               </button>
@@ -479,7 +674,7 @@ export function ProfileDashboard({
                 type="button"
                 disabled={installingJava}
                 onClick={() => void onConfirmInstallJava(missingJavaMajor)}
-                className="btn-accent rounded-lg px-4 py-1.5 text-xs font-semibold text-slate-950 disabled:opacity-50"
+                className="btn-accent rounded-lg px-4 py-1.5 text-xs font-semibold disabled:opacity-50"
               >
                 {installingJava
                   ? javaInstallProgress?.phase ?? "Instalando JRE..."
