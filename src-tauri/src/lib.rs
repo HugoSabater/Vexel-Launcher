@@ -130,6 +130,7 @@ pub fn run() {
             commands::get_storage_breakdown,
             commands::revalidate_cache_index,
             commands::clean_old_logs,
+            commands::reoptimize_instance_configs,
             commands::open_instance_saves_folder,
             commands::open_data_root_folder,
             commands::check_profile_java,

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::core::content::{ContentKind, InstanceContentIndex};
 use crate::core::hardware::HardwareInfo;
@@ -38,10 +38,18 @@ async fn detect_active_worldgen_mods(
     profile_id: &str,
 ) -> ActiveWorldgenMods {
     let mut flags = ActiveWorldgenMods::default();
+    let mods_dir = paths.instance_mods_dir(profile_id);
 
     let index = InstanceContentIndex::load(&paths.instance_content_index_path(profile_id)).await;
     for entry in &index.entries {
         if entry.kind != ContentKind::Mod || entry.file_name.ends_with(".disabled") {
+            continue;
+        }
+        // Only count index entries whose active .jar still exists on disk
+        if !tokio::fs::try_exists(mods_dir.join(&entry.file_name))
+            .await
+            .unwrap_or(false)
+        {
             continue;
         }
         if let Some(slug) = entry.slug.as_deref() {
@@ -53,7 +61,6 @@ async fn detect_active_worldgen_mods(
         classify_mod_token(&entry.file_name, &mut flags);
     }
 
-    let mods_dir = paths.instance_mods_dir(profile_id);
     if let Ok(mut entries) = tokio::fs::read_dir(&mods_dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
             let file_name = entry.file_name().to_string_lossy().into_owned();
@@ -67,10 +74,75 @@ async fn detect_active_worldgen_mods(
     flags
 }
 
+#[must_use]
+fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut os = path.as_os_str().to_os_string();
+    os.push(suffix);
+    PathBuf::from(os)
+}
+
+/// Copies an existing file to `<file>.bak` (or `<file>.<timestamp>.bak` if `.bak` already exists)
+/// so the user's original settings are never destroyed.
+pub async fn backup_file_before_overwrite(
+    path: &Path,
+    timestamp_secs: u64,
+) -> AppResult<Option<PathBuf>> {
+    if !tokio::fs::try_exists(path).await? {
+        return Ok(None);
+    }
+
+    let primary = append_suffix(path, ".bak");
+    let target = if !tokio::fs::try_exists(&primary).await? {
+        primary
+    } else {
+        let mut candidate = append_suffix(path, &format!(".{timestamp_secs}.bak"));
+        let mut counter = 1_u32;
+        while tokio::fs::try_exists(&candidate).await? {
+            candidate = append_suffix(path, &format!(".{timestamp_secs}-{counter}.bak"));
+            counter = counter.saturating_add(1);
+        }
+        candidate
+    };
+
+    tokio::fs::copy(path, &target).await?;
+    Ok(Some(target))
+}
+
+async fn write_atomic(path: &Path, content: &str) -> AppResult<()> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let tmp_path = append_suffix(path, ".tmp");
+    tokio::fs::write(&tmp_path, content.as_bytes()).await?;
+    tokio::fs::rename(&tmp_path, path).await?;
+    Ok(())
+}
+
+async fn write_if_missing_atomic(path: &Path, content: &str) -> AppResult<bool> {
+    if tokio::fs::try_exists(path).await? {
+        return Ok(false);
+    }
+    write_atomic(path, content).await?;
+    Ok(true)
+}
+
+/// Balanced Sodium chunk builder budget: leaves headroom for Render, Server and C2ME threads.
+#[must_use]
+pub fn sodium_chunk_builder_threads(logical_cores: usize) -> usize {
+    (logical_cores / 4).clamp(2, 4)
+}
+
+/// Balanced C2ME executor budget: avoids oversubscribing laptop CPUs/iGPUs alongside Sodium.
+#[must_use]
+pub fn c2me_executor_parallelism(logical_cores: usize) -> usize {
+    (logical_cores / 3).clamp(2, 4)
+}
+
 /// Complete Sodium 0.8.x JSON schema (all 5 sections populated so Gson never hits NPE).
+/// Uses verified `DeferMode::ONE_FRAME` ("Soon") to eliminate /tp chunk lag without blocking iGPUs.
 #[must_use]
 pub fn build_sodium_options_json(logical_cores: usize) -> String {
-    let chunk_builder_threads = (logical_cores / 2).clamp(1, 6);
+    let chunk_builder_threads = sodium_chunk_builder_threads(logical_cores);
     let doc = serde_json::json!({
         "quality": {
             "weather_quality": "DEFAULT",
@@ -85,7 +157,7 @@ pub fn build_sodium_options_json(logical_cores: usize) -> String {
         },
         "performance": {
             "chunk_builder_threads": chunk_builder_threads,
-            "chunk_build_defer_mode": "ALWAYS",
+            "chunk_build_defer_mode": "ONE_FRAME",
             "animate_only_visible_textures": true,
             "use_entity_culling": true,
             "use_fog_occlusion": true,
@@ -104,10 +176,10 @@ pub fn build_sodium_options_json(logical_cores: usize) -> String {
     serde_json::to_string_pretty(&doc).unwrap_or_default()
 }
 
-/// Verified C2ME 0.4.x (`version = 3`) TOML configuration with safe parallelism ceiling for laptops.
+/// Verified C2ME 0.4.x (`version = 3`) TOML configuration with balanced parallelism for laptops.
 #[must_use]
 pub fn build_c2me_toml(logical_cores: usize) -> String {
-    let parallelism = (logical_cores / 2).clamp(2, 6);
+    let parallelism = c2me_executor_parallelism(logical_cores);
     format!(
         "\
 version = 3
@@ -142,19 +214,6 @@ pauseIfMovingQuickly = true
     )
 }
 
-async fn write_if_missing_atomic(path: &Path, content: &str) -> AppResult<bool> {
-    if tokio::fs::try_exists(path).await? {
-        return Ok(false);
-    }
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    let tmp_path = path.with_extension("tmp");
-    tokio::fs::write(&tmp_path, content.as_bytes()).await?;
-    tokio::fs::rename(&tmp_path, path).await?;
-    Ok(true)
-}
-
 /// Seeds hardware-tuned initial configs for active worldgen/rendering mods ONLY if each file does not exist.
 /// Returns human-readable log lines describing which files were created.
 pub async fn ensure_worldgen_mod_configs(
@@ -174,9 +233,9 @@ pub async fn ensure_worldgen_mod_configs(
         let sodium_path = config_dir.join("sodium-options.json");
         let content = build_sodium_options_json(hw.logical_cores);
         if !content.is_empty() && write_if_missing_atomic(&sodium_path, &content).await? {
-            let threads = (hw.logical_cores / 2).clamp(1, 6);
+            let threads = sodium_chunk_builder_threads(hw.logical_cores);
             created.push(format!(
-                "config/sodium-options.json (chunk_builder_threads={threads}, defer=ALWAYS)"
+                "config/sodium-options.json (chunk_builder_threads={threads}, defer=ONE_FRAME)"
             ));
         }
     }
@@ -185,7 +244,7 @@ pub async fn ensure_worldgen_mod_configs(
         let c2me_path = config_dir.join("c2me.toml");
         let content = build_c2me_toml(hw.logical_cores);
         if write_if_missing_atomic(&c2me_path, &content).await? {
-            let parallelism = (hw.logical_cores / 2).clamp(2, 6);
+            let parallelism = c2me_executor_parallelism(hw.logical_cores);
             created.push(format!(
                 "config/c2me.toml (globalExecutorParallelism={parallelism}, priority=LOW)"
             ));
@@ -206,11 +265,75 @@ pub async fn ensure_worldgen_mod_configs(
     Ok(created)
 }
 
+/// Regenerates optimal configs ONLY for active mods actually installed in the instance,
+/// creating `.bak` backups before overwriting any existing config file.
+/// Returns `(updated_relative_paths, backup_relative_paths)`.
+pub async fn reoptimize_worldgen_mod_configs(
+    paths: &LauncherPaths,
+    profile_id: &str,
+    hw: &HardwareInfo,
+    is_vanilla: bool,
+    timestamp_secs: u64,
+) -> AppResult<(Vec<String>, Vec<String>)> {
+    if is_vanilla {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let active = detect_active_worldgen_mods(paths, profile_id).await;
+    if !active.has_sodium && !active.has_c2me && !active.has_distant_horizons {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let config_dir = paths.instance_config_dir(profile_id);
+    let mut updated = Vec::new();
+    let mut backups = Vec::new();
+
+    if active.has_sodium {
+        let sodium_path = config_dir.join("sodium-options.json");
+        let content = build_sodium_options_json(hw.logical_cores);
+        if !content.is_empty() {
+            if let Some(bak) = backup_file_before_overwrite(&sodium_path, timestamp_secs).await? {
+                if let Some(name) = bak.file_name().and_then(|n| n.to_str()) {
+                    backups.push(format!("config/{name}"));
+                }
+            }
+            write_atomic(&sodium_path, &content).await?;
+            updated.push("config/sodium-options.json".to_string());
+        }
+    }
+
+    if active.has_c2me {
+        let c2me_path = config_dir.join("c2me.toml");
+        let content = build_c2me_toml(hw.logical_cores);
+        if let Some(bak) = backup_file_before_overwrite(&c2me_path, timestamp_secs).await? {
+            if let Some(name) = bak.file_name().and_then(|n| n.to_str()) {
+                backups.push(format!("config/{name}"));
+            }
+        }
+        write_atomic(&c2me_path, &content).await?;
+        updated.push("config/c2me.toml".to_string());
+    }
+
+    if active.has_distant_horizons {
+        let dh_path = config_dir.join("DistantHorizons.toml");
+        let content = build_distant_horizons_toml(hw.logical_cores, hw.total_ram_mb);
+        if let Some(bak) = backup_file_before_overwrite(&dh_path, timestamp_secs).await? {
+            if let Some(name) = bak.file_name().and_then(|n| n.to_str()) {
+                backups.push(format!("config/{name}"));
+            }
+        }
+        write_atomic(&dh_path, &content).await?;
+        updated.push("config/DistantHorizons.toml".to_string());
+    }
+
+    Ok((updated, backups))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         build_c2me_toml, build_distant_horizons_toml, build_sodium_options_json,
-        ensure_worldgen_mod_configs,
+        ensure_worldgen_mod_configs, reoptimize_worldgen_mod_configs,
     };
     use crate::core::hardware::HardwareInfo;
     use crate::core::paths::LauncherPaths;
@@ -228,19 +351,28 @@ mod tests {
 
     #[test]
     fn test_generated_schemas_match_verified_versions() -> Result<(), Box<dyn std::error::Error>> {
-        let sodium_raw = build_sodium_options_json(8);
-        let parsed: serde_json::Value = serde_json::from_str(&sodium_raw)?;
-        assert_eq!(parsed["performance"]["chunk_builder_threads"], 4);
-        assert_eq!(parsed["performance"]["chunk_build_defer_mode"], "ALWAYS");
+        // 12-thread laptop: Sodium -> (12/4).clamp(2,4) = 3, C2ME -> (12/3).clamp(2,4) = 4
+        let sodium_12t = build_sodium_options_json(12);
+        let parsed: serde_json::Value = serde_json::from_str(&sodium_12t)?;
+        assert_eq!(parsed["performance"]["chunk_builder_threads"], 3);
+        assert_eq!(parsed["performance"]["chunk_build_defer_mode"], "ONE_FRAME");
         assert!(parsed.get("quality").is_some());
         assert!(parsed.get("advanced").is_some());
         assert!(parsed.get("notifications").is_some());
         assert!(parsed.get("debug").is_some());
 
-        let c2me_raw = build_c2me_toml(16);
-        assert!(c2me_raw.contains("version = 3"));
-        assert!(c2me_raw.contains("threadPoolPriorityPreset = \"LOW\""));
-        assert!(c2me_raw.contains("globalExecutorParallelism = 6"));
+        let sodium_8t: serde_json::Value = serde_json::from_str(&build_sodium_options_json(8))?;
+        assert_eq!(sodium_8t["performance"]["chunk_builder_threads"], 2);
+        let sodium_24t: serde_json::Value = serde_json::from_str(&build_sodium_options_json(24))?;
+        assert_eq!(sodium_24t["performance"]["chunk_builder_threads"], 4);
+
+        let c2me_12t = build_c2me_toml(12);
+        assert!(c2me_12t.contains("version = 3"));
+        assert!(c2me_12t.contains("threadPoolPriorityPreset = \"LOW\""));
+        assert!(c2me_12t.contains("globalExecutorParallelism = 4"));
+
+        let c2me_6t = build_c2me_toml(6);
+        assert!(c2me_6t.contains("globalExecutorParallelism = 2"));
 
         let dh_laptop = build_distant_horizons_toml(8, 16_384);
         assert!(dh_laptop.contains("_version = 5"));
@@ -271,12 +403,12 @@ mod tests {
         // Disabled DH must NOT generate DistantHorizons.toml
         tokio::fs::write(mods_dir.join("DistantHorizons-3.0.jar.disabled"), b"jar").await?;
 
-        // Pre-create custom user c2me.toml — must NEVER be overwritten
+        // Pre-create custom user c2me.toml — must NEVER be overwritten by ensure_*
         let config_dir = paths.instance_config_dir(profile_id);
         tokio::fs::create_dir_all(&config_dir).await?;
         tokio::fs::write(config_dir.join("c2me.toml"), b"# custom user c2me\n").await?;
 
-        let hw = sample_hw(8, 16_384);
+        let hw = sample_hw(12, 16_384);
         let created = ensure_worldgen_mod_configs(&paths, profile_id, &hw).await?;
         assert_eq!(created.len(), 1);
         assert!(created[0].contains("sodium-options.json"));
@@ -289,6 +421,64 @@ mod tests {
         // Second run must be a no-op
         let created_second = ensure_worldgen_mod_configs(&paths, profile_id, &hw).await?;
         assert!(created_second.is_empty());
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_reoptimize_backs_up_existing_and_skips_vanilla_or_inactive_mods()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = std::env::temp_dir().join(format!(
+            "vexel-reopt-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let paths = LauncherPaths::with_root(tmp.clone());
+        let profile_id = "fabric-12t";
+        paths.ensure_instance_dirs(profile_id).await?;
+
+        let mods_dir = paths.instance_mods_dir(profile_id);
+        tokio::fs::write(mods_dir.join("sodium-fabric-0.8.13.jar"), b"jar").await?;
+        tokio::fs::write(mods_dir.join("c2me-fabric-0.4.0.jar"), b"jar").await?;
+        tokio::fs::write(mods_dir.join("DistantHorizons-3.0.jar.disabled"), b"jar").await?;
+
+        let config_dir = paths.instance_config_dir(profile_id);
+        tokio::fs::create_dir_all(&config_dir).await?;
+        tokio::fs::write(config_dir.join("c2me.toml"), b"globalExecutorParallelism = 9\n").await?;
+
+        let hw = sample_hw(12, 16_384);
+
+        // Vanilla profile must NEVER create mod config files even if jars exist
+        let (vanilla_updated, vanilla_backups) =
+            reoptimize_worldgen_mod_configs(&paths, profile_id, &hw, true, 1_700_000_000).await?;
+        assert!(vanilla_updated.is_empty());
+        assert!(vanilla_backups.is_empty());
+
+        // Fabric profile re-optimizes only active Sodium & C2ME, backing up old c2me.toml
+        let (updated, backups) =
+            reoptimize_worldgen_mod_configs(&paths, profile_id, &hw, false, 1_700_000_000).await?;
+        assert_eq!(
+            updated,
+            vec!["config/sodium-options.json", "config/c2me.toml"]
+        );
+        assert_eq!(backups, vec!["config/c2me.toml.bak"]);
+        assert!(!config_dir.join("DistantHorizons.toml").exists());
+
+        let old_bak = tokio::fs::read_to_string(config_dir.join("c2me.toml.bak")).await?;
+        assert_eq!(old_bak, "globalExecutorParallelism = 9\n");
+
+        let new_c2me = tokio::fs::read_to_string(config_dir.join("c2me.toml")).await?;
+        assert!(new_c2me.contains("globalExecutorParallelism = 4"));
+
+        // Running a second time preserves the original .bak and writes a timestamped .bak
+        let (_, backups2) =
+            reoptimize_worldgen_mod_configs(&paths, profile_id, &hw, false, 1_700_000_555).await?;
+        assert!(backups2.contains(&"config/c2me.toml.1700000555.bak".to_string()));
+        assert!(backups2.contains(&"config/sodium-options.json.bak".to_string()));
+        assert_eq!(
+            tokio::fs::read_to_string(config_dir.join("c2me.toml.bak")).await?,
+            "globalExecutorParallelism = 9\n"
+        );
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
         Ok(())

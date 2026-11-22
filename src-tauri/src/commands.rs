@@ -36,11 +36,13 @@ use crate::core::manifest::{
 };
 use crate::core::paths::LauncherPaths;
 use crate::core::runner::{
-    build_full_command_preview, ensure_optimized_options_txt, spawn_minecraft, terminate_process,
-    LaunchRequest, ProcessPriority,
+    build_full_command_preview, ensure_optimized_options_txt, reoptimize_options_txt,
+    spawn_minecraft, terminate_process, LaunchRequest, ProcessPriority,
 };
 use crate::core::skin_pack::sync_instance_skin_pack;
-use crate::core::worldgen_configs::ensure_worldgen_mod_configs;
+use crate::core::worldgen_configs::{
+    ensure_worldgen_mod_configs, reoptimize_worldgen_mod_configs,
+};
 use crate::core::worlds::{scan_recent_worlds_blocking, WorldSummary};
 use crate::error::{AppError, AppResult};
 
@@ -77,6 +79,12 @@ pub struct StorageBreakdown {
 pub struct LogCleanupResult {
     pub files_removed: usize,
     pub bytes_freed: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReoptimizeResult {
+    pub updated_files: Vec<String>,
+    pub backups_created: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -544,6 +552,63 @@ pub async fn clean_old_logs(state: State<'_, AppState>) -> AppResult<LogCleanupR
     Ok(LogCleanupResult {
         files_removed,
         bytes_freed,
+    })
+}
+
+#[tauri::command]
+pub async fn reoptimize_instance_configs(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> AppResult<ReoptimizeResult> {
+    validate_profile_id(&profile_id)?;
+    {
+        let running = state.running_processes.lock().await;
+        if running.contains_key(&profile_id) {
+            return Err(AppError::ConfigError(
+                "Detén Minecraft antes de aplicar ajustes óptimos a esta instancia.".to_string(),
+            ));
+        }
+    }
+
+    let profile = {
+        let guard = state.config.lock().await;
+        guard
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .cloned()
+            .ok_or_else(|| AppError::ConfigError(format!("Profile '{profile_id}' not found")))?
+    };
+
+    state.paths.ensure_instance_dirs(&profile.id).await?;
+    let timestamp_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+
+    let mut updated_files = Vec::new();
+    let mut backups_created = Vec::new();
+
+    let instance_dir = state.paths.instance_dir(&profile.id);
+    if let Some(opt_bak) = reoptimize_options_txt(&instance_dir, timestamp_secs).await? {
+        backups_created.push(opt_bak);
+    }
+    updated_files.push("options.txt".to_string());
+
+    let is_vanilla = profile.loader == ModLoaderKind::Vanilla;
+    let (mod_updated, mod_backups) = reoptimize_worldgen_mod_configs(
+        &state.paths,
+        &profile.id,
+        &state.hardware,
+        is_vanilla,
+        timestamp_secs,
+    )
+    .await?;
+    updated_files.extend(mod_updated);
+    backups_created.extend(mod_backups);
+
+    Ok(ReoptimizeResult {
+        updated_files,
+        backups_created,
     })
 }
 

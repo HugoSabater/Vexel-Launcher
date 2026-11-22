@@ -41,6 +41,7 @@ import type {
   ModrinthSort,
   PerformancePreset,
   Profile,
+  ReoptimizeResult,
   StorageBreakdown,
 } from "./types/launcher";
 
@@ -761,6 +762,12 @@ export function App() {
     [],
   );
 
+  const handleReoptimizeInstance = useCallback(
+    async (profileId: string) =>
+      invoke<ReoptimizeResult>("reoptimize_instance_configs", { profileId }),
+    [],
+  );
+
   const filteredProfiles = useMemo(() => {
     if (!bootstrap) return [];
     const q = quickQuery.trim().toLowerCase();
@@ -1022,6 +1029,7 @@ export function App() {
                   onCleanOldLogs={handleCleanOldLogs}
                   onGetLaunchCommandPreview={handleGetLaunchCommandPreview}
                   onGetLiveMemoryTelemetry={handleGetLiveMemoryTelemetry}
+                  onReoptimizeInstance={handleReoptimizeInstance}
                 />
               )}
             </div>

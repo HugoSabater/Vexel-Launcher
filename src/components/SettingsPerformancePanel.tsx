@@ -14,6 +14,7 @@ import {
   Palette,
   RefreshCw,
   Shirt,
+  Sparkles,
   Terminal,
   Trash2,
   Upload,
@@ -21,6 +22,7 @@ import {
 import { SkinViewer3D } from "./SkinViewer3D";
 import { VersionPicker } from "./VersionPicker";
 import { ACCENT_OPTIONS, USERNAME_REGEX } from "../theme/accents";
+import { formatFriendlyError } from "../utils/errors";
 import type {
   GcPreset,
   GlobalSettingsPayload,
@@ -35,6 +37,7 @@ import type {
   ModLoaderKind,
   ProcessPriority,
   Profile,
+  ReoptimizeResult,
   StorageBreakdown,
 } from "../types/launcher";
 
@@ -73,6 +76,7 @@ interface SettingsPerformancePanelProps {
   onCleanOldLogs: () => Promise<LogCleanupResult>;
   onGetLaunchCommandPreview: (profileId: string) => Promise<string>;
   onGetLiveMemoryTelemetry: () => Promise<LiveMemoryTelemetry>;
+  onReoptimizeInstance: (profileId: string) => Promise<ReoptimizeResult>;
 }
 
 function formatSize(bytes: number): string {
@@ -172,6 +176,7 @@ export function SettingsPerformancePanel({
   onCleanOldLogs,
   onGetLaunchCommandPreview,
   onGetLiveMemoryTelemetry,
+  onReoptimizeInstance,
 }: SettingsPerformancePanelProps) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [expertOpen, setExpertOpen] = useState(false);
@@ -213,6 +218,13 @@ export function SettingsPerformancePanel({
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [uploadingSkin, setUploadingSkin] = useState(false);
   const [skinError, setSkinError] = useState<string | null>(null);
+  const [confirmReoptimize, setConfirmReoptimize] = useState(false);
+  const [reoptimizing, setReoptimizing] = useState(false);
+  const [reoptimizeNotice, setReoptimizeNotice] = useState<{
+    kind: "success" | "error";
+    title: string;
+    detail?: string;
+  } | null>(null);
 
   const serverDebounceRef = useRef<number | null>(null);
   const savedTimerRef = useRef<number | null>(null);
@@ -265,6 +277,8 @@ export function SettingsPerformancePanel({
       profile.window_height ? String(profile.window_height) : "720",
     );
     setDeleteModalOpen(false);
+    setConfirmReoptimize(false);
+    setReoptimizeNotice(null);
   }, [profile]);
 
   useEffect(() => {
@@ -1065,6 +1079,104 @@ export function SettingsPerformancePanel({
                       label="Ajustar mods de rendimiento automáticamente"
                     />
                   </SettingRow>
+
+                  <SettingRow
+                    title="Aplicar ajustes óptimos ahora"
+                    description="Equilibra la distancia de visión y el uso del procesador en esta instancia sin perder tus controles, idioma, sonido ni packs. Guarda copia de seguridad automática."
+                  >
+                    {confirmReoptimize ? (
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={reoptimizing || isProfileRunning}
+                          onClick={() => {
+                            setReoptimizing(true);
+                            setReoptimizeNotice(null);
+                            void onReoptimizeInstance(profile.id)
+                              .then((res) => {
+                                const hasBackup =
+                                  res.backups_created.length > 0;
+                                setReoptimizeNotice({
+                                  kind: "success",
+                                  title: hasBackup
+                                    ? "Ajustes aplicados correctamente · Copia de seguridad guardada"
+                                    : "Ajustes aplicados correctamente",
+                                  detail:
+                                    res.updated_files.length > 0
+                                      ? `Archivos actualizados: ${res.updated_files.join(", ")}`
+                                      : undefined,
+                                });
+                                setConfirmReoptimize(false);
+                              })
+                              .catch((err) => {
+                                setReoptimizeNotice({
+                                  kind: "error",
+                                  title: formatFriendlyError(
+                                    err,
+                                    "No se pudieron aplicar los ajustes óptimos.",
+                                  ),
+                                });
+                                setConfirmReoptimize(false);
+                              })
+                              .finally(() => setReoptimizing(false));
+                          }}
+                          className="btn-accent rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                        >
+                          {reoptimizing ? "Aplicando..." : "Confirmar"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={reoptimizing}
+                          onClick={() => setConfirmReoptimize(false)}
+                          className="rounded-lg bg-white/[0.06] hover:bg-white/[0.1] px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={isProfileRunning || reoptimizing}
+                        title={
+                          isProfileRunning
+                            ? "Detén Minecraft antes de optimizar esta instancia"
+                            : "Optimizar esta instancia ahora con copia de seguridad automática"
+                        }
+                        onClick={() => {
+                          setReoptimizeNotice(null);
+                          setConfirmReoptimize(true);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#121722] hover:bg-[#171D2B] border border-white/[0.08] disabled:opacity-45 px-3 py-1.5 text-xs font-medium text-slate-100 transition-colors"
+                      >
+                        <Sparkles className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+                        Aplicar ajustes óptimos ahora
+                      </button>
+                    )}
+                  </SettingRow>
+
+                  {reoptimizeNotice && (
+                    <div
+                      className={`px-5 py-3 space-y-0.5 ${
+                        reoptimizeNotice.kind === "error"
+                          ? "bg-rose-500/10 text-rose-200"
+                          : "bg-emerald-500/[0.07] text-emerald-200"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 text-xs font-medium">
+                        {reoptimizeNotice.kind === "error" ? (
+                          <AlertTriangle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+                        ) : (
+                          <Check className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                        )}
+                        <span>{reoptimizeNotice.title}</span>
+                      </div>
+                      {reoptimizeNotice.detail && (
+                        <p className="pl-5 text-[11px] font-mono text-slate-400">
+                          {reoptimizeNotice.detail}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

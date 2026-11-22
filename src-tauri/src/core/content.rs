@@ -14,6 +14,7 @@ use crate::error::{AppError, AppResult};
 
 const MAX_CONTENT_ICON_BYTES: usize = 256 * 1024;
 const MAX_FABRIC_MOD_JSON_BYTES: u64 = 1024 * 1024;
+const MAX_PACK_MCMETA_BYTES: usize = 512 * 1024;
 const PNG_MAGIC: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 const MODRINTH_CDN_PREFIX: &str = "https://cdn.modrinth.com/";
 
@@ -27,6 +28,7 @@ pub const FPS_PURE_STACK_MODS: &[(&str, &str)] = &[
     ("moreculling", "MoreCulling"),
     ("dynamic-fps", "Dynamic FPS"),
     ("badoptimizations", "BadOptimizations"),
+    ("scalablelux", "ScalableLux"),
 ];
 
 pub const DISTANT_HORIZONS_MOD: &[(&str, &str)] = &[("distanthorizons", "Distant Horizons")];
@@ -67,6 +69,8 @@ pub struct ContentItem {
     pub project_id: Option<String>,
     #[serde(default)]
     pub icon_url: Option<String>,
+    #[serde(default)]
+    pub metadata_warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -97,6 +101,10 @@ pub struct ContentIndexEntry {
     pub icon_cache_file: Option<String>,
     #[serde(default)]
     pub icon_checked: bool,
+    #[serde(default)]
+    pub metadata_warning: Option<String>,
+    #[serde(default)]
+    pub metadata_checked: bool,
 }
 
 #[must_use]
@@ -242,6 +250,13 @@ impl InstanceContentIndex {
             } else if size_changed {
                 existing.icon_checked = false;
             }
+            if entry.metadata_checked {
+                existing.metadata_warning = entry.metadata_warning;
+                existing.metadata_checked = true;
+            } else if size_changed {
+                existing.metadata_warning = None;
+                existing.metadata_checked = false;
+            }
         } else {
             self.entries.push(entry);
         }
@@ -337,6 +352,7 @@ struct ArchiveInspection {
     display_name: Option<String>,
     version: Option<String>,
     icon_png: Option<Vec<u8>>,
+    metadata_warning: Option<String>,
 }
 
 fn normalize_zip_entry_path(raw: &str) -> Option<String> {
@@ -389,12 +405,57 @@ fn extract_valid_png_from_zip(archive: &mut zip::ZipArchive<File>, entry_path: &
     Some(bytes)
 }
 
+fn validate_resource_pack_mcmeta(archive: &mut zip::ZipArchive<File>) -> Option<String> {
+    let Ok(entry) = archive.by_name("pack.mcmeta") else {
+        return Some("Falta pack.mcmeta en la raíz del archivo ZIP.".to_string());
+    };
+    let mut bytes = Vec::new();
+    if entry
+        .take((MAX_PACK_MCMETA_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return Some("No se pudo leer pack.mcmeta dentro del archivo ZIP.".to_string());
+    }
+    if bytes.len() > MAX_PACK_MCMETA_BYTES {
+        return Some("pack.mcmeta supera el tamaño máximo permitido.".to_string());
+    }
+
+    let clean_bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+    match serde_json::from_slice::<serde_json::Value>(clean_bytes) {
+        Err(err) => Some(format!(
+            "pack.mcmeta tiene errores de sintaxis JSON (línea {}, columna {}): Minecraft podría ignorarlo.",
+            err.line(),
+            err.column()
+        )),
+        Ok(val) => {
+            let has_pack_obj = val
+                .as_object()
+                .and_then(|obj| obj.get("pack"))
+                .is_some_and(serde_json::Value::is_object);
+            if has_pack_obj {
+                None
+            } else {
+                Some("pack.mcmeta no contiene un bloque \"pack\" válido.".to_string())
+            }
+        }
+    }
+}
+
 fn inspect_archive_blocking(archive_path: &Path, kind: ContentKind) -> ArchiveInspection {
     let Ok(file) = File::open(archive_path) else {
         return ArchiveInspection::default();
     };
     let Ok(mut archive) = zip::ZipArchive::new(file) else {
-        return ArchiveInspection::default();
+        let metadata_warning = if kind == ContentKind::ResourcePack {
+            Some("El archivo ZIP está dañado o no se puede abrir.".to_string())
+        } else {
+            None
+        };
+        return ArchiveInspection {
+            metadata_warning,
+            ..ArchiveInspection::default()
+        };
     };
 
     match kind {
@@ -426,7 +487,12 @@ fn inspect_archive_blocking(archive_path: &Path, kind: ContentKind) -> ArchiveIn
             }
             out
         }
-        ContentKind::ResourcePack | ContentKind::Shader => ArchiveInspection {
+        ContentKind::ResourcePack => ArchiveInspection {
+            icon_png: extract_valid_png_from_zip(&mut archive, "pack.png"),
+            metadata_warning: validate_resource_pack_mcmeta(&mut archive),
+            ..ArchiveInspection::default()
+        },
+        ContentKind::Shader => ArchiveInspection {
             icon_png: extract_valid_png_from_zip(&mut archive, "pack.png"),
             ..ArchiveInspection::default()
         },
@@ -448,6 +514,7 @@ const CURATED_LABELS: &[CuratedLabelEntry] = &[
     CuratedLabelEntry { slug: "moreculling", name: "MoreCulling" },
     CuratedLabelEntry { slug: "dynamic-fps", name: "Dynamic FPS" },
     CuratedLabelEntry { slug: "badoptimizations", name: "BadOptimizations" },
+    CuratedLabelEntry { slug: "scalablelux", name: "ScalableLux" },
     CuratedLabelEntry { slug: "c2me-fabric", name: "C2ME" },
     CuratedLabelEntry { slug: "bobby", name: "Bobby" },
     CuratedLabelEntry { slug: "distanthorizons", name: "Distant Horizons" },
@@ -749,6 +816,7 @@ fn parse_content_entry(
         slug: indexed.and_then(|e| e.slug.clone()),
         project_id: indexed.and_then(|e| e.project_id.clone()),
         icon_url: resolved_icon_url.or(fallback_modrinth),
+        metadata_warning: indexed.and_then(|e| e.metadata_warning.clone()),
     })
 }
 
@@ -834,7 +902,13 @@ async fn list_instance_content_internal(
                 } else {
                     false
                 };
-                size_mismatch || !entry.icon_checked || missing_mod_meta || missing_cached_png
+                let missing_pack_meta =
+                    kind == ContentKind::ResourcePack && !entry.metadata_checked;
+                size_mismatch
+                    || !entry.icon_checked
+                    || missing_mod_meta
+                    || missing_cached_png
+                    || missing_pack_meta
             }
         };
         if needs_inspect {
@@ -872,6 +946,7 @@ async fn list_instance_content_internal(
                         info.version,
                         cache_file,
                         data_url,
+                        info.metadata_warning,
                     )
                 })
                 .collect::<Vec<_>>()
@@ -879,7 +954,17 @@ async fn list_instance_content_internal(
         .await
         .map_err(|err| AppError::ContentError(format!("Archive metadata/icon scan failed: {err}")))?;
 
-        for (name, size, mod_id, display_name, version, cache_file, data_url) in scanned {
+        for (
+            name,
+            size,
+            mod_id,
+            display_name,
+            version,
+            cache_file,
+            data_url,
+            metadata_warning,
+        ) in scanned
+        {
             if let Some(url) = data_url {
                 resolved_icon_urls.insert(name.clone(), url);
             }
@@ -895,6 +980,8 @@ async fn list_instance_content_internal(
                 icon_url: None,
                 icon_cache_file: cache_file,
                 icon_checked: true,
+                metadata_warning,
+                metadata_checked: true,
             });
             index_dirty = true;
         }
@@ -1080,13 +1167,20 @@ async fn finalize_imported_item(
         } else {
             (None, None)
         };
-        (info.mod_id, info.display_name, info.version, cache_file, data_url)
+        (
+            info.mod_id,
+            info.display_name,
+            info.version,
+            cache_file,
+            data_url,
+            info.metadata_warning,
+        )
     })
     .await
     .ok();
 
     let mut local_icon = None;
-    if let Some((mod_id, display_name, version, cache_file, data_url)) = scanned {
+    if let Some((mod_id, display_name, version, cache_file, data_url, metadata_warning)) = scanned {
         local_icon = data_url;
         index.upsert(ContentIndexEntry {
             kind,
@@ -1100,6 +1194,8 @@ async fn finalize_imported_item(
             icon_url: None,
             icon_cache_file: cache_file,
             icon_checked: true,
+            metadata_warning,
+            metadata_checked: true,
         });
         let _ = index.save_atomic(&index_path).await;
     }
@@ -1835,6 +1931,8 @@ where
                 icon_url: None,
                 icon_cache_file: None,
                 icon_checked: false,
+                metadata_warning: None,
+                metadata_checked: false,
             },
             old_files,
         ));
@@ -2031,13 +2129,14 @@ mod tests {
     #[test]
     fn test_performance_presets_split_fps_pure_and_distant_horizons() {
         let fps = preset_mod_list(PerformancePreset::FpsPure);
-        assert_eq!(fps.len(), 9);
+        assert_eq!(fps.len(), 10);
         assert!(fps.iter().any(|(slug, _)| *slug == "sodium"));
         assert!(fps.iter().any(|(slug, _)| *slug == "modernfix"));
         assert!(fps.iter().any(|(slug, _)| *slug == "entityculling"));
         assert!(fps.iter().any(|(slug, _)| *slug == "moreculling"));
         assert!(fps.iter().any(|(slug, _)| *slug == "dynamic-fps"));
         assert!(fps.iter().any(|(slug, _)| *slug == "badoptimizations"));
+        assert!(fps.iter().any(|(slug, _)| *slug == "scalablelux"));
         assert!(!fps.iter().any(|(slug, _)| *slug == "c2me-fabric"));
         assert!(!fps.iter().any(|(slug, _)| *slug == "distanthorizons"));
 
@@ -2068,6 +2167,7 @@ mod tests {
                 slug: Some("sodium-extra".to_string()),
                 project_id: Some("PtjYWJkn".to_string()),
                 icon_url: None,
+                metadata_warning: None,
             },
             ContentItem {
                 file_name: "c2me-0.3.0-alpha.jar".to_string(),
@@ -2080,6 +2180,7 @@ mod tests {
                 slug: None,
                 project_id: None,
                 icon_url: None,
+                metadata_warning: None,
             },
         ];
 
@@ -2137,6 +2238,8 @@ mod tests {
             icon_url: None,
             icon_cache_file: None,
             icon_checked: false,
+            metadata_warning: None,
+            metadata_checked: false,
         });
         idx.upsert(ContentIndexEntry {
             kind: ContentKind::Mod,
@@ -2150,6 +2253,8 @@ mod tests {
             icon_url: None,
             icon_cache_file: None,
             icon_checked: false,
+            metadata_warning: None,
+            metadata_checked: false,
         });
 
         let active_map: HashMap<String, String> = idx.active_project_map(ContentKind::Mod);
@@ -2221,6 +2326,8 @@ mod tests {
             icon_url: Some("https://cdn.modrinth.com/data/Q1vvjJYV/icon.png".to_string()),
             icon_cache_file: None,
             icon_checked: true,
+            metadata_warning: None,
+            metadata_checked: true,
         });
         idx.save_atomic(&index_path).await?;
 
@@ -2534,6 +2641,115 @@ mod tests {
             .instance_resourcepacks_dir("zip-prof")
             .join("bare-bones.zip")
             .exists());
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resource_pack_corrupt_pack_mcmeta_detection_and_toggle_preservation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "vexel-mcmeta-check-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let paths = LauncherPaths::with_root(tmp.clone());
+        paths.ensure_instance_dirs("rp-check").await?;
+        let rp_dir = paths.instance_resourcepacks_dir("rp-check");
+
+        // 1. Valid pack.mcmeta with UTF-8 BOM must NOT trigger a warning
+        let valid_bom = rp_dir.join("valid-bom.zip");
+        {
+            let file = std::fs::File::create(&valid_bom)?;
+            let mut w = zip::ZipWriter::new(file);
+            w.start_file("pack.mcmeta", SimpleFileOptions::default())?;
+            w.write_all(b"\xEF\xBB\xBF{\"pack\":{\"pack_format\":34,\"description\":\"OK\"}}")?;
+            w.finish()?;
+        }
+
+        // 2. Malformed pack.mcmeta JSON (trailing comma / broken syntax)
+        let broken_json = rp_dir.join("OutlinedOresCreateMod1-5-1.zip");
+        {
+            let file = std::fs::File::create(&broken_json)?;
+            let mut w = zip::ZipWriter::new(file);
+            w.start_file("pack.mcmeta", SimpleFileOptions::default())?;
+            w.write_all(br#"{"pack":{"pack_format":34, "description": "Broken",}}"#)?;
+            w.finish()?;
+        }
+
+        // 3. Missing pack.mcmeta completely
+        let missing_meta = rp_dir.join("no-mcmeta.zip");
+        {
+            let file = std::fs::File::create(&missing_meta)?;
+            let mut w = zip::ZipWriter::new(file);
+            w.start_file("assets/minecraft/textures/stone.png", SimpleFileOptions::default())?;
+            w.write_all(b"fake")?;
+            w.finish()?;
+        }
+
+        let items =
+            super::list_instance_content(&paths, "rp-check", ContentKind::ResourcePack).await?;
+        assert_eq!(items.len(), 3);
+
+        let ok_item = items
+            .iter()
+            .find(|i| i.file_name == "valid-bom.zip")
+            .ok_or("valid-bom.zip missing")?;
+        assert!(ok_item.metadata_warning.is_none());
+
+        let broken_item = items
+            .iter()
+            .find(|i| i.file_name == "OutlinedOresCreateMod1-5-1.zip")
+            .ok_or("broken pack missing")?;
+        let broken_warn = broken_item
+            .metadata_warning
+            .as_deref()
+            .ok_or("expected warning for broken pack.mcmeta")?;
+        assert!(broken_warn.contains("JSON"));
+
+        let missing_item = items
+            .iter()
+            .find(|i| i.file_name == "no-mcmeta.zip")
+            .ok_or("missing pack missing")?;
+        assert!(missing_item
+            .metadata_warning
+            .as_deref()
+            .is_some_and(|w| w.contains("Falta pack.mcmeta")));
+
+        // Verify toggle .zip -> .zip.disabled -> .zip preserves metadata_warning & metadata_checked
+        let disabled = toggle_content_item(
+            &paths,
+            "rp-check",
+            ContentKind::ResourcePack,
+            "OutlinedOresCreateMod1-5-1.zip",
+            false,
+        )
+        .await?;
+        assert_eq!(disabled.metadata_warning.as_deref(), Some(broken_warn));
+
+        let idx_after_disable =
+            InstanceContentIndex::load(&paths.instance_content_index_path("rp-check")).await;
+        let idx_entry = idx_after_disable
+            .find_by_file(
+                ContentKind::ResourcePack,
+                "OutlinedOresCreateMod1-5-1.zip.disabled",
+            )
+            .ok_or("index entry missing after disable")?;
+        assert!(idx_entry.metadata_checked);
+        assert_eq!(idx_entry.metadata_warning.as_deref(), Some(broken_warn));
+
+        let reenabled = toggle_content_item(
+            &paths,
+            "rp-check",
+            ContentKind::ResourcePack,
+            "OutlinedOresCreateMod1-5-1.zip.disabled",
+            true,
+        )
+        .await?;
+        assert_eq!(reenabled.metadata_warning.as_deref(), Some(broken_warn));
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
         Ok(())

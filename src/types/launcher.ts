@@ -87,6 +87,7 @@ export interface ContentItem {
   slug?: string | null;
   project_id?: string | null;
   icon_url?: string | null;
+  metadata_warning?: string | null;
 }
 
 export interface ModrinthSearchResult {
@@ -120,6 +121,11 @@ export interface StorageBreakdown {
 export interface LogCleanupResult {
   files_removed: number;
   bytes_freed: number;
+}
+
+export interface ReoptimizeResult {
+  updated_files: string[];
+  backups_created: string[];
 }
 
 export type WorldGameType =

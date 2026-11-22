@@ -107,6 +107,52 @@ graphicsMode:1\n\
 prioritizeChunkUpdates:1\n\
 pauseOnLostFocus:true\n";
 
+const SAFE_PERFORMANCE_OPTION_OVERRIDES: &[(&str, &str)] = &[
+    ("renderDistance", "12"),
+    ("simulationDistance", "8"),
+    ("enableVsync", "false"),
+    ("prioritizeChunkUpdates", "1"),
+    ("biomeBlendRadius", "2"),
+];
+
+/// Updates ONLY safe performance keys in `options.txt`, preserving line ending style (CRLF/LF),
+/// user keybinds, language, audio volumes, and `resourcePacks`, and appending any missing keys.
+#[must_use]
+pub fn merge_options_txt_performance_keys(existing: &str) -> String {
+    let eol = if existing.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut seen: HashSet<&str> = HashSet::with_capacity(SAFE_PERFORMANCE_OPTION_OVERRIDES.len());
+    let mut out_lines: Vec<String> = Vec::new();
+
+    for line in existing.lines() {
+        if let Some((key, _val)) = line.split_once(':') {
+            if let Some(&(target_key, target_val)) = SAFE_PERFORMANCE_OPTION_OVERRIDES
+                .iter()
+                .find(|(k, _)| *k == key)
+            {
+                if seen.insert(target_key) {
+                    out_lines.push(format!("{target_key}:{target_val}"));
+                }
+                continue;
+            }
+        }
+        out_lines.push(line.to_string());
+    }
+
+    for &(target_key, target_val) in SAFE_PERFORMANCE_OPTION_OVERRIDES {
+        if !seen.contains(target_key) {
+            out_lines.push(format!("{target_key}:{target_val}"));
+        }
+    }
+
+    let mut merged = out_lines.join(eol);
+    merged.push_str(eol);
+    merged
+}
+
 pub async fn ensure_optimized_options_txt(instance_dir: &Path) -> AppResult<bool> {
     tokio::fs::create_dir_all(instance_dir).await?;
     let options_path = instance_dir.join("options.txt");
@@ -115,6 +161,33 @@ pub async fn ensure_optimized_options_txt(instance_dir: &Path) -> AppResult<bool
     }
     tokio::fs::write(&options_path, DEFAULT_OPTIMIZED_OPTIONS_TXT.as_bytes()).await?;
     Ok(true)
+}
+
+/// Safely optimizes `options.txt` in an existing (or fresh) instance.
+/// Always creates a `.bak` backup if `options.txt` existed, and returns the optional backup filename.
+pub async fn reoptimize_options_txt(
+    instance_dir: &Path,
+    timestamp_secs: u64,
+) -> AppResult<Option<String>> {
+    tokio::fs::create_dir_all(instance_dir).await?;
+    let options_path = instance_dir.join("options.txt");
+
+    let (next_content, backup_name) = if tokio::fs::try_exists(&options_path).await? {
+        let bak_path =
+            crate::core::worldgen_configs::backup_file_before_overwrite(&options_path, timestamp_secs)
+                .await?;
+        let bak_name = bak_path
+            .and_then(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string));
+        let existing = tokio::fs::read_to_string(&options_path).await?;
+        (merge_options_txt_performance_keys(&existing), bak_name)
+    } else {
+        (DEFAULT_OPTIMIZED_OPTIONS_TXT.to_string(), None)
+    };
+
+    let tmp_path = instance_dir.join("options.txt.tmp");
+    tokio::fs::write(&tmp_path, next_content.as_bytes()).await?;
+    tokio::fs::rename(&tmp_path, &options_path).await?;
+    Ok(backup_name)
 }
 
 #[must_use]
@@ -1200,5 +1273,65 @@ mod tests {
             parser.feed_line("Post-event plain line"),
             vec![("Post-event plain line".to_string(), false)]
         );
+    }
+
+    #[tokio::test]
+    async fn test_merge_options_txt_preserves_controls_resource_packs_and_eol()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // Test CRLF preservation + partial key override + appending missing keys
+        let existing_crlf = concat!(
+            "lang:es_es\r\n",
+            "soundCategory_music:0.25\r\n",
+            "key_key.forward:key.keyboard.w\r\n",
+            "renderDistance:16\r\n",
+            "simulationDistance:12\r\n",
+            "enableVsync:true\r\n",
+            "resourcePacks:[\"vanilla\",\"file/LowOnFire.zip\"]\r\n",
+        );
+
+        let merged = super::merge_options_txt_performance_keys(existing_crlf);
+        assert!(merged.contains("\r\n"));
+        assert!(!merged.replace("\r\n", "").contains('\n'));
+        assert!(merged.contains("lang:es_es\r\n"));
+        assert!(merged.contains("soundCategory_music:0.25\r\n"));
+        assert!(merged.contains("key_key.forward:key.keyboard.w\r\n"));
+        assert!(merged.contains("resourcePacks:[\"vanilla\",\"file/LowOnFire.zip\"]\r\n"));
+        assert!(merged.contains("renderDistance:12\r\n"));
+        assert!(merged.contains("simulationDistance:8\r\n"));
+        assert!(merged.contains("enableVsync:false\r\n"));
+        // Missing keys must be appended at the end
+        assert!(merged.contains("prioritizeChunkUpdates:1\r\n"));
+        assert!(merged.contains("biomeBlendRadius:2\r\n"));
+        assert!(!merged.contains("renderDistance:16"));
+        assert!(!merged.contains("enableVsync:true"));
+
+        // Verify disk roundtrip with automatic .bak backup
+        let tmp = std::env::temp_dir().join(format!(
+            "vexel-opt-reopt-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        tokio::fs::create_dir_all(&tmp).await?;
+        let lf_sample = "lang:en_us\nrenderDistance:20\nresourcePacks:[\"vanilla\"]\n";
+        tokio::fs::write(tmp.join("options.txt"), lf_sample).await?;
+
+        let bak_name = super::reoptimize_options_txt(&tmp, 1_700_000_000).await?;
+        assert_eq!(bak_name.as_deref(), Some("options.txt.bak"));
+        assert_eq!(
+            tokio::fs::read_to_string(tmp.join("options.txt.bak")).await?,
+            lf_sample
+        );
+
+        let updated = tokio::fs::read_to_string(tmp.join("options.txt")).await?;
+        assert!(!updated.contains("\r\n"));
+        assert!(updated.contains("lang:en_us\n"));
+        assert!(updated.contains("resourcePacks:[\"vanilla\"]\n"));
+        assert!(updated.contains("renderDistance:12\n"));
+        assert!(updated.contains("simulationDistance:8\n"));
+        assert!(updated.contains("enableVsync:false\n"));
+        assert!(updated.contains("prioritizeChunkUpdates:1\n"));
+        assert!(updated.contains("biomeBlendRadius:2\n"));
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        Ok(())
     }
 }

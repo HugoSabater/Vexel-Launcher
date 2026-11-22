@@ -117,6 +117,7 @@ const FPS_PURE_SLUGS = [
   "moreculling",
   "dynamic-fps",
   "badoptimizations",
+  "scalablelux",
 ];
 
 function normalizeId(raw: string): string {
@@ -1036,7 +1037,7 @@ export function ContentManagerPanel({
                   <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
                       <Check className="h-4 w-4" />
-                      Pack de FPS instalado (9 mods)
+                      Pack de FPS instalado (10 mods)
                     </span>
                     <button
                       type="button"
@@ -1056,12 +1057,12 @@ export function ContentManagerPanel({
                           Pack de FPS (Recomendado)
                         </span>
                         <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
-                          9 mods
+                          10 mods
                         </span>
                       </div>
                       <p className="text-xs text-slate-400 leading-relaxed">
                         Aumenta al máximo los FPS y elimina tirones con Sodium,
-                        Lithium y los optimizadores esenciales.
+                        Lithium, ScalableLux y los optimizadores esenciales.
                       </p>
                     </div>
                     <button
@@ -1551,7 +1552,7 @@ export function ContentManagerPanel({
                           kind={currentLocalKind}
                         />
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span
                               className={`text-[13px] font-medium truncate ${
                                 item.enabled
@@ -1564,6 +1565,15 @@ export function ContentManagerPanel({
                             {item.version && (
                               <span className="shrink-0 rounded bg-white/[0.04] px-1.5 py-0.5 text-[10px] font-mono text-slate-400">
                                 v{item.version}
+                              </span>
+                            )}
+                            {item.metadata_warning && (
+                              <span
+                                title={item.metadata_warning}
+                                className="shrink-0 inline-flex items-center gap-1 rounded bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 text-[10px] font-medium text-amber-300 cursor-help"
+                              >
+                                <AlertTriangle className="h-2.5 w-2.5" />
+                                Archivo dañado
                               </span>
                             )}
                           </div>
