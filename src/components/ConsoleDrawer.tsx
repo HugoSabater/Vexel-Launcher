@@ -54,10 +54,20 @@ export function formatLocalHms(timestampMs: number): string {
 
 function classifyLogLine(entry: LogLineEvent): string {
   const upper = entry.line.toUpperCase();
-  if (entry.is_stderr || upper.includes("[ERROR]") || upper.includes("FATAL")) {
+  if (
+    entry.is_stderr ||
+    upper.includes("[ERROR]") ||
+    upper.includes("/ERROR]") ||
+    upper.includes("/FATAL]") ||
+    upper.includes("FATAL")
+  ) {
     return "text-rose-300";
   }
-  if (upper.includes("[WARN]") || upper.includes("WARNING")) {
+  if (
+    upper.includes("[WARN]") ||
+    upper.includes("/WARN]") ||
+    upper.includes("WARNING")
+  ) {
     return "text-amber-300";
   }
   if (

@@ -156,6 +156,12 @@ pub async fn sync_instance_skin_pack(
         String::new()
     };
 
+    let rp_dir = paths.instance_resourcepacks_dir(profile_id);
+    let legacy_stamp_path = rp_dir.join(SKIN_PACK_STAMP_FILENAME);
+    if tokio::fs::try_exists(&legacy_stamp_path).await.unwrap_or(false) {
+        let _ = tokio::fs::remove_file(&legacy_stamp_path).await;
+    }
+
     if !apply_skin_ingame {
         if !existing_options.is_empty() {
             let updated = update_options_txt_resource_packs(&existing_options, false);
@@ -175,9 +181,8 @@ pub async fn sync_instance_skin_pack(
     }
 
     let skin_bytes = tokio::fs::read(&skin_candidate).await?;
-    let rp_dir = paths.instance_resourcepacks_dir(profile_id);
     let zip_path = rp_dir.join(SKIN_PACK_FILENAME);
-    let stamp_path = rp_dir.join(SKIN_PACK_STAMP_FILENAME);
+    let stamp_path = paths.instance_dir(profile_id).join(SKIN_PACK_STAMP_FILENAME);
 
     let expected_stamp = format!("{SKIN_PACK_FORMAT_VERSION}:{}", hex::encode(Sha1::digest(&skin_bytes)));
     let zip_exists = tokio::fs::try_exists(&zip_path).await?;
@@ -252,12 +257,18 @@ mod tests {
         paths.ensure_base_dirs().await?;
         tokio::fs::write(paths.custom_skin_path(), b"\x89PNG\r\n\x1a\nFAKE_SKIN").await?;
 
-        super::sync_instance_skin_pack(&paths, "demo", true, None).await?;
         let rp_dir = paths.instance_resourcepacks_dir("demo");
+        paths.ensure_instance_dirs("demo").await?;
+        let legacy_stamp = rp_dir.join(".launcher_skin.sha1");
+        tokio::fs::write(&legacy_stamp, b"v1:legacy").await?;
+
+        super::sync_instance_skin_pack(&paths, "demo", true, None).await?;
         let zip_path = rp_dir.join("_launcher_skin.zip");
-        let stamp = tokio::fs::read_to_string(rp_dir.join(".launcher_skin.sha1")).await?;
+        let new_stamp_path = paths.instance_dir("demo").join(".launcher_skin.sha1");
+        let stamp = tokio::fs::read_to_string(&new_stamp_path).await?;
         assert!(stamp.starts_with("v2:"));
         assert!(zip_path.exists());
+        assert!(!legacy_stamp.exists());
 
         // Write sentinel over zip; second sync with identical skin hash must NOT overwrite zip
         tokio::fs::write(&zip_path, b"SENTINEL_ZIP").await?;

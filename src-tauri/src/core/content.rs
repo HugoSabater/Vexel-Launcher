@@ -3,12 +3,19 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
+use sha1::{Digest, Sha1};
 
 use crate::core::downloader::{verify_and_download_all, DownloadArtifact, DownloadProgress};
 use crate::core::instance::validate_profile_id;
 use crate::core::paths::LauncherPaths;
 use crate::error::{AppError, AppResult};
+
+const MAX_CONTENT_ICON_BYTES: usize = 256 * 1024;
+const MAX_FABRIC_MOD_JSON_BYTES: u64 = 1024 * 1024;
+const PNG_MAGIC: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+const MODRINTH_CDN_PREFIX: &str = "https://cdn.modrinth.com/";
 
 pub const FPS_PURE_STACK_MODS: &[(&str, &str)] = &[
     ("sodium", "Sodium"),
@@ -58,6 +65,8 @@ pub struct ContentItem {
     pub slug: Option<String>,
     #[serde(default)]
     pub project_id: Option<String>,
+    #[serde(default)]
+    pub icon_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -82,6 +91,88 @@ pub struct ContentIndexEntry {
     pub version: Option<String>,
     #[serde(default)]
     pub cached_size: u64,
+    #[serde(default)]
+    pub icon_url: Option<String>,
+    #[serde(default)]
+    pub icon_cache_file: Option<String>,
+    #[serde(default)]
+    pub icon_checked: bool,
+}
+
+#[must_use]
+fn sanitize_modrinth_icon_url(raw: Option<String>) -> Option<String> {
+    raw.and_then(|u| {
+        let trimmed = u.trim();
+        if trimmed.starts_with(MODRINTH_CDN_PREFIX) {
+            Some(trimmed.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+#[must_use]
+fn icon_cache_filename(kind: ContentKind, file_name: &str) -> String {
+    let kind_tag = match kind {
+        ContentKind::Mod => "mod",
+        ContentKind::ResourcePack => "rp",
+        ContentKind::Shader => "shader",
+    };
+    let base = file_name.strip_suffix(".disabled").unwrap_or(file_name);
+    let mut hasher = Sha1::new();
+    hasher.update(format!("{kind_tag}:{base}").as_bytes());
+    format!("{}.png", hex::encode(hasher.finalize()))
+}
+
+#[must_use]
+fn encode_png_data_url(bytes: &[u8]) -> String {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    format!("data:image/png;base64,{encoded}")
+}
+
+fn is_valid_png_bytes(bytes: &[u8]) -> bool {
+    bytes.len() >= 8
+        && bytes.len() <= MAX_CONTENT_ICON_BYTES
+        && bytes.get(..8) == Some(PNG_MAGIC.as_slice())
+}
+
+fn read_cached_icon_data_url_blocking(icons_dir: &Path, cache_file: &str) -> Option<String> {
+    if cache_file.is_empty()
+        || cache_file.contains("..")
+        || cache_file.contains('/')
+        || cache_file.contains('\\')
+    {
+        return None;
+    }
+    let path = icons_dir.join(cache_file);
+    let file = File::open(path).ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() < 8 || meta.len() as usize > MAX_CONTENT_ICON_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take((MAX_CONTENT_ICON_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if !is_valid_png_bytes(&bytes) {
+        return None;
+    }
+    Some(encode_png_data_url(&bytes))
+}
+
+fn write_cached_icon_blocking(icons_dir: &Path, cache_file: &str, bytes: &[u8]) -> Option<String> {
+    if !is_valid_png_bytes(bytes) {
+        return None;
+    }
+    std::fs::create_dir_all(icons_dir).ok()?;
+    let target = icons_dir.join(cache_file);
+    let tmp = icons_dir.join(format!("{cache_file}.tmp"));
+    std::fs::write(&tmp, bytes).ok()?;
+    if std::fs::rename(&tmp, &target).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::write(&target, bytes).ok()?;
+    }
+    Some(cache_file.to_string())
 }
 
 impl InstanceContentIndex {
@@ -109,12 +200,17 @@ impl InstanceContentIndex {
             .find(|e| e.kind == kind && e.file_name == file_name)
     }
 
-    pub fn upsert(&mut self, entry: ContentIndexEntry) {
+    pub fn upsert(&mut self, mut entry: ContentIndexEntry) {
+        entry.icon_url = sanitize_modrinth_icon_url(entry.icon_url);
         if let Some(existing) = self
             .entries
             .iter_mut()
             .find(|e| e.kind == entry.kind && e.file_name == entry.file_name)
         {
+            let size_changed = entry.cached_size > 0
+                && existing.cached_size > 0
+                && existing.cached_size != entry.cached_size;
+
             if entry.project_id.is_some() {
                 existing.project_id = entry.project_id;
             }
@@ -133,9 +229,28 @@ impl InstanceContentIndex {
             if entry.cached_size > 0 {
                 existing.cached_size = entry.cached_size;
             }
+            if entry.icon_url.is_some() {
+                existing.icon_url = entry.icon_url;
+            }
+            if entry.icon_cache_file.is_some() {
+                existing.icon_cache_file = entry.icon_cache_file;
+            } else if size_changed && entry.icon_checked {
+                existing.icon_cache_file = None;
+            }
+            if entry.icon_checked {
+                existing.icon_checked = true;
+            } else if size_changed {
+                existing.icon_checked = false;
+            }
         } else {
             self.entries.push(entry);
         }
+    }
+
+    pub fn is_icon_cache_referenced(&self, cache_file: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|e| e.icon_cache_file.as_deref() == Some(cache_file))
     }
 
     pub fn rename_file(&mut self, kind: ContentKind, old_name: &str, new_name: &str) -> bool {
@@ -212,27 +327,110 @@ struct FabricModJson {
     id: Option<String>,
     name: Option<String>,
     version: Option<String>,
+    #[serde(default)]
+    icon: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone)]
-struct JarModMetadata {
+#[derive(Debug, Clone, Default)]
+struct ArchiveInspection {
     mod_id: Option<String>,
     display_name: Option<String>,
     version: Option<String>,
+    icon_png: Option<Vec<u8>>,
 }
 
-fn read_fabric_mod_meta_blocking(jar_path: &Path) -> Option<JarModMetadata> {
-    let file = File::open(jar_path).ok()?;
-    let mut archive = zip::ZipArchive::new(file).ok()?;
-    let mut entry = archive.by_name("fabric.mod.json").ok()?;
-    let mut raw = String::new();
-    entry.read_to_string(&mut raw).ok()?;
-    let parsed: FabricModJson = serde_json::from_str(&raw).ok()?;
-    Some(JarModMetadata {
-        mod_id: parsed.id.filter(|s| !s.trim().is_empty()),
-        display_name: parsed.name.filter(|s| !s.trim().is_empty()),
-        version: parsed.version.filter(|s| !s.trim().is_empty()),
-    })
+fn normalize_zip_entry_path(raw: &str) -> Option<String> {
+    let normalized = raw.trim().replace('\\', "/");
+    let stripped = normalized.trim_start_matches('/');
+    if stripped.is_empty() || stripped.split('/').any(|seg| seg == "..") {
+        return None;
+    }
+    Some(stripped.to_string())
+}
+
+#[must_use]
+fn select_fabric_icon_path(icon: &serde_json::Value) -> Option<String> {
+    match icon {
+        serde_json::Value::String(path) => normalize_zip_entry_path(path),
+        serde_json::Value::Object(map) => {
+            let mut best: Option<((u32, u32), String)> = None;
+            for (size_key, val) in map {
+                let Some(path_str) = val.as_str() else {
+                    continue;
+                };
+                let Some(clean_path) = normalize_zip_entry_path(path_str) else {
+                    continue;
+                };
+                let rank = match size_key.trim().parse::<u32>() {
+                    Ok(sz) if (64..=128).contains(&sz) => (0_u32, sz.abs_diff(96)),
+                    Ok(sz) => (1_u32, sz.abs_diff(64).min(sz.abs_diff(128))),
+                    Err(_) => (2_u32, u32::MAX),
+                };
+                if best.as_ref().is_none_or(|(prev_rank, _)| rank < *prev_rank) {
+                    best = Some((rank, clean_path));
+                }
+            }
+            best.map(|(_, p)| p)
+        }
+        _ => None,
+    }
+}
+
+fn extract_valid_png_from_zip(archive: &mut zip::ZipArchive<File>, entry_path: &str) -> Option<Vec<u8>> {
+    let entry = archive.by_name(entry_path).ok()?;
+    let mut bytes = Vec::new();
+    entry
+        .take((MAX_CONTENT_ICON_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if !is_valid_png_bytes(&bytes) {
+        return None;
+    }
+    Some(bytes)
+}
+
+fn inspect_archive_blocking(archive_path: &Path, kind: ContentKind) -> ArchiveInspection {
+    let Ok(file) = File::open(archive_path) else {
+        return ArchiveInspection::default();
+    };
+    let Ok(mut archive) = zip::ZipArchive::new(file) else {
+        return ArchiveInspection::default();
+    };
+
+    match kind {
+        ContentKind::Mod => {
+            let mut out = ArchiveInspection::default();
+            let icon_path = {
+                let Ok(entry) = archive.by_name("fabric.mod.json") else {
+                    return out;
+                };
+                let mut raw = String::new();
+                if entry
+                    .take(MAX_FABRIC_MOD_JSON_BYTES)
+                    .read_to_string(&mut raw)
+                    .is_err()
+                {
+                    return out;
+                }
+                let Ok(parsed) = serde_json::from_str::<FabricModJson>(&raw) else {
+                    return out;
+                };
+                out.mod_id = parsed.id.filter(|s| !s.trim().is_empty());
+                out.display_name = parsed.name.filter(|s| !s.trim().is_empty());
+                out.version = parsed.version.filter(|s| !s.trim().is_empty());
+                parsed.icon.as_ref().and_then(select_fabric_icon_path)
+            };
+
+            if let Some(ref rel_icon) = icon_path {
+                out.icon_png = extract_valid_png_from_zip(&mut archive, rel_icon);
+            }
+            out
+        }
+        ContentKind::ResourcePack | ContentKind::Shader => ArchiveInspection {
+            icon_png: extract_valid_png_from_zip(&mut archive, "pack.png"),
+            ..ArchiveInspection::default()
+        },
+    }
 }
 
 struct CuratedLabelEntry {
@@ -514,6 +712,7 @@ fn parse_content_entry(
     kind: ContentKind,
     size_bytes: u64,
     indexed: Option<&ContentIndexEntry>,
+    resolved_icon_url: Option<String>,
 ) -> Option<ContentItem> {
     let active_ext = match kind {
         ContentKind::Mod => ".jar",
@@ -537,6 +736,8 @@ fn parse_content_entry(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| stem.to_string());
 
+    let fallback_modrinth = indexed.and_then(|e| sanitize_modrinth_icon_url(e.icon_url.clone()));
+
     Some(ContentItem {
         file_name: file_name.to_string(),
         display_name,
@@ -547,17 +748,35 @@ fn parse_content_entry(
         mod_id: indexed.and_then(|e| e.mod_id.clone()),
         slug: indexed.and_then(|e| e.slug.clone()),
         project_id: indexed.and_then(|e| e.project_id.clone()),
+        icon_url: resolved_icon_url.or(fallback_modrinth),
     })
 }
 
-pub async fn list_instance_content(
+async fn remove_orphan_icon_file(icons_dir: &Path, index: &InstanceContentIndex, cache_file: &str) {
+    if cache_file.is_empty()
+        || cache_file.contains("..")
+        || cache_file.contains('/')
+        || cache_file.contains('\\')
+        || index.is_icon_cache_referenced(cache_file)
+    {
+        return;
+    }
+    let path = icons_dir.join(cache_file);
+    if tokio::fs::try_exists(&path).await.unwrap_or(false) {
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+}
+
+async fn list_instance_content_internal(
     paths: &LauncherPaths,
     profile_id: &str,
     kind: ContentKind,
+    include_icons: bool,
 ) -> AppResult<Vec<ContentItem>> {
     validate_profile_id(profile_id)?;
     paths.ensure_instance_dirs(profile_id).await?;
     let dir = content_dir(paths, profile_id, kind);
+    let icons_dir = paths.instance_content_icons_dir(profile_id);
     let index_path = paths.instance_content_index_path(profile_id);
     let mut index = InstanceContentIndex::load(&index_path).await;
     let mut index_dirty = false;
@@ -578,59 +797,106 @@ pub async fn list_instance_content(
         }
     }
 
-    // Prune stale index entries for files deleted externally on disk
+    // Prune stale index entries for files deleted externally on disk and clean orphan icons
+    let removed_cache_files: Vec<String> = index
+        .entries
+        .iter()
+        .filter(|e| e.kind == kind && !present_names.contains(&e.file_name))
+        .filter_map(|e| e.icon_cache_file.clone())
+        .collect();
+
     let before_len = index.entries.len();
     index
         .entries
         .retain(|e| e.kind != kind || present_names.contains(&e.file_name));
     if index.entries.len() != before_len {
         index_dirty = true;
+        for cache_file in removed_cache_files {
+            remove_orphan_icon_file(&icons_dir, &index, &cache_file).await;
+        }
     }
 
-    // Batch-read fabric.mod.json only for uncached or resized .jar files
-    if kind == ContentKind::Mod {
-        let to_inspect: Vec<(String, PathBuf, u64)> = raw_files
-            .iter()
-            .filter_map(|(name, size)| {
-                let cached_ok = index
-                    .find_by_file(kind, name)
-                    .is_some_and(|e| e.cached_size == *size && (e.mod_id.is_some() || e.display_name.is_some()));
-                if cached_ok {
-                    None
+    // Batch-inspect new, resized, or un-checked archives inside a single spawn_blocking call
+    let mut to_inspect: Vec<(String, PathBuf, u64)> = Vec::new();
+    for (name, size) in &raw_files {
+        let needs_inspect = match index.find_by_file(kind, name) {
+            None => true,
+            Some(entry) => {
+                let size_mismatch = entry.cached_size != *size;
+                let missing_mod_meta = kind == ContentKind::Mod
+                    && entry.mod_id.is_none()
+                    && entry.display_name.is_none()
+                    && !entry.icon_checked;
+                let missing_cached_png = if let Some(ref cache_file) = entry.icon_cache_file {
+                    !tokio::fs::try_exists(icons_dir.join(cache_file))
+                        .await
+                        .unwrap_or(false)
                 } else {
-                    Some((name.clone(), dir.join(name), *size))
-                }
-            })
-            .collect();
-
-        if !to_inspect.is_empty() {
-            let scanned = tokio::task::spawn_blocking(move || {
-                to_inspect
-                    .into_iter()
-                    .map(|(name, path, size)| {
-                        let meta = read_fabric_mod_meta_blocking(&path);
-                        (name, size, meta)
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .await
-            .map_err(|err| AppError::ContentError(format!("JAR metadata scan failed: {err}")))?;
-
-            for (name, size, meta_opt) in scanned {
-                if let Some(meta) = meta_opt {
-                    index.upsert(ContentIndexEntry {
-                        kind: ContentKind::Mod,
-                        file_name: name,
-                        project_id: None,
-                        slug: None,
-                        mod_id: meta.mod_id,
-                        display_name: meta.display_name,
-                        version: meta.version,
-                        cached_size: size,
-                    });
-                    index_dirty = true;
-                }
+                    false
+                };
+                size_mismatch || !entry.icon_checked || missing_mod_meta || missing_cached_png
             }
+        };
+        if needs_inspect {
+            to_inspect.push((name.clone(), dir.join(name), *size));
+        }
+    }
+
+    let mut resolved_icon_urls: HashMap<String, String> = HashMap::new();
+
+    if !to_inspect.is_empty() {
+        let icons_dir_clone = icons_dir.clone();
+        let scanned = tokio::task::spawn_blocking(move || {
+            to_inspect
+                .into_iter()
+                .map(|(name, path, size)| {
+                    let info = inspect_archive_blocking(&path, kind);
+                    let (cache_file, data_url) = if let Some(png_bytes) = info.icon_png {
+                        let target_name = icon_cache_filename(kind, &name);
+                        let saved =
+                            write_cached_icon_blocking(&icons_dir_clone, &target_name, &png_bytes);
+                        let encoded = if include_icons {
+                            Some(encode_png_data_url(&png_bytes))
+                        } else {
+                            None
+                        };
+                        (saved, encoded)
+                    } else {
+                        (None, None)
+                    };
+                    (
+                        name,
+                        size,
+                        info.mod_id,
+                        info.display_name,
+                        info.version,
+                        cache_file,
+                        data_url,
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .await
+        .map_err(|err| AppError::ContentError(format!("Archive metadata/icon scan failed: {err}")))?;
+
+        for (name, size, mod_id, display_name, version, cache_file, data_url) in scanned {
+            if let Some(url) = data_url {
+                resolved_icon_urls.insert(name.clone(), url);
+            }
+            index.upsert(ContentIndexEntry {
+                kind,
+                file_name: name,
+                project_id: None,
+                slug: None,
+                mod_id,
+                display_name,
+                version,
+                cached_size: size,
+                icon_url: None,
+                icon_cache_file: cache_file,
+                icon_checked: true,
+            });
+            index_dirty = true;
         }
     }
 
@@ -638,16 +904,59 @@ pub async fn list_instance_content(
         let _ = index.save_atomic(&index_path).await;
     }
 
+    // Batch-load already cached local PNG thumbnails for UI rendering
+    if include_icons {
+        let pending_icon_reads: Vec<(String, String)> = raw_files
+            .iter()
+            .filter(|(name, _)| !resolved_icon_urls.contains_key(name))
+            .filter_map(|(name, _)| {
+                let cache_file = index
+                    .find_by_file(kind, name)
+                    .and_then(|e| e.icon_cache_file.clone())?;
+                Some((name.clone(), cache_file))
+            })
+            .collect();
+
+        if !pending_icon_reads.is_empty() {
+            let icons_dir_clone = icons_dir.clone();
+            let loaded = tokio::task::spawn_blocking(move || {
+                pending_icon_reads
+                    .into_iter()
+                    .filter_map(|(name, cache_file)| {
+                        let url =
+                            read_cached_icon_data_url_blocking(&icons_dir_clone, &cache_file)?;
+                        Some((name, url))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .map_err(|err| AppError::ContentError(format!("Icon cache read failed: {err}")))?;
+
+            for (name, url) in loaded {
+                resolved_icon_urls.insert(name, url);
+            }
+        }
+    }
+
     let mut items: Vec<ContentItem> = raw_files
         .into_iter()
         .filter_map(|(name, size)| {
             let indexed = index.find_by_file(kind, &name);
-            parse_content_entry(&name, kind, size, indexed)
+            let local_icon = resolved_icon_urls.remove(&name);
+            parse_content_entry(&name, kind, size, indexed, local_icon)
         })
         .collect();
 
     items.sort_by_key(|a| a.display_name.to_lowercase());
     Ok(items)
+}
+
+pub async fn list_instance_content(
+    paths: &LauncherPaths,
+    profile_id: &str,
+    kind: ContentKind,
+) -> AppResult<Vec<ContentItem>> {
+    list_instance_content_internal(paths, profile_id, kind, true).await
 }
 
 pub async fn toggle_content_item(
@@ -684,7 +993,7 @@ pub async fn toggle_content_item(
         tokio::fs::rename(&src_path, &dst_path).await?;
     }
 
-    // Keep .content_index.json synchronized across .disabled renames
+    // Keep .content_index.json synchronized across .disabled renames (preserves icon_url, icon_cache_file & icon_checked)
     let index_path = paths.instance_content_index_path(profile_id);
     let mut index = InstanceContentIndex::load(&index_path).await;
     if src_path != dst_path && index.rename_file(kind, file_name, &target_name) {
@@ -693,7 +1002,19 @@ pub async fn toggle_content_item(
 
     let meta = tokio::fs::metadata(&dst_path).await?;
     let indexed = index.find_by_file(kind, &target_name);
-    parse_content_entry(&target_name, kind, meta.len(), indexed).ok_or_else(|| {
+    let local_icon = if let Some(cache_file) = indexed.and_then(|e| e.icon_cache_file.clone()) {
+        let icons_dir = paths.instance_content_icons_dir(profile_id);
+        tokio::task::spawn_blocking(move || {
+            read_cached_icon_data_url_blocking(&icons_dir, &cache_file)
+        })
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+
+    parse_content_entry(&target_name, kind, meta.len(), indexed, local_icon).ok_or_else(|| {
         AppError::ContentError(format!("Unsupported content extension for '{target_name}'"))
     })
 }
@@ -719,8 +1040,16 @@ pub async fn delete_content_item(
 
     let index_path = paths.instance_content_index_path(profile_id);
     let mut index = InstanceContentIndex::load(&index_path).await;
+    let cached_icon = index
+        .find_by_file(kind, file_name)
+        .and_then(|e| e.icon_cache_file.clone());
+
     if index.remove_file(kind, file_name) {
         let _ = index.save_atomic(&index_path).await;
+    }
+    if let Some(cache_file) = cached_icon {
+        let icons_dir = paths.instance_content_icons_dir(profile_id);
+        remove_orphan_icon_file(&icons_dir, &index, &cache_file).await;
     }
 
     Ok(())
@@ -736,31 +1065,47 @@ async fn finalize_imported_item(
     let meta = tokio::fs::metadata(dst_path).await?;
     let size = meta.len();
     let index_path = paths.instance_content_index_path(profile_id);
+    let icons_dir = paths.instance_content_icons_dir(profile_id);
     let mut index = InstanceContentIndex::load(&index_path).await;
 
-    if kind == ContentKind::Mod {
-        let p_clone = dst_path.to_path_buf();
-        let jar_meta = tokio::task::spawn_blocking(move || read_fabric_mod_meta_blocking(&p_clone))
-            .await
-            .ok()
-            .flatten();
-        if let Some(jm) = jar_meta {
-            index.upsert(ContentIndexEntry {
-                kind,
-                file_name: file_name.to_string(),
-                project_id: None,
-                slug: None,
-                mod_id: jm.mod_id,
-                display_name: jm.display_name,
-                version: jm.version,
-                cached_size: size,
-            });
-            let _ = index.save_atomic(&index_path).await;
-        }
+    let p_clone = dst_path.to_path_buf();
+    let icons_dir_clone = icons_dir.clone();
+    let file_name_owned = file_name.to_string();
+    let scanned = tokio::task::spawn_blocking(move || {
+        let info = inspect_archive_blocking(&p_clone, kind);
+        let (cache_file, data_url) = if let Some(png_bytes) = info.icon_png {
+            let target_name = icon_cache_filename(kind, &file_name_owned);
+            let saved = write_cached_icon_blocking(&icons_dir_clone, &target_name, &png_bytes);
+            (saved, Some(encode_png_data_url(&png_bytes)))
+        } else {
+            (None, None)
+        };
+        (info.mod_id, info.display_name, info.version, cache_file, data_url)
+    })
+    .await
+    .ok();
+
+    let mut local_icon = None;
+    if let Some((mod_id, display_name, version, cache_file, data_url)) = scanned {
+        local_icon = data_url;
+        index.upsert(ContentIndexEntry {
+            kind,
+            file_name: file_name.to_string(),
+            project_id: None,
+            slug: None,
+            mod_id,
+            display_name,
+            version,
+            cached_size: size,
+            icon_url: None,
+            icon_cache_file: cache_file,
+            icon_checked: true,
+        });
+        let _ = index.save_atomic(&index_path).await;
     }
 
     let indexed = index.find_by_file(kind, file_name);
-    parse_content_entry(file_name, kind, size, indexed).ok_or_else(|| {
+    parse_content_entry(file_name, kind, size, indexed, local_icon).ok_or_else(|| {
         AppError::ContentError(format!("Failed to parse imported item '{file_name}'"))
     })
 }
@@ -934,7 +1279,7 @@ pub async fn search_modrinth_catalog(
     offset: u32,
     sort: Option<&str>,
 ) -> AppResult<Vec<ModrinthSearchResult>> {
-    let installed_items = list_instance_content(paths, profile_id, kind).await?;
+    let installed_items = list_instance_content_internal(paths, profile_id, kind, false).await?;
     let clean_query = normalize_modrinth_query(query);
     let sort_index = normalize_modrinth_sort(sort, "relevance");
     let offset_str = offset.to_string();
@@ -1067,7 +1412,7 @@ pub async fn get_dynamic_recommendations(
     offset: u32,
     sort: Option<&str>,
 ) -> AppResult<Vec<ModrinthSearchResult>> {
-    let installed_items = list_instance_content(paths, profile_id, kind).await?;
+    let installed_items = list_instance_content_internal(paths, profile_id, kind, false).await?;
     let sort_index = normalize_modrinth_sort(sort, "downloads");
     let offset_str = offset.to_string();
 
@@ -1193,6 +1538,53 @@ async fn fetch_modrinth_project_versions(
     }
 
     Ok(Vec::new())
+}
+
+#[derive(Debug, Deserialize)]
+struct ModrinthBatchProject {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    icon_url: Option<String>,
+}
+
+/// Best-effort single batch lookup for Modrinth project icons (`https://cdn.modrinth.com/` only).
+/// Skips the network call entirely when `project_ids` is empty and never fails the installation.
+async fn fetch_modrinth_project_icons_batch(
+    client: &reqwest::Client,
+    project_ids: &[String],
+) -> HashMap<String, String> {
+    if project_ids.is_empty() {
+        return HashMap::new();
+    }
+    let Ok(ids_json) = serde_json::to_string(project_ids) else {
+        return HashMap::new();
+    };
+    let Ok(resp) = client
+        .get("https://api.modrinth.com/v2/projects")
+        .query(&[("ids", ids_json.as_str())])
+        .send()
+        .await
+    else {
+        return HashMap::new();
+    };
+    if !resp.status().is_success() {
+        return HashMap::new();
+    }
+    let Ok(projects) = resp.json::<Vec<ModrinthBatchProject>>().await else {
+        return HashMap::new();
+    };
+
+    let mut map = HashMap::new();
+    for proj in projects {
+        if proj.id.is_empty() {
+            continue;
+        }
+        if let Some(valid_url) = sanitize_modrinth_icon_url(proj.icon_url) {
+            map.insert(proj.id, valid_url);
+        }
+    }
+    map
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1347,6 +1739,9 @@ where
                 version: (!version.version_number.is_empty())
                     .then_some(version.version_number.clone()),
                 cached_size: file.size,
+                icon_url: None,
+                icon_cache_file: None,
+                icon_checked: false,
             },
             old_files,
         ));
@@ -1371,14 +1766,42 @@ where
     // Download & verify first — only delete older versions AFTER download succeeds
     verify_and_download_all(client, artifacts, &paths.integrity_index_path(), on_progress).await?;
 
-    for (entry, old_files) in pending_updates {
+    // Single best-effort batch lookup for Modrinth project icons (skips if no project IDs)
+    let mut batch_ids: Vec<String> = Vec::new();
+    let mut seen_batch_ids: HashSet<String> = HashSet::new();
+    for (entry, _) in &pending_updates {
+        if let Some(pid) = entry.project_id.as_deref().filter(|s| !s.is_empty()) {
+            let already_has_icon = index
+                .find_by_file(kind, &entry.file_name)
+                .and_then(|e| e.icon_url.as_deref())
+                .is_some_and(|u| u.starts_with(MODRINTH_CDN_PREFIX));
+            if !already_has_icon && seen_batch_ids.insert(pid.to_string()) {
+                batch_ids.push(pid.to_string());
+            }
+        }
+    }
+    let project_icons = fetch_modrinth_project_icons_batch(client, &batch_ids).await;
+    let icons_dir = paths.instance_content_icons_dir(profile_id);
+
+    for (mut entry, old_files) in pending_updates {
+        if let Some(pid) = entry.project_id.as_deref() {
+            if let Some(url) = project_icons.get(pid) {
+                entry.icon_url = Some(url.clone());
+            }
+        }
         for old_name in old_files {
             if old_name != entry.file_name {
                 let old_path = target_dir.join(&old_name);
                 if tokio::fs::try_exists(&old_path).await.unwrap_or(false) {
                     let _ = tokio::fs::remove_file(&old_path).await;
                 }
+                let old_icon = index
+                    .find_by_file(kind, &old_name)
+                    .and_then(|e| e.icon_cache_file.clone());
                 index.remove_file(kind, &old_name);
+                if let Some(cache_file) = old_icon {
+                    remove_orphan_icon_file(&icons_dir, &index, &cache_file).await;
+                }
             }
         }
         index.upsert(entry);
@@ -1551,6 +1974,7 @@ mod tests {
                 mod_id: Some("sodium-extra".to_string()),
                 slug: Some("sodium-extra".to_string()),
                 project_id: Some("PtjYWJkn".to_string()),
+                icon_url: None,
             },
             ContentItem {
                 file_name: "c2me-0.3.0-alpha.jar".to_string(),
@@ -1562,6 +1986,7 @@ mod tests {
                 mod_id: Some("c2me".to_string()),
                 slug: None,
                 project_id: None,
+                icon_url: None,
             },
         ];
 
@@ -1616,6 +2041,9 @@ mod tests {
             display_name: Some("OptiFine".to_string()),
             version: None,
             cached_size: 100,
+            icon_url: None,
+            icon_cache_file: None,
+            icon_checked: false,
         });
         idx.upsert(ContentIndexEntry {
             kind: ContentKind::Mod,
@@ -1626,6 +2054,9 @@ mod tests {
             display_name: Some("Active Conflict".to_string()),
             version: None,
             cached_size: 100,
+            icon_url: None,
+            icon_cache_file: None,
+            icon_checked: false,
         });
 
         let active_map: HashMap<String, String> = idx.active_project_map(ContentKind::Mod);
@@ -1694,6 +2125,9 @@ mod tests {
             display_name: Some("BSL Shaders".to_string()),
             version: Some("8.2".to_string()),
             cached_size: 8,
+            icon_url: Some("https://cdn.modrinth.com/data/Q1vvjJYV/icon.png".to_string()),
+            icon_cache_file: None,
+            icon_checked: true,
         });
         idx.save_atomic(&index_path).await?;
 
@@ -1702,6 +2136,10 @@ mod tests {
         assert_eq!(disabled.file_name, "bsl.zip.disabled");
         assert_eq!(disabled.project_id.as_deref(), Some("Q1vvjJYV"));
         assert_eq!(disabled.slug.as_deref(), Some("bsl-shaders"));
+        assert_eq!(
+            disabled.icon_url.as_deref(),
+            Some("https://cdn.modrinth.com/data/Q1vvjJYV/icon.png")
+        );
 
         delete_content_item(&paths, "test-prof", ContentKind::Shader, "bsl.zip.disabled").await?;
         let reloaded = InstanceContentIndex::load(&index_path).await;
@@ -1741,11 +2179,157 @@ mod tests {
         assert_eq!(items[0].display_name, "Sodium");
         assert_eq!(items[0].mod_id.as_deref(), Some("sodium"));
         assert_eq!(items[0].version.as_deref(), Some("0.6.5+mc1.21.4"));
+        assert_eq!(items[0].icon_url, None);
 
         let cached_idx =
             InstanceContentIndex::load(&paths.instance_content_index_path("fabric-test")).await;
         assert_eq!(cached_idx.entries.len(), 1);
         assert_eq!(cached_idx.entries[0].mod_id.as_deref(), Some("sodium"));
+        assert!(cached_idx.entries[0].icon_checked);
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_extract_fabric_icons_string_and_map_and_resource_pack_png()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "mc-launcher-icons-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let paths = LauncherPaths::with_root(tmp.clone());
+        paths.ensure_instance_dirs("icons-prof").await?;
+
+        let png_a: &[u8] = b"\x89PNG\r\n\x1a\nICON_STRING_BYTES";
+        let png_b64: &[u8] = b"\x89PNG\r\n\x1a\nICON_MAP_64_BYTES";
+        let png_b16: &[u8] = b"\x89PNG\r\n\x1a\nICON_MAP_16_BYTES";
+        let png_rp: &[u8] = b"\x89PNG\r\n\x1a\nRESOURCE_PACK_PNG";
+
+        // 1. Mod with string icon (including leading slash)
+        let mod_str_jar = paths.instance_mods_dir("icons-prof").join("mod-str.jar");
+        {
+            let file = std::fs::File::create(&mod_str_jar)?;
+            let mut w = zip::ZipWriter::new(file);
+            w.start_file("fabric.mod.json", SimpleFileOptions::default())?;
+            w.write_all(
+                br#"{"schemaVersion":1,"id":"modstr","name":"Mod String","version":"1.0","icon":"/assets/modstr/icon.png"}"#,
+            )?;
+            w.start_file("assets/modstr/icon.png", SimpleFileOptions::default())?;
+            w.write_all(png_a)?;
+            w.finish()?;
+        }
+
+        // 2. Mod with map icon ({"16": ..., "64": ..., "512": ...}) — must choose 64 (closest to 64..128)
+        let mod_map_jar = paths.instance_mods_dir("icons-prof").join("mod-map.jar");
+        {
+            let file = std::fs::File::create(&mod_map_jar)?;
+            let mut w = zip::ZipWriter::new(file);
+            w.start_file("fabric.mod.json", SimpleFileOptions::default())?;
+            w.write_all(
+                br#"{"schemaVersion":1,"id":"modmap","name":"Mod Map","version":"2.0","icon":{"16":"assets/modmap/16.png","64":"assets/modmap/64.png","512":"assets/modmap/512.png"}}"#,
+            )?;
+            w.start_file("assets/modmap/16.png", SimpleFileOptions::default())?;
+            w.write_all(png_b16)?;
+            w.start_file("assets/modmap/64.png", SimpleFileOptions::default())?;
+            w.write_all(png_b64)?;
+            w.finish()?;
+        }
+
+        // 3. Resource pack with pack.png at ZIP root
+        let rp_zip = paths
+            .instance_resourcepacks_dir("icons-prof")
+            .join("faithful.zip");
+        {
+            let file = std::fs::File::create(&rp_zip)?;
+            let mut w = zip::ZipWriter::new(file);
+            w.start_file("pack.png", SimpleFileOptions::default())?;
+            w.write_all(png_rp)?;
+            w.finish()?;
+        }
+
+        let mods = super::list_instance_content(&paths, "icons-prof", ContentKind::Mod).await?;
+        assert_eq!(mods.len(), 2);
+
+        let mod_map = mods
+            .iter()
+            .find(|m| m.mod_id.as_deref() == Some("modmap"))
+            .ok_or("modmap missing")?;
+        let mod_str = mods
+            .iter()
+            .find(|m| m.mod_id.as_deref() == Some("modstr"))
+            .ok_or("modstr missing")?;
+
+        assert_eq!(
+            mod_str.icon_url.as_deref(),
+            Some(super::encode_png_data_url(png_a).as_str())
+        );
+        assert_eq!(
+            mod_map.icon_url.as_deref(),
+            Some(super::encode_png_data_url(png_b64).as_str())
+        );
+
+        let packs =
+            super::list_instance_content(&paths, "icons-prof", ContentKind::ResourcePack).await?;
+        assert_eq!(packs.len(), 1);
+        assert_eq!(
+            packs[0].icon_url.as_deref(),
+            Some(super::encode_png_data_url(png_rp).as_str())
+        );
+
+        // Verify .content_index.json NEVER stores base64 and preserves cache on toggle & deletes PNG on remove
+        let raw_idx =
+            tokio::fs::read_to_string(paths.instance_content_index_path("icons-prof")).await?;
+        assert!(!raw_idx.contains("data:image/png;base64,"));
+
+        let idx =
+            InstanceContentIndex::load(&paths.instance_content_index_path("icons-prof")).await;
+        let rp_cache_file = idx
+            .find_by_file(ContentKind::ResourcePack, "faithful.zip")
+            .and_then(|e| e.icon_cache_file.clone())
+            .ok_or("expected cached rp icon")?;
+        let rp_cache_path = paths.instance_content_icons_dir("icons-prof").join(&rp_cache_file);
+        assert!(rp_cache_path.exists());
+
+        let toggled = toggle_content_item(
+            &paths,
+            "icons-prof",
+            ContentKind::ResourcePack,
+            "faithful.zip",
+            false,
+        )
+        .await?;
+        assert_eq!(
+            toggled.icon_url.as_deref(),
+            Some(super::encode_png_data_url(png_rp).as_str())
+        );
+        assert!(rp_cache_path.exists());
+
+        delete_content_item(
+            &paths,
+            "icons-prof",
+            ContentKind::ResourcePack,
+            "faithful.zip.disabled",
+        )
+        .await?;
+        assert!(!rp_cache_path.exists());
+
+        // Verify Modrinth URL allowlist aligns strictly with CSP
+        assert!(super::sanitize_modrinth_icon_url(Some(
+            "https://cdn.modrinth.com/data/abc/icon.png".to_string()
+        ))
+        .is_some());
+        assert!(super::sanitize_modrinth_icon_url(Some(
+            "https://evil.example/icon.png".to_string()
+        ))
+        .is_none());
+        assert!(super::sanitize_modrinth_icon_url(Some(
+            "data:image/png;base64,AAAA".to_string()
+        ))
+        .is_none());
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
         Ok(())

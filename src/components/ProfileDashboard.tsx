@@ -131,6 +131,24 @@ function getWorldModeBadge(world: WorldSummary): {
   }
 }
 
+function ModChipThumb({ iconUrl, alt }: { iconUrl?: string | null; alt: string }) {
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [iconUrl]);
+
+  if (!iconUrl || failed) return null;
+  return (
+    <img
+      src={iconUrl}
+      alt={alt}
+      onError={() => setFailed(true)}
+      className="h-4 w-4 rounded-[3px] object-cover bg-[#07090D] shrink-0"
+    />
+  );
+}
+
 export function ProfileDashboard({
   profile,
   config,
@@ -569,9 +587,13 @@ export function ProfileDashboard({
                 {activeMods.slice(0, 6).map((mod) => (
                   <span
                     key={mod.file_name}
-                    className="rounded-md bg-[#121722] border border-white/[0.06] px-2.5 py-1 text-[11px] font-mono text-slate-300 truncate max-w-[150px]"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-[#121722] border border-white/[0.06] px-2 py-1 text-[11px] font-mono text-slate-300 max-w-[165px]"
                   >
-                    {mod.display_name}
+                    <ModChipThumb
+                      iconUrl={mod.icon_url}
+                      alt={mod.display_name}
+                    />
+                    <span className="truncate">{mod.display_name}</span>
                   </span>
                 ))}
                 {activeMods.length > 6 && (

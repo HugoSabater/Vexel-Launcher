@@ -564,6 +564,206 @@ pub async fn terminate_process(_pid: u32) -> AppResult<()> {
     Ok(())
 }
 
+#[derive(Debug, Default)]
+pub struct Log4jStreamParser {
+    in_event: bool,
+    thread: String,
+    level: String,
+    in_message: bool,
+    message_buf: String,
+    in_throwable: bool,
+}
+
+impl Log4jStreamParser {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn is_error_level(level: &str) -> bool {
+        level.eq_ignore_ascii_case("ERROR") || level.eq_ignore_ascii_case("FATAL")
+    }
+
+    fn extract_attr(tag: &str, name: &str) -> Option<String> {
+        let double_needle = format!("{name}=\"");
+        if let Some((_, after)) = tag.split_once(&double_needle) {
+            if let Some((val, _)) = after.split_once('"') {
+                return Some(val.to_string());
+            }
+        }
+        let single_needle = format!("{name}='");
+        if let Some((_, after)) = tag.split_once(&single_needle) {
+            if let Some((val, _)) = after.split_once('\'') {
+                return Some(val.to_string());
+            }
+        }
+        None
+    }
+
+    fn flush_message(&mut self, out: &mut Vec<(String, bool)>) {
+        let thread = if self.thread.is_empty() {
+            "main"
+        } else {
+            self.thread.as_str()
+        };
+        let level = if self.level.is_empty() {
+            "INFO"
+        } else {
+            self.level.as_str()
+        };
+        let is_err = Self::is_error_level(level);
+        let cleaned = self.message_buf.trim_end_matches(['\r', '\n']);
+
+        if cleaned.is_empty() {
+            self.message_buf.clear();
+            return;
+        }
+
+        let mut lines_iter = cleaned.lines();
+        if let Some(first) = lines_iter.next() {
+            out.push((format!("[{thread}/{level}]: {first}"), is_err));
+            for cont in lines_iter {
+                out.push((cont.to_string(), is_err));
+            }
+        }
+        self.message_buf.clear();
+    }
+
+    /// Consumes a single stdout line and emits zero or more `(formatted_line, is_stderr)` pairs.
+    /// Plain non-XML lines pass through untouched.
+    pub fn feed_line(&mut self, raw_line: &str) -> Vec<(String, bool)> {
+        let line = raw_line.trim_end_matches('\r');
+        let mut out = Vec::new();
+
+        if !self.in_event
+            && !self.in_message
+            && !self.in_throwable
+            && !line.contains("<log4j:")
+            && !line.contains("</log4j:")
+        {
+            out.push((line.to_string(), false));
+            return out;
+        }
+
+        let mut rest = line;
+        for _ in 0..32 {
+            if rest.is_empty() {
+                break;
+            }
+
+            if self.in_throwable {
+                let close_split = rest
+                    .split_once("]]></log4j:Throwable>")
+                    .or_else(|| rest.split_once("</log4j:Throwable>"));
+                if let Some((before, after)) = close_split {
+                    let cleaned = before.trim_end_matches('\r');
+                    if !cleaned.trim().is_empty() {
+                        out.push((cleaned.to_string(), true));
+                    }
+                    self.in_throwable = false;
+                    rest = after;
+                    continue;
+                }
+                if !rest.trim().is_empty() {
+                    out.push((rest.to_string(), true));
+                }
+                break;
+            }
+
+            if self.in_message {
+                let close_split = rest
+                    .split_once("]]></log4j:Message>")
+                    .or_else(|| rest.split_once("</log4j:Message>"));
+                if let Some((before, after)) = close_split {
+                    if !self.message_buf.is_empty() {
+                        self.message_buf.push('\n');
+                    }
+                    self.message_buf.push_str(before);
+                    self.flush_message(&mut out);
+                    self.in_message = false;
+                    rest = after;
+                    continue;
+                }
+                if !self.message_buf.is_empty() {
+                    self.message_buf.push('\n');
+                }
+                self.message_buf.push_str(rest);
+                break;
+            }
+
+            // Find the earliest Log4j control tag in `rest`
+            let markers: [(&str, u8); 4] = [
+                ("<log4j:Event", 0),
+                ("<log4j:Message>", 1),
+                ("<log4j:Throwable>", 2),
+                ("</log4j:Event>", 3),
+            ];
+            let earliest = markers
+                .iter()
+                .filter_map(|&(pat, kind)| rest.find(pat).map(|pos| (pos, pat, kind)))
+                .min_by_key(|(pos, _, _)| *pos);
+
+            let Some((pos, pat, kind)) = earliest else {
+                if !self.in_event {
+                    let trimmed = rest.trim();
+                    if !trimmed.is_empty()
+                        && !trimmed.starts_with("</log4j:")
+                        && !trimmed.starts_with("<log4j:")
+                    {
+                        out.push((rest.to_string(), false));
+                    }
+                }
+                break;
+            };
+
+            let after_marker = match rest.get(pos..) {
+                Some(s) => s,
+                None => break,
+            };
+
+            match kind {
+                0 => {
+                    // <log4j:Event ...>
+                    if let Some((open_tag, after_gt)) = after_marker.split_once('>') {
+                        self.in_event = true;
+                        self.thread =
+                            Self::extract_attr(open_tag, "thread").unwrap_or_else(|| "main".to_string());
+                        self.level =
+                            Self::extract_attr(open_tag, "level").unwrap_or_else(|| "INFO".to_string());
+                        rest = after_gt;
+                    } else {
+                        break;
+                    }
+                }
+                1 => {
+                    // <log4j:Message>
+                    let body = after_marker.strip_prefix(pat).unwrap_or("");
+                    let body = body.strip_prefix("<![CDATA[").unwrap_or(body);
+                    self.in_message = true;
+                    self.message_buf.clear();
+                    rest = body;
+                }
+                2 => {
+                    // <log4j:Throwable>
+                    let body = after_marker.strip_prefix(pat).unwrap_or("");
+                    let body = body.strip_prefix("<![CDATA[").unwrap_or(body);
+                    self.in_throwable = true;
+                    rest = body;
+                }
+                _ => {
+                    // </log4j:Event>
+                    self.in_event = false;
+                    self.thread.clear();
+                    self.level.clear();
+                    rest = after_marker.strip_prefix(pat).unwrap_or("");
+                }
+            }
+        }
+
+        out
+    }
+}
+
 pub async fn spawn_minecraft<F, E>(
     req: LaunchRequest,
     paths: &LauncherPaths,
@@ -665,8 +865,11 @@ where
         let cb = std::sync::Arc::clone(&on_log);
         tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
+            let mut parser = Log4jStreamParser::new();
             while let Ok(Some(line)) = lines.next_line().await {
-                cb(line, false);
+                for (clean_line, is_err) in parser.feed_line(&line) {
+                    cb(clean_line, is_err);
+                }
             }
         });
     }
@@ -942,5 +1145,60 @@ mod tests {
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
         Ok(())
+    }
+
+    #[test]
+    fn test_log4j_xml_parser_handles_events_throwables_and_plain_lines() {
+        let mut parser = super::Log4jStreamParser::new();
+
+        // 1. Plain text passes through unchanged
+        assert_eq!(
+            parser.feed_line("[14:00:00] [main/INFO]: Loading Fabric Loader 0.16.10"),
+            vec![(
+                "[14:00:00] [main/INFO]: Loading Fabric Loader 0.16.10".to_string(),
+                false
+            )]
+        );
+
+        // 2. Single-line XML info event
+        let single = r#"<log4j:Event logger="net.minecraft.client.Minecraft" timestamp="1700000000" level="INFO" thread="Render thread"><log4j:Message><![CDATA[Setting user: Hugo]]></log4j:Message></log4j:Event>"#;
+        assert_eq!(
+            parser.feed_line(single),
+            vec![("[Render thread/INFO]: Setting user: Hugo".to_string(), false)]
+        );
+
+        // 3. Multi-line ERROR event with <log4j:Throwable>
+        let lines = [
+            r#"  <log4j:Event logger="net.minecraft.server.Main" timestamp="1700000001" level="ERROR" thread="Server thread">"#,
+            r#"    <log4j:Message><![CDATA[Encountered an unexpected exception]]></log4j:Message>"#,
+            r#"    <log4j:Throwable><![CDATA[java.lang.RuntimeException: Boom"#,
+            "\tat net.minecraft.World.tick(World.java:42)",
+            "\tat net.minecraft.Main.main(Main.java:10)]]></log4j:Throwable>",
+            r#"  </log4j:Event>"#,
+        ];
+
+        let mut collected = Vec::new();
+        for l in lines {
+            collected.extend(parser.feed_line(l));
+        }
+
+        assert_eq!(
+            collected,
+            vec![
+                (
+                    "[Server thread/ERROR]: Encountered an unexpected exception".to_string(),
+                    true
+                ),
+                ("java.lang.RuntimeException: Boom".to_string(), true),
+                ("\tat net.minecraft.World.tick(World.java:42)".to_string(), true),
+                ("\tat net.minecraft.Main.main(Main.java:10)".to_string(), true),
+            ]
+        );
+
+        // 4. Subsequent plain line after </log4j:Event> still passes through cleanly
+        assert_eq!(
+            parser.feed_line("Post-event plain line"),
+            vec![("Post-event plain line".to_string(), false)]
+        );
     }
 }

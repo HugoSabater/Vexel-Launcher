@@ -86,6 +86,7 @@ export interface ContentItem {
   mod_id?: string | null;
   slug?: string | null;
   project_id?: string | null;
+  icon_url?: string | null;
 }
 
 export interface ModrinthSearchResult {

@@ -149,6 +149,45 @@ function formatDownloads(dl: number): string {
   return `${dl}`;
 }
 
+function ContentThumb({
+  iconUrl,
+  alt,
+  kind,
+}: {
+  iconUrl?: string | null;
+  alt: string;
+  kind: ContentKind;
+}) {
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [iconUrl]);
+
+  if (iconUrl && !failed) {
+    return (
+      <img
+        src={iconUrl}
+        alt={alt}
+        onError={() => setFailed(true)}
+        className="h-9 w-9 rounded-lg object-cover bg-[#080A0F] border border-white/[0.06] shrink-0"
+      />
+    );
+  }
+
+  return (
+    <div className="h-9 w-9 rounded-lg bg-[#080A0F] border border-white/[0.06] flex items-center justify-center text-slate-500 shrink-0">
+      {kind === "mod" ? (
+        <Package className="h-4 w-4" />
+      ) : kind === "shader" ? (
+        <Sun className="h-4 w-4" />
+      ) : (
+        <FileArchive className="h-4 w-4" />
+      )}
+    </div>
+  );
+}
+
 export function ContentManagerPanel({
   profile,
   onListContent,
@@ -1297,13 +1336,11 @@ export function ContentManagerPanel({
                       className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-white/[0.025] transition-colors"
                     >
                       <div className="min-w-0 pr-2 flex items-center gap-3">
-                        {currentLocalKind === "mod" ? (
-                          <Package className="h-4 w-4 text-slate-500 shrink-0" />
-                        ) : currentLocalKind === "shader" ? (
-                          <Sun className="h-4 w-4 text-slate-500 shrink-0" />
-                        ) : (
-                          <FileArchive className="h-4 w-4 text-slate-500 shrink-0" />
-                        )}
+                        <ContentThumb
+                          iconUrl={item.icon_url}
+                          alt={item.display_name}
+                          kind={currentLocalKind}
+                        />
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <span
