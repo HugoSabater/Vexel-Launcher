@@ -1,15 +1,16 @@
-# Contributing to `mc-launcher-rust`
+# Contributing to **Vexel Launcher**
 
-Thank you for your interest in contributing! To keep the codebase fast, safe, and maintainable, please follow these engineering standards before opening a Pull Request.
+Thank you for your interest in contributing to **Vexel Launcher**! To keep the codebase fast, safe, and maintainable, please follow these engineering standards before opening a Pull Request.
 
 ## Branching & Commit Convention
 
 1. Fork the repository and create a descriptive branch from `main`:
    - `feat/<feature-name>` for new capabilities
    - `fix/<bug-name>` for bug fixes
+   - `perf/<topic>` for performance improvements
    - `style/<ui-change>` for UI/UX refinements
    - `docs/<topic>` for documentation updates
-2. Follow Conventional Commits (`feat(...)`, `fix(...)`, `style(...)`, `docs(...)`, `refactor(...)`).
+2. Follow Conventional Commits (`feat(...)`, `fix(...)`, `perf(...)`, `style(...)`, `docs(...)`, `refactor(...)`).
 
 ## Coding Standards
 
@@ -25,9 +26,9 @@ Every Pull Request must pass all four checks with **0 errors and 0 warnings**:
 
 ```bash
 # Backend (from src-tauri/)
-cargo check
+cargo check --release
 cargo clippy --all-targets -- -D warnings
-cargo test
+cargo test --all-targets
 
 # Frontend (from repository root)
 npm run build

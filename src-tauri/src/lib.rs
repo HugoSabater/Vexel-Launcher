@@ -44,7 +44,7 @@ fn acquire_single_instance() -> Option<SingleInstanceGuard> {
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
     use windows_sys::Win32::System::Threading::CreateMutexW;
 
-    let name: Vec<u16> = "Local\\com.mclauncher.rust.single_instance"
+    let name: Vec<u16> = "Local\\com.vexel.launcher.single_instance"
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
@@ -86,7 +86,11 @@ pub fn run() {
             let paths = LauncherPaths::resolve()?;
             let hardware = detect_hardware();
             let client = reqwest::Client::builder()
-                .user_agent("mc-launcher-rust/0.1.0 (https://github.com/HugoSabater/mc-launcher-rust)")
+                .user_agent(concat!(
+                    "vexel-launcher/",
+                    env!("CARGO_PKG_VERSION"),
+                    " (https://github.com/HugoSabater/mc-launcher-rust)"
+                ))
                 .connect_timeout(Duration::from_secs(10))
                 .read_timeout(Duration::from_secs(30))
                 .build()?;

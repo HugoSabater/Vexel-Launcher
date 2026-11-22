@@ -423,6 +423,14 @@ fn is_single_value_game_option(flag: &str) -> bool {
     SINGLE_VALUE_GAME_OPTIONS.contains(&flag)
 }
 
+const LAUNCHER_BRAND_NAME: &str = "Vexel Launcher";
+const LAUNCHER_BRAND_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+fn substitute_launcher_tokens(raw: &str) -> String {
+    raw.replace("${launcher_name}", LAUNCHER_BRAND_NAME)
+        .replace("${launcher_version}", LAUNCHER_BRAND_VERSION)
+}
+
 fn substitute_game_arg_template(
     raw: &str,
     req: &LaunchRequest,
@@ -432,7 +440,8 @@ fn substitute_game_arg_template(
 ) -> String {
     let game_dir_str = game_dir.to_string_lossy();
     let assets_dir_str = assets_dir.to_string_lossy();
-    raw.replace("${auth_player_name}", &req.username)
+    substitute_launcher_tokens(raw)
+        .replace("${auth_player_name}", &req.username)
         .replace("${version_name}", &req.mc_version)
         .replace("${game_directory}", &game_dir_str)
         .replace("${assets_root}", &assets_dir_str)
@@ -575,8 +584,14 @@ pub fn build_full_command_preview(
     parts.extend(
         req.extra_jvm_args
             .iter()
-            .map(|a| quote_arg_if_needed(a)),
+            .map(|a| quote_arg_if_needed(&substitute_launcher_tokens(a))),
     );
+    parts.push(quote_arg_if_needed(&format!(
+        "-Dminecraft.launcher.brand={LAUNCHER_BRAND_NAME}"
+    )));
+    parts.push(format!(
+        "-Dminecraft.launcher.version={LAUNCHER_BRAND_VERSION}"
+    ));
     parts.push(format!(
         "\"-Djava.library.path={}\"",
         natives_dir.to_string_lossy()
@@ -878,10 +893,20 @@ where
 
     let game_args = build_game_args(&req, paths);
 
+    let extra_jvm_resolved: Vec<String> = req
+        .extra_jvm_args
+        .iter()
+        .map(|a| substitute_launcher_tokens(a))
+        .collect();
+
     let mut cmd = Command::new(&req.javaw_path);
     cmd.current_dir(&game_dir)
         .args(&tuning.flags)
-        .args(&req.extra_jvm_args)
+        .args(&extra_jvm_resolved)
+        .arg(format!("-Dminecraft.launcher.brand={LAUNCHER_BRAND_NAME}"))
+        .arg(format!(
+            "-Dminecraft.launcher.version={LAUNCHER_BRAND_VERSION}"
+        ))
         .arg(format!("-Djava.library.path={}", natives_dir.to_string_lossy()))
         .arg("-cp")
         .arg(&classpath)

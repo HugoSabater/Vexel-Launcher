@@ -12,7 +12,7 @@ use crate::error::{AppError, AppResult};
 
 const SKIN_PACK_FILENAME: &str = "_launcher_skin.zip";
 const SKIN_PACK_STAMP_FILENAME: &str = ".launcher_skin.sha1";
-const SKIN_PACK_FORMAT_VERSION: &str = "v2";
+const SKIN_PACK_FORMAT_VERSION: &str = "v3";
 const SKIN_PACK_ENTRY: &str = "\"file/_launcher_skin.zip\"";
 
 const DEFAULT_SKIN_NAMES: &[&str] = &[
@@ -34,7 +34,7 @@ fn build_skin_zip_blocking(skin_bytes: &[u8], zip_path: &Path) -> AppResult<()> 
     "supported_formats": [15, 69],
     "min_format": 15,
     "max_format": 99,
-    "description": "MC Launcher Rust Custom Offline Skin"
+    "description": "Vexel Launcher - Skin personalizada"
   }
 }"#;
     writer.start_file("pack.mcmeta", options)?;
@@ -248,9 +248,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sync_instance_skin_pack_v2_cache_skips_rebuild() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_sync_instance_skin_pack_v3_cache_skips_rebuild() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = std::env::temp_dir().join(format!(
-            "mc-launcher-skin-test-{}",
+            "vexel-skin-test-{}",
             uuid::Uuid::new_v4().simple()
         ));
         let paths = crate::core::paths::LauncherPaths::with_root(tmp.clone());
@@ -260,13 +260,13 @@ mod tests {
         let rp_dir = paths.instance_resourcepacks_dir("demo");
         paths.ensure_instance_dirs("demo").await?;
         let legacy_stamp = rp_dir.join(".launcher_skin.sha1");
-        tokio::fs::write(&legacy_stamp, b"v1:legacy").await?;
+        tokio::fs::write(&legacy_stamp, b"v2:legacy").await?;
 
         super::sync_instance_skin_pack(&paths, "demo", true, None).await?;
         let zip_path = rp_dir.join("_launcher_skin.zip");
         let new_stamp_path = paths.instance_dir("demo").join(".launcher_skin.sha1");
         let stamp = tokio::fs::read_to_string(&new_stamp_path).await?;
-        assert!(stamp.starts_with("v2:"));
+        assert!(stamp.starts_with("v3:"));
         assert!(zip_path.exists());
         assert!(!legacy_stamp.exists());
 

@@ -1,13 +1,18 @@
 [package]
 name = "mc-launcher-rust"
-version = "0.1.0"
-description = "High-performance modular Minecraft Launcher built with Tauri v2 and Rust"
+version = "1.0.0"
+description = "Vexel Launcher — Launcher ligero y optimizado para Minecraft"
 authors = ["Hugo Sabater"]
 edition = "2021"
+default-run = "vexel-launcher"
 
 [lib]
 name = "mc_launcher_rust_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "vexel-launcher"
+path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

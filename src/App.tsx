@@ -570,12 +570,13 @@ export function App() {
   };
 
   const handleCopyReport = async () => {
-    const report = logStore
+    const lines = logStore
       .getSnapshot()
       .map((l) => `[${formatLocalHms(l.timestamp_ms)}] ${l.line}`)
       .join("\n");
+    const report = `=== Vexel Launcher v1.0.0 — Reporte de Diagnóstico ===\n${lines || "Sin líneas de registro."}`;
     try {
-      await navigator.clipboard.writeText(report || "Sin líneas de registro.");
+      await navigator.clipboard.writeText(report);
       setCopiedLogs(true);
       setTimeout(() => setCopiedLogs(false), 1800);
     } catch {
@@ -788,10 +789,51 @@ export function App() {
         className="h-9 shrink-0 bg-[#07090D] border-b border-white/[0.06] px-3 flex items-center justify-between gap-4"
       >
         <div data-tauri-drag-region className="flex items-center gap-2 pl-0.5">
-          <span
-            className="h-2.5 w-2.5 rounded-[3px] shadow-[0_0_8px_rgba(var(--accent-rgb),0.6)]"
-            style={{ backgroundColor: "var(--accent-primary)" }}
-          />
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            aria-hidden="true"
+            className="shrink-0 drop-shadow-[0_0_6px_rgba(var(--accent-rgb),0.45)]"
+          >
+            {/* Left luminous voxel arm + top cap */}
+            <polygon
+              points="1.6,4.2 3.4,2.8 5.4,4.2 3.6,5.6"
+              fill="#ffffff"
+              fillOpacity="0.45"
+            />
+            <polygon
+              points="1.6,4.2 3.4,2.8 5.4,4.2 3.6,5.6"
+              fill="var(--accent-primary)"
+              fillOpacity="0.85"
+            />
+            <polygon
+              points="1.6,4.2 3.6,5.6 8,12.2 8,14.2"
+              fill="var(--accent-primary)"
+            />
+            <polygon
+              points="3.6,5.6 5.4,4.2 8,8.8 8,12.2"
+              fill="var(--accent-primary)"
+              fillOpacity="0.82"
+            />
+            {/* Right shadowed voxel arm + top cap */}
+            <polygon
+              points="10.6,4.2 12.6,2.8 14.4,4.2 12.4,5.6"
+              fill="var(--accent-primary)"
+              fillOpacity="0.92"
+            />
+            <polygon
+              points="10.6,4.2 12.4,5.6 8,12.2 8,8.8"
+              fill="var(--accent-primary)"
+              fillOpacity="0.58"
+            />
+            <polygon
+              points="12.4,5.6 14.4,4.2 8,14.2 8,12.2"
+              fill="var(--accent-primary)"
+              fillOpacity="0.38"
+            />
+          </svg>
           <span
             data-tauri-drag-region
             className="text-[13px] font-semibold tracking-tight text-slate-100"
