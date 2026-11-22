@@ -77,7 +77,7 @@ fn acquire_single_instance() -> Option<SingleInstanceGuard> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let Some(_single_instance_guard) = acquire_single_instance() else {
-        eprintln!("MC Launcher Rust ya se encuentra abierto en otra ventana.");
+        eprintln!("Vexel Launcher ya se encuentra abierto en otra ventana.");
         return;
     };
 
@@ -105,6 +105,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_bootstrap_state,
+            commands::list_minecraft_versions,
             commands::get_live_memory_telemetry,
             commands::save_global_settings,
             commands::create_or_update_profile,

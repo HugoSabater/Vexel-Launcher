@@ -187,8 +187,8 @@ where
     on_progress(
         0,
         None,
-        "Descargando JRE...",
-        &format!("Conectando con Eclipse Adoptium (Java {major})..."),
+        "Descargando Java...",
+        &format!("Conectando para descargar Java {major}..."),
     );
 
     let response = client.get(&url).send().await?.error_for_status()?;
@@ -197,9 +197,9 @@ where
     let mut zip_file = tokio::fs::File::create(&zip_path).await?;
     let mut downloaded = 0_u64;
     let mut last_emitted = 0_u64;
-    let detail_dl = format!("Eclipse Temurin JRE {major} (Windows x64)");
+    let detail_dl = format!("Java {major} (Windows 64-bit)");
 
-    on_progress(0, total_bytes, "Descargando JRE...", &detail_dl);
+    on_progress(0, total_bytes, "Descargando Java...", &detail_dl);
 
     while let Some(chunk_res) = stream.next().await {
         let chunk = chunk_res?;
@@ -209,7 +209,7 @@ where
             || total_bytes.is_some_and(|t| downloaded >= t)
         {
             last_emitted = downloaded;
-            on_progress(downloaded, total_bytes, "Descargando JRE...", &detail_dl);
+            on_progress(downloaded, total_bytes, "Descargando Java...", &detail_dl);
         }
     }
     zip_file.flush().await?;
@@ -218,8 +218,8 @@ where
     on_progress(
         downloaded,
         total_bytes.or(Some(downloaded)),
-        "Extrayendo runtime...",
-        &format!("Descomprimiendo en shared/runtimes/java-{major}/..."),
+        "Preparando Java...",
+        &format!("Instalando Java {major} en Vexel Launcher..."),
     );
 
     let runtime_dir = paths.runtime_dir(major);
@@ -242,7 +242,7 @@ where
     on_progress(
         downloaded,
         total_bytes.or(Some(downloaded)),
-        "Runtime listo",
+        "Java listo",
         &format!("Java {major} instalado correctamente"),
     );
 

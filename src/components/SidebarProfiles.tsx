@@ -6,17 +6,18 @@ import {
   Globe,
   Home,
   Layers,
+  MoreHorizontal,
   Play,
   Plus,
   Square,
   Star,
-  Terminal,
   Trash2,
   X,
 } from "lucide-react";
+import { VersionPicker } from "./VersionPicker";
 import type {
-  GcPreset,
   HardwareInfo,
+  MinecraftVersionEntry,
   ModLoaderKind,
   Profile,
 } from "../types/launcher";
@@ -28,17 +29,17 @@ interface SidebarProfilesProps {
   selectedProfileId: string;
   runningProfileIds: Record<string, boolean>;
   activeView: MainView;
-  consoleOpen: boolean;
   hardware: HardwareInfo;
+  mcVersions: MinecraftVersionEntry[];
+  loadingVersions: boolean;
   onSelectProfile: (profileId: string) => void;
   onSelectView: (view: MainView) => void;
-  onToggleConsole: () => void;
   onPlayProfile: (profileId: string) => Promise<void>;
   onStopProfile: (profileId: string) => Promise<void>;
   onOpenFolder: (profileId: string) => Promise<void>;
   onDuplicateProfile: (profile: Profile) => Promise<void>;
   onSetDefault: (profileId: string) => Promise<void>;
-  onSaveProfile: (profile: Profile) => Promise<void>;
+  onSaveProfile: (profile: Profile) => Promise<boolean>;
   onDeleteProfile: (profileId: string, deleteFiles: boolean) => Promise<void>;
 }
 
@@ -68,11 +69,11 @@ export function SidebarProfiles({
   selectedProfileId,
   runningProfileIds,
   activeView,
-  consoleOpen,
   hardware,
+  mcVersions,
+  loadingVersions,
   onSelectProfile,
   onSelectView,
-  onToggleConsole,
   onPlayProfile,
   onStopProfile,
   onOpenFolder,
@@ -91,7 +92,6 @@ export function SidebarProfiles({
   const [mcVersion, setMcVersion] = useState("1.21.4");
   const [loader, setLoader] = useState<ModLoaderKind>("fabric");
   const [ramMb, setRamMb] = useState<number>(hardware.recommended_modded_mb);
-  const [gcPreset, setGcPreset] = useState<GcPreset>("generational_zgc");
   const [serverAddress, setServerAddress] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -109,13 +109,23 @@ export function SidebarProfiles({
   }, [contextMenu]);
 
   const openModal = () => {
+    const latestRelease =
+      mcVersions.find((v) => v.version_type === "release")?.id ?? "1.21.4";
     setName("");
-    setMcVersion("1.21.4");
+    setMcVersion(latestRelease);
     setLoader("fabric");
     setRamMb(hardware.recommended_modded_mb);
-    setGcPreset("generational_zgc");
     setServerAddress("");
     setModalOpen(true);
+  };
+
+  const openMenuAt = (x: number, y: number, profile: Profile) => {
+    onSelectProfile(profile.id);
+    setContextMenu({
+      x: Math.min(x, window.innerWidth - 220),
+      y: Math.min(y, window.innerHeight - 230),
+      profile,
+    });
   };
 
   const handleLoaderChange = (nextLoader: ModLoaderKind) => {
@@ -139,7 +149,7 @@ export function SidebarProfiles({
         loader,
         loader_version: null,
         ram_mb: ramMb,
-        gc_preset: gcPreset,
+        gc_preset: "generational_zgc",
         server_address: serverAddress.trim() ? serverAddress.trim() : null,
         is_default: false,
         window_width: null,
@@ -148,9 +158,11 @@ export function SidebarProfiles({
         custom_jvm_args: null,
         custom_java_path: null,
       };
-      await onSaveProfile(profile);
-      onSelectProfile(profile.id);
-      setModalOpen(false);
+      const ok = await onSaveProfile(profile);
+      if (ok) {
+        onSelectProfile(profile.id);
+        setModalOpen(false);
+      }
     } finally {
       setSaving(false);
     }
@@ -177,23 +189,17 @@ export function SidebarProfiles({
         {profiles.map((profile) => {
           const isSelected = profile.id === selectedProfileId;
           const isRunning = Boolean(runningProfileIds[profile.id]);
+          const menuOpenForRow = contextMenu?.profile.id === profile.id;
 
           return (
-            <button
+            <div
               key={profile.id}
-              type="button"
-              onClick={() => onSelectProfile(profile.id)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                onSelectProfile(profile.id);
-                setContextMenu({
-                  x: Math.min(e.clientX, window.innerWidth - 210),
-                  y: Math.min(e.clientY, window.innerHeight - 210),
-                  profile,
-                });
+                openMenuAt(e.clientX, e.clientY, profile);
               }}
-              className={`relative w-full text-left rounded-lg px-3 py-2 flex items-center gap-2.5 transition-colors ${
+              className={`group relative w-full rounded-lg flex items-center transition-colors ${
                 isSelected
                   ? "bg-[#121722] shadow-[inset_0_1px_0_rgba(255,255,255,0.045)] text-white"
                   : "text-slate-400 hover:text-slate-200 hover:bg-white/[0.03]"
@@ -203,38 +209,62 @@ export function SidebarProfiles({
                 <span className="absolute left-0 top-2 bottom-2 w-[2.5px] rounded-r-full bg-[var(--accent-primary)]" />
               )}
 
-              <span
-                className={`h-2 w-2 rounded-full shrink-0 ${
-                  isRunning
-                    ? "bg-[var(--accent-primary)] animate-pulse"
-                    : LOADER_DOT[profile.loader]
-                }`}
-              />
+              <button
+                type="button"
+                onClick={() => onSelectProfile(profile.id)}
+                className="flex-1 min-w-0 text-left pl-3 pr-1.5 py-2 flex items-center gap-2.5"
+              >
+                <span
+                  className={`h-2 w-2 rounded-full shrink-0 ${
+                    isRunning
+                      ? "bg-[var(--accent-primary)] animate-pulse"
+                      : LOADER_DOT[profile.loader]
+                  }`}
+                />
 
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="truncate text-[13px] font-medium">
-                    {profile.name}
-                  </span>
-                  {profile.is_default && (
-                    <Star
-                      className="h-2.5 w-2.5 shrink-0 text-slate-500"
-                      fill="currentColor"
-                    />
-                  )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="truncate text-[13px] font-medium">
+                      {profile.name}
+                    </span>
+                    {profile.is_default && (
+                      <Star
+                        className="h-2.5 w-2.5 shrink-0 text-slate-500"
+                        fill="currentColor"
+                      />
+                    )}
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-1.5 text-[11px] font-mono text-slate-500">
+                    <span>{profile.mc_version}</span>
+                    <span>·</span>
+                    <span className="capitalize">{profile.loader}</span>
+                  </div>
                 </div>
-                <div className="mt-0.5 flex items-center gap-1.5 text-[11px] font-mono text-slate-500">
-                  <span>{profile.mc_version}</span>
-                  <span>·</span>
-                  <span className="capitalize">{profile.loader}</span>
-                </div>
-              </div>
-            </button>
+              </button>
+
+              <button
+                type="button"
+                aria-label={`Opciones de ${profile.name}`}
+                title="Opciones de la instancia"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  openMenuAt(rect.right - 20, rect.bottom + 4, profile);
+                }}
+                className={`mr-1.5 h-6 w-6 shrink-0 rounded-md flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/[0.08] transition-opacity ${
+                  menuOpenForRow
+                    ? "opacity-100 bg-white/[0.08] text-white"
+                    : "opacity-0 group-hover:opacity-100 focus:opacity-100"
+                }`}
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </button>
+            </div>
           );
         })}
       </div>
 
-      {/* Bottom Pinned: Borderless Navigation + Console Trigger */}
+      {/* Bottom Pinned: Clean 3-Item Main Navigation */}
       <div className="p-2 border-t border-white/[0.06] space-y-0.5">
         <button
           type="button"
@@ -280,29 +310,9 @@ export function SidebarProfiles({
           />
           Ajustes
         </button>
-
-        <div className="pt-1.5 mt-1.5 border-t border-white/[0.05]">
-          <button
-            type="button"
-            onClick={onToggleConsole}
-            className={`w-full rounded-lg px-3 py-1.5 flex items-center justify-between text-xs font-mono transition-colors ${
-              consoleOpen
-                ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
-                : "text-slate-500 hover:text-slate-200 hover:bg-white/[0.035]"
-            }`}
-          >
-            <span className="inline-flex items-center gap-2">
-              <Terminal className="h-3.5 w-3.5" />
-              Consola
-            </span>
-            <kbd className="rounded bg-white/[0.04] px-1.5 py-[1px] text-[10px] text-slate-500">
-              Ctrl+L
-            </kbd>
-          </button>
-        </div>
       </div>
 
-      {/* Native Right-Click Context Menu */}
+      {/* Instance Actions Menu (Right-click or ⋯ button) */}
       {contextMenu && (
         <div
           style={{ top: contextMenu.y, left: contextMenu.x }}
@@ -317,7 +327,7 @@ export function SidebarProfiles({
                 setContextMenu(null);
                 void onStopProfile(id);
               }}
-              className="w-full px-3 py-1.5 text-left text-xs text-rose-300 hover:bg-[#171D2A] flex items-center gap-2.5"
+              className="w-full px-3 py-1.5 text-left text-xs text-rose-300 hover:bg-white/[0.06] flex items-center gap-2.5 transition-colors"
             >
               <Square className="h-3.5 w-3.5 fill-current" />
               Detener instancia
@@ -330,7 +340,7 @@ export function SidebarProfiles({
                 setContextMenu(null);
                 void onPlayProfile(id);
               }}
-              className="w-full px-3 py-1.5 text-left text-xs text-[var(--accent-primary)] hover:bg-[#171D2A] flex items-center gap-2.5"
+              className="w-full px-3 py-1.5 text-left text-xs text-[var(--accent-primary)] hover:bg-white/[0.06] flex items-center gap-2.5 transition-colors"
             >
               <Play className="h-3.5 w-3.5 fill-current" />
               Jugar
@@ -344,7 +354,7 @@ export function SidebarProfiles({
               setContextMenu(null);
               void onOpenFolder(id);
             }}
-            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-[#171D2A] flex items-center gap-2.5"
+            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-white/[0.06] flex items-center gap-2.5 transition-colors"
           >
             <FolderOpen className="h-3.5 w-3.5 text-slate-400" />
             Abrir carpeta de la instancia
@@ -357,10 +367,10 @@ export function SidebarProfiles({
               setContextMenu(null);
               void onDuplicateProfile(target);
             }}
-            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-[#171D2A] flex items-center gap-2.5"
+            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-white/[0.06] flex items-center gap-2.5 transition-colors"
           >
             <Copy className="h-3.5 w-3.5 text-slate-400" />
-            Duplicar perfil
+            Duplicar instancia
           </button>
 
           <button
@@ -370,7 +380,7 @@ export function SidebarProfiles({
               setContextMenu(null);
               void onSetDefault(id);
             }}
-            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-[#171D2A] flex items-center gap-2.5"
+            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-white/[0.06] flex items-center gap-2.5 transition-colors"
           >
             <Star className="h-3.5 w-3.5 text-slate-400" />
             Fijar como predeterminado
@@ -378,7 +388,7 @@ export function SidebarProfiles({
 
           {profiles.length > 1 && (
             <>
-              <div className="my-1 border-t border-[#1E2534]" />
+              <div className="my-1 border-t border-white/[0.06]" />
               <button
                 type="button"
                 disabled={Boolean(runningProfileIds[contextMenu.profile.id])}
@@ -388,7 +398,7 @@ export function SidebarProfiles({
                   setDeleteFilesChecked(false);
                   setDeleteTarget(target);
                 }}
-                className="w-full px-3 py-1.5 text-left text-xs text-rose-400 hover:bg-rose-500/10 disabled:opacity-40 flex items-center gap-2.5"
+                className="w-full px-3 py-1.5 text-left text-xs text-rose-400 hover:bg-rose-500/10 disabled:opacity-40 flex items-center gap-2.5 transition-colors"
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 Eliminar
@@ -400,8 +410,12 @@ export function SidebarProfiles({
 
       {/* New Profile Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+        <div
+          onClick={() => !saving && setModalOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+        >
           <form
+            onClick={(e) => e.stopPropagation()}
             onSubmit={handleCreate}
             className="w-full max-w-md rounded-xl forge-card p-5 space-y-4 shadow-2xl"
           >
@@ -418,7 +432,7 @@ export function SidebarProfiles({
               </button>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-3.5">
               <div>
                 <label className="block text-xs text-slate-400 mb-1">
                   Nombre
@@ -426,9 +440,10 @@ export function SidebarProfiles({
                 <input
                   type="text"
                   required
+                  autoFocus
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Survival 1.21.4 Fabric"
+                  placeholder="Mi Survival"
                   className="w-full rounded-lg border border-white/[0.08] bg-[#07090D] px-3 py-2 text-[13px] text-white focus:border-[var(--accent-primary)] focus:outline-none"
                 />
               </div>
@@ -436,29 +451,28 @@ export function SidebarProfiles({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-slate-400 mb-1">
-                    Versión MC
+                    Versión de Minecraft
                   </label>
-                  <input
-                    type="text"
-                    required
+                  <VersionPicker
                     value={mcVersion}
-                    onChange={(e) => setMcVersion(e.target.value)}
-                    className="w-full rounded-lg border border-white/[0.08] bg-[#07090D] px-3 py-2 text-[13px] font-mono text-white focus:border-[var(--accent-primary)] focus:outline-none"
+                    versions={mcVersions}
+                    loading={loadingVersions}
+                    onChange={setMcVersion}
                   />
                 </div>
                 <div>
                   <label className="block text-xs text-slate-400 mb-1">
-                    Loader
+                    Tipo de instalación
                   </label>
                   <select
                     value={loader}
                     onChange={(e) =>
                       handleLoaderChange(e.target.value as ModLoaderKind)
                     }
-                    className="w-full rounded-lg border border-white/[0.08] bg-[#07090D] px-3 py-2 text-[13px] text-white focus:border-[var(--accent-primary)] focus:outline-none"
+                    className="w-full rounded-lg border border-white/[0.08] bg-[#07090D] px-3 py-1.5 text-[13px] text-white focus:border-[var(--accent-primary)] focus:outline-none"
                   >
-                    <option value="vanilla">Vanilla</option>
-                    <option value="fabric">Fabric</option>
+                    <option value="vanilla">Vanilla (sin mods)</option>
+                    <option value="fabric">Fabric (con mods)</option>
                     <option value="forge" disabled>
                       Forge (Próximamente)
                     </option>
@@ -469,49 +483,34 @@ export function SidebarProfiles({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1.5">
-                    RAM{" "}
-                    <span className="font-mono text-[var(--accent-primary)]">
-                      {(ramMb / 1024).toFixed(1)} GB
-                    </span>
-                  </label>
-                  <input
-                    type="range"
-                    min={1024}
-                    max={hardware.max_safe_ram_mb}
-                    step={512}
-                    value={ramMb}
-                    onChange={(e) => setRamMb(Number(e.target.value))}
-                    className="w-full forge-slider"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">
-                    Garbage Collector
-                  </label>
-                  <select
-                    value={gcPreset}
-                    onChange={(e) => setGcPreset(e.target.value as GcPreset)}
-                    className="w-full rounded-lg border border-white/[0.08] bg-[#07090D] px-3 py-2 text-[13px] text-white focus:border-[var(--accent-primary)] focus:outline-none"
-                  >
-                    <option value="generational_zgc">Generational ZGC</option>
-                    <option value="aikar_g1_gc">Aikar&apos;s G1GC</option>
-                  </select>
-                </div>
+              <div>
+                <label className="flex items-center justify-between text-xs text-slate-400 mb-1.5">
+                  <span>Memoria RAM asignada</span>
+                  <span className="font-mono text-[var(--accent-primary)]">
+                    {(ramMb / 1024).toFixed(1)} GB
+                  </span>
+                </label>
+                <input
+                  type="range"
+                  min={1024}
+                  max={hardware.max_safe_ram_mb}
+                  step={512}
+                  value={ramMb}
+                  onChange={(e) => setRamMb(Number(e.target.value))}
+                  className="w-full forge-slider"
+                />
               </div>
 
               <div>
                 <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
                   <Globe className="h-3 w-3 text-[var(--accent-primary)]" />
-                  Servidor QuickPlay (Opcional)
+                  Servidor directo (opcional)
                 </label>
                 <input
                   type="text"
                   value={serverAddress}
                   onChange={(e) => setServerAddress(e.target.value)}
-                  placeholder="play.servidor.net:25565"
+                  placeholder="play.servidor.net"
                   className="w-full rounded-lg border border-white/[0.08] bg-[#07090D] px-3 py-2 text-[13px] font-mono text-white focus:border-[var(--accent-primary)] focus:outline-none"
                 />
               </div>
@@ -549,7 +548,7 @@ export function SidebarProfiles({
           >
             <div className="space-y-1">
               <h2 className="text-[14px] font-semibold text-white">
-                Eliminar perfil
+                Eliminar instancia
               </h2>
               <p className="text-[13px] text-slate-400 leading-relaxed">
                 ¿Seguro que deseas quitar{" "}

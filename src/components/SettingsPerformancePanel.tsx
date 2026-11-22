@@ -14,11 +14,13 @@ import {
   Palette,
   RefreshCw,
   Shirt,
+  Terminal,
   Trash2,
   Upload,
 } from "lucide-react";
 import { SkinViewer3D } from "./SkinViewer3D";
-import { ACCENT_OPTIONS } from "../theme/accents";
+import { VersionPicker } from "./VersionPicker";
+import { ACCENT_OPTIONS, USERNAME_REGEX } from "../theme/accents";
 import type {
   GcPreset,
   GlobalSettingsPayload,
@@ -29,6 +31,7 @@ import type {
   LauncherConfig,
   LiveMemoryTelemetry,
   LogCleanupResult,
+  MinecraftVersionEntry,
   ModLoaderKind,
   ProcessPriority,
   Profile,
@@ -49,12 +52,19 @@ interface SettingsPerformancePanelProps {
   jvmTuning: JvmTuningOutput | null;
   skinDataUrl: string | null;
   isAnyRunning: boolean;
+  isProfileRunning: boolean;
+  profilesCount: number;
+  mcVersions: MinecraftVersionEntry[];
+  loadingVersions: boolean;
   dataRoot: string;
   initialSection?: SettingsSection;
-  onUpdateProfile: (updated: Profile) => Promise<void>;
+  onUpdateProfile: (updated: Profile) => Promise<boolean>;
+  onDuplicateProfile: (profile: Profile) => Promise<void>;
+  onDeleteProfile: (profileId: string, deleteFiles: boolean) => Promise<void>;
   onSaveGlobalSettings: (payload: GlobalSettingsPayload) => Promise<void>;
   onUploadSkinBytes: (bytes: number[]) => Promise<void>;
   onSetSkinModel: (model: "classic" | "slim") => Promise<void>;
+  onOpenConsole: () => void;
   onOpenDataRoot: () => Promise<void>;
   onListInstalledJavas: () => Promise<InstalledJavaRuntime[]>;
   onInstallJavaMajor: (major: number) => Promise<void>;
@@ -141,12 +151,19 @@ export function SettingsPerformancePanel({
   jvmTuning,
   skinDataUrl,
   isAnyRunning,
+  isProfileRunning,
+  profilesCount,
+  mcVersions,
+  loadingVersions,
   dataRoot,
   initialSection = "instance",
   onUpdateProfile,
+  onDuplicateProfile,
+  onDeleteProfile,
   onSaveGlobalSettings,
   onUploadSkinBytes,
   onSetSkinModel,
+  onOpenConsole,
   onOpenDataRoot,
   onListInstalledJavas,
   onInstallJavaMajor,
@@ -160,7 +177,6 @@ export function SettingsPerformancePanel({
   const [expertOpen, setExpertOpen] = useState(false);
 
   const [nameDraft, setNameDraft] = useState(profile.name);
-  const [versionDraft, setVersionDraft] = useState(profile.mc_version);
   const [ramDraft, setRamDraft] = useState(profile.ram_mb);
   const [serverDraft, setServerDraft] = useState(profile.server_address ?? "");
   const [customJvmDraft, setCustomJvmDraft] = useState(
@@ -175,6 +191,15 @@ export function SettingsPerformancePanel({
   const [heightDraft, setHeightDraft] = useState(
     profile.window_height ? String(profile.window_height) : "720",
   );
+  const [savedNotice, setSavedNotice] = useState(false);
+
+  const [usernameDraft, setUsernameDraft] = useState(config.offline_username);
+  const [usernameError, setUsernameError] = useState<string | null>(null);
+  const [usernameSaved, setUsernameSaved] = useState(false);
+
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteFilesChecked, setDeleteFilesChecked] = useState(false);
+  const [deletingProfile, setDeletingProfile] = useState(false);
 
   const [liveTelemetry, setLiveTelemetry] =
     useState<LiveMemoryTelemetry | null>(null);
@@ -190,11 +215,40 @@ export function SettingsPerformancePanel({
   const [skinError, setSkinError] = useState<string | null>(null);
 
   const serverDebounceRef = useRef<number | null>(null);
+  const savedTimerRef = useRef<number | null>(null);
+  const usernameSavedTimerRef = useRef<number | null>(null);
   const skinInputRef = useRef<HTMLInputElement | null>(null);
+
+  const flashSaved = useCallback(() => {
+    setSavedNotice(true);
+    if (savedTimerRef.current !== null) {
+      window.clearTimeout(savedTimerRef.current);
+    }
+    savedTimerRef.current = window.setTimeout(() => {
+      setSavedNotice(false);
+      savedTimerRef.current = null;
+    }, 1800);
+  }, []);
+
+  const flashUsernameSaved = useCallback(() => {
+    setUsernameSaved(true);
+    if (usernameSavedTimerRef.current !== null) {
+      window.clearTimeout(usernameSavedTimerRef.current);
+    }
+    usernameSavedTimerRef.current = window.setTimeout(() => {
+      setUsernameSaved(false);
+      usernameSavedTimerRef.current = null;
+    }, 1800);
+  }, []);
 
   useEffect(() => {
     setSection(initialSection);
   }, [initialSection]);
+
+  useEffect(() => {
+    setUsernameDraft(config.offline_username);
+    setUsernameError(null);
+  }, [config.offline_username]);
 
   useEffect(() => {
     if (serverDebounceRef.current !== null) {
@@ -202,7 +256,6 @@ export function SettingsPerformancePanel({
       serverDebounceRef.current = null;
     }
     setNameDraft(profile.name);
-    setVersionDraft(profile.mc_version);
     setRamDraft(profile.ram_mb);
     setServerDraft(profile.server_address ?? "");
     setCustomJvmDraft(profile.custom_jvm_args ?? "");
@@ -211,13 +264,19 @@ export function SettingsPerformancePanel({
     setHeightDraft(
       profile.window_height ? String(profile.window_height) : "720",
     );
+    setDeleteModalOpen(false);
   }, [profile]);
 
   useEffect(() => {
     return () => {
       if (serverDebounceRef.current !== null) {
         window.clearTimeout(serverDebounceRef.current);
-        serverDebounceRef.current = null;
+      }
+      if (savedTimerRef.current !== null) {
+        window.clearTimeout(savedTimerRef.current);
+      }
+      if (usernameSavedTimerRef.current !== null) {
+        window.clearTimeout(usernameSavedTimerRef.current);
       }
     };
   }, []);
@@ -241,9 +300,9 @@ export function SettingsPerformancePanel({
   }, [onGetStorageBreakdown]);
 
   useEffect(() => {
-    if (section === "performance") void refreshJavas();
+    if (section === "performance" && expertOpen) void refreshJavas();
     if (section === "storage") void refreshStorage();
-  }, [section, refreshJavas, refreshStorage]);
+  }, [section, expertOpen, refreshJavas, refreshStorage]);
 
   // Live memory telemetry polling every 2500ms while Performance tab is active & window visible
   useEffect(() => {
@@ -294,7 +353,7 @@ export function SettingsPerformancePanel({
     };
   }, [section, onGetLiveMemoryTelemetry]);
 
-  const saveGlobal = (patch: Partial<GlobalSettingsPayload>) => {
+  const saveGlobal = (patch: Partial<GlobalSettingsPayload>): Promise<boolean> => {
     const payload: GlobalSettingsPayload = {
       offline_username: patch.offline_username ?? config.offline_username,
       process_priority: patch.process_priority ?? config.process_priority,
@@ -307,15 +366,54 @@ export function SettingsPerformancePanel({
       auto_tune_mod_configs:
         patch.auto_tune_mod_configs ?? config.auto_tune_mod_configs,
     };
-    return onSaveGlobalSettings(payload).catch(() => {
-      // Error surfaced via global banner
-    });
+    return onSaveGlobalSettings(payload)
+      .then(() => true)
+      .catch(() => false);
+  };
+
+  const updateProfileAndConfirm = async (next: Profile) => {
+    const ok = await onUpdateProfile(next);
+    if (ok) {
+      flashSaved();
+    }
+  };
+
+  const commitName = () => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed) {
+      setNameDraft(profile.name);
+      return;
+    }
+    if (trimmed !== profile.name) {
+      void updateProfileAndConfirm({ ...profile, name: trimmed });
+    }
+  };
+
+  const commitDimensions = () => {
+    const nextW = Number(widthDraft) || null;
+    const nextH = Number(heightDraft) || null;
+    if (
+      nextW !== profile.window_width ||
+      nextH !== profile.window_height ||
+      profile.fullscreen
+    ) {
+      void updateProfileAndConfirm({
+        ...profile,
+        window_width: nextW,
+        window_height: nextH,
+        fullscreen: false,
+      });
+    }
   };
 
   const commitServer = (val: string) => {
+    if (serverDebounceRef.current !== null) {
+      window.clearTimeout(serverDebounceRef.current);
+      serverDebounceRef.current = null;
+    }
     const normalized = val.trim() ? val.trim() : null;
     if (normalized !== profile.server_address) {
-      void onUpdateProfile({ ...profile, server_address: normalized });
+      void updateProfileAndConfirm({ ...profile, server_address: normalized });
     }
   };
 
@@ -324,7 +422,26 @@ export function SettingsPerformancePanel({
     if (serverDebounceRef.current !== null) {
       window.clearTimeout(serverDebounceRef.current);
     }
-    serverDebounceRef.current = window.setTimeout(() => commitServer(val), 400);
+    serverDebounceRef.current = window.setTimeout(() => commitServer(val), 450);
+  };
+
+  const commitUsername = async () => {
+    const trimmed = usernameDraft.trim();
+    if (!trimmed) {
+      setUsernameDraft(config.offline_username);
+      setUsernameError(null);
+      return;
+    }
+    if (!USERNAME_REGEX.test(trimmed)) {
+      setUsernameError("Usa entre 3 y 16 caracteres (letras, números o _)");
+      return;
+    }
+    setUsernameError(null);
+    if (trimmed === config.offline_username) return;
+    const ok = await saveGlobal({ offline_username: trimmed });
+    if (ok) {
+      flashUsernameSaved();
+    }
   };
 
   const applyResolutionPreset = (
@@ -334,7 +451,7 @@ export function SettingsPerformancePanel({
   ) => {
     if (w) setWidthDraft(String(w));
     if (h) setHeightDraft(String(h));
-    void onUpdateProfile({
+    void updateProfileAndConfirm({
       ...profile,
       window_width: w,
       window_height: h,
@@ -420,7 +537,7 @@ export function SettingsPerformancePanel({
     { id: "instance", label: "Instancia", icon: <Box className="h-3.5 w-3.5" /> },
     {
       id: "performance",
-      label: "Rendimiento y Java",
+      label: "Rendimiento",
       icon: <Gauge className="h-3.5 w-3.5" />,
     },
     {
@@ -447,10 +564,10 @@ export function SettingsPerformancePanel({
         <div className="max-w-4xl mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h1 className="text-[15px] font-semibold tracking-tight text-white">
-              Ajustes y Rendimiento
+              Ajustes
             </h1>
             <p className="text-[11px] font-mono text-slate-500">
-              {profile.name} · MC {profile.mc_version}
+              {profile.name} · Minecraft {profile.mc_version}
             </p>
           </div>
 
@@ -479,29 +596,34 @@ export function SettingsPerformancePanel({
         <div className="max-w-4xl mx-auto space-y-6">
           {/* 1. INSTANCIA */}
           {section === "instance" && (
-            <section className="space-y-3">
-              <div>
+            <section className="space-y-4">
+              <div className="flex items-center justify-between gap-3">
                 <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
-                  Instancia ·{" "}
-                  <span className="font-mono text-slate-500">{profile.id}</span>
+                  Configuración de la instancia
                 </h2>
+                {savedNotice && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 text-[11px] font-medium text-emerald-300">
+                    <Check className="h-3 w-3" />
+                    Guardado ✓
+                  </span>
+                )}
               </div>
 
               <div className="rounded-xl forge-panel divide-y divide-white/[0.05]">
                 <SettingRow
-                  title="Nombre del perfil"
-                  description="Identificador visible en la barra lateral y la portada."
+                  title="Nombre de la instancia"
+                  description="Nombre visible en la barra lateral y en la portada."
                 >
                   <input
                     type="text"
                     value={nameDraft}
                     onChange={(e) => setNameDraft(e.target.value)}
-                    onBlur={() => {
-                      if (nameDraft.trim() && nameDraft.trim() !== profile.name) {
-                        void onUpdateProfile({
-                          ...profile,
-                          name: nameDraft.trim(),
-                        });
+                    onBlur={commitName}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commitName();
+                        e.currentTarget.blur();
                       }
                     }}
                     className={`${INPUT_CLASS} sm:w-72`}
@@ -509,36 +631,34 @@ export function SettingsPerformancePanel({
                 </SettingRow>
 
                 <SettingRow
-                  title="Versión de Minecraft y Loader"
-                  description="Selecciona la versión exacta del juego y el motor de mods."
+                  title="Versión y tipo de instalación"
+                  description="Elige la versión oficial de Minecraft y si quieres usar mods."
                 >
                   <div className="grid grid-cols-2 gap-2 w-full sm:w-72">
-                    <input
-                      type="text"
-                      value={versionDraft}
-                      onChange={(e) => setVersionDraft(e.target.value)}
-                      onBlur={() => {
-                        if (
-                          versionDraft.trim() &&
-                          versionDraft.trim() !== profile.mc_version
-                        ) {
-                          void onUpdateProfile({
+                    <VersionPicker
+                      value={profile.mc_version}
+                      versions={mcVersions}
+                      loading={loadingVersions}
+                      disabled={isProfileRunning}
+                      onChange={(nextVer) => {
+                        if (nextVer && nextVer !== profile.mc_version) {
+                          void updateProfileAndConfirm({
                             ...profile,
-                            mc_version: versionDraft.trim(),
+                            mc_version: nextVer,
                           });
                         }
                       }}
-                      className={`${INPUT_CLASS} font-mono`}
                     />
                     <select
                       value={profile.loader}
+                      disabled={isProfileRunning}
                       onChange={(e) =>
-                        void onUpdateProfile({
+                        void updateProfileAndConfirm({
                           ...profile,
                           loader: e.target.value as ModLoaderKind,
                         })
                       }
-                      className={INPUT_CLASS}
+                      className={`${INPUT_CLASS} disabled:opacity-50`}
                     >
                       <option value="vanilla">Vanilla</option>
                       <option value="fabric">Fabric</option>
@@ -553,8 +673,8 @@ export function SettingsPerformancePanel({
                 </SettingRow>
 
                 <SettingRow
-                  title="Resolución de ventana"
-                  description="Dimensiones iniciales de GLFW al arrancar Minecraft."
+                  title="Tamaño de ventana"
+                  description="Tamaño de ventana al abrir el juego."
                 >
                   <div className="flex flex-col items-end gap-2 w-full sm:w-auto">
                     <div className="inline-flex items-center gap-1 rounded-lg bg-[#07090D] border border-white/[0.06] p-0.5">
@@ -601,13 +721,14 @@ export function SettingsPerformancePanel({
                           max={7680}
                           value={widthDraft}
                           onChange={(e) => setWidthDraft(e.target.value)}
-                          onBlur={() =>
-                            void onUpdateProfile({
-                              ...profile,
-                              window_width: Number(widthDraft) || null,
-                              fullscreen: false,
-                            })
-                          }
+                          onBlur={commitDimensions}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              commitDimensions();
+                              e.currentTarget.blur();
+                            }
+                          }}
                           placeholder="Ancho"
                           className="w-24 rounded-lg border border-white/[0.08] bg-[#07090D] px-2.5 py-1 text-xs font-mono text-white text-center focus:border-[var(--accent-primary)] focus:outline-none"
                         />
@@ -620,13 +741,14 @@ export function SettingsPerformancePanel({
                           max={4320}
                           value={heightDraft}
                           onChange={(e) => setHeightDraft(e.target.value)}
-                          onBlur={() =>
-                            void onUpdateProfile({
-                              ...profile,
-                              window_height: Number(heightDraft) || null,
-                              fullscreen: false,
-                            })
-                          }
+                          onBlur={commitDimensions}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              commitDimensions();
+                              e.currentTarget.blur();
+                            }
+                          }}
                           placeholder="Alto"
                           className="w-24 rounded-lg border border-white/[0.08] bg-[#07090D] px-2.5 py-1 text-xs font-mono text-white text-center focus:border-[var(--accent-primary)] focus:outline-none"
                         />
@@ -636,7 +758,7 @@ export function SettingsPerformancePanel({
                 </SettingRow>
 
                 <SettingRow
-                  title="Servidor QuickPlay"
+                  title="Conectar automáticamente a un servidor"
                   description="Opcional: entra directamente a un servidor multijugador al pulsar JUGAR."
                 >
                   <input
@@ -645,23 +767,69 @@ export function SettingsPerformancePanel({
                     onChange={(e) => handleServerChange(e.target.value)}
                     onBlur={() => commitServer(serverDraft)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") commitServer(serverDraft);
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commitServer(serverDraft);
+                        e.currentTarget.blur();
+                      }
                     }}
-                    placeholder="play.servidor.net:25565"
+                    placeholder="play.servidor.net"
                     className={`${INPUT_CLASS} font-mono sm:w-72`}
                   />
                 </SettingRow>
               </div>
+
+              {/* Discoverable Instance Actions: Duplicate & Delete */}
+              <div className="space-y-2">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
+                  Acciones de la instancia
+                </h3>
+                <div className="rounded-xl forge-panel px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs text-slate-400">
+                    Crea una copia de esta configuración o elimina la instancia
+                    cuando ya no la necesites.
+                  </p>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => void onDuplicateProfile(profile)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#121722] hover:bg-[#171D2B] border border-white/[0.08] px-3 py-1.5 text-xs font-medium text-slate-200 transition-colors"
+                    >
+                      <Copy className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+                      Duplicar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={profilesCount <= 1 || isProfileRunning}
+                      title={
+                        isProfileRunning
+                          ? "Detén Minecraft antes de eliminar esta instancia"
+                          : profilesCount <= 1
+                            ? "Debe quedar al menos una instancia"
+                            : "Eliminar instancia"
+                      }
+                      onClick={() => {
+                        setDeleteFilesChecked(false);
+                        setDeleteModalOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 disabled:opacity-40 px-3 py-1.5 text-xs font-medium text-rose-300 transition-colors"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Eliminar instancia
+                    </button>
+                  </div>
+                </div>
+              </div>
             </section>
           )}
 
-          {/* 2. RENDIMIENTO Y JAVA */}
+          {/* 2. RENDIMIENTO */}
           {section === "performance" && (
             <div className="space-y-6">
               {/* Quick Hardware Presets */}
               <div className="space-y-2.5">
                 <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
-                  Perfiles de Rendimiento ({hardware.logical_cores} hilos ·{" "}
+                  Perfiles de Rendimiento ({hardware.logical_cores} núcleos ·{" "}
                   {(totalMb / 1024).toFixed(0)} GB RAM)
                 </h2>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
@@ -669,8 +837,8 @@ export function SettingsPerformancePanel({
                     {
                       id: "light",
                       title: "Ligero",
-                      desc: "Aikar G1GC · Prioridad Normal",
-                      badge: `${lightRam} MB`,
+                      desc: "Bajo consumo de memoria, ideal para PCs modestos.",
+                      badge: `${(lightRam / 1024).toFixed(1)} GB`,
                       ram: lightRam,
                       gc: "aikar_g1_gc" as GcPreset,
                       prio: "normal" as ProcessPriority,
@@ -678,7 +846,7 @@ export function SettingsPerformancePanel({
                     {
                       id: "balanced",
                       title: "Equilibrado",
-                      desc: "ZGC Generacional · Above Normal",
+                      desc: "Mejor balance entre fluidez y estabilidad.",
                       badge: "Recomendado",
                       ram: balancedRam,
                       gc: "generational_zgc" as GcPreset,
@@ -687,8 +855,8 @@ export function SettingsPerformancePanel({
                     {
                       id: "max",
                       title: "Máximos FPS",
-                      desc: "ZGC Generacional · Prioridad High",
-                      badge: `${maxFpsRam} MB`,
+                      desc: "Máxima memoria segura y prioridad alta al jugar.",
+                      badge: `${(maxFpsRam / 1024).toFixed(1)} GB`,
                       ram: maxFpsRam,
                       gc: "generational_zgc" as GcPreset,
                       prio: "high" as ProcessPriority,
@@ -723,7 +891,7 @@ export function SettingsPerformancePanel({
                             {p.badge}
                           </span>
                         </div>
-                        <p className="mt-1 text-[11px] text-slate-400">
+                        <p className="mt-1 text-[11px] text-slate-400 leading-relaxed">
                           {p.desc}
                         </p>
                       </button>
@@ -742,7 +910,8 @@ export function SettingsPerformancePanel({
                     {liveTelemetry?.game_running && (
                       <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
                         <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent-primary)] animate-pulse" />
-                        RSS en vivo: {(liveTelemetry.game_rss_mb / 1024).toFixed(2)} GB
+                        En uso ahora:{" "}
+                        {(liveTelemetry.game_rss_mb / 1024).toFixed(2)} GB
                       </span>
                     )}
                   </div>
@@ -753,7 +922,7 @@ export function SettingsPerformancePanel({
                         : "text-[var(--accent-primary)]"
                     }`}
                   >
-                    {ramDraft} MB ({(ramDraft / 1024).toFixed(1)} GB máx)
+                    {(ramDraft / 1024).toFixed(1)} GB ({ramDraft} MB)
                   </span>
                 </div>
 
@@ -778,7 +947,7 @@ export function SettingsPerformancePanel({
 
                     <div
                       style={{ left: `${safeBarPct}%` }}
-                      title={`Umbral seguro: ${(hardware.max_safe_ram_mb / 1024).toFixed(1)} GB`}
+                      title={`Máximo recomendado: ${(hardware.max_safe_ram_mb / 1024).toFixed(1)} GB`}
                       className="pointer-events-none absolute top-0 bottom-0 w-0.5 bg-[#F59E0B]/80"
                     />
                   </div>
@@ -787,7 +956,8 @@ export function SettingsPerformancePanel({
                     <span>0 GB</span>
                     <span>{(totalMb / 2048).toFixed(0)} GB</span>
                     <span>
-                      Umbral seguro {(hardware.max_safe_ram_mb / 1024).toFixed(0)} GB
+                      Máx. seguro {(hardware.max_safe_ram_mb / 1024).toFixed(0)}{" "}
+                      GB
                     </span>
                     <span>{(totalMb / 1024).toFixed(0)} GB total</span>
                   </div>
@@ -813,7 +983,7 @@ export function SettingsPerformancePanel({
                       }`}
                     />
                     {liveTelemetry?.game_running
-                      ? `Minecraft (real): ${(liveTelemetry.game_rss_mb / 1024).toFixed(2)} GB`
+                      ? `En uso ahora: ${(liveTelemetry.game_rss_mb / 1024).toFixed(2)} GB`
                       : `Minecraft (asignado): ${(ramDraft / 1024).toFixed(1)} GB`}
                   </span>
                   <span className="inline-flex items-center gap-1.5">
@@ -862,7 +1032,7 @@ export function SettingsPerformancePanel({
                   >
                     <span className="h-1.5 w-px bg-[var(--accent-primary)]" />
                     <span className="text-[10px] font-mono text-[var(--accent-primary)] whitespace-nowrap">
-                      Óptimo: {recommendedMb} MB
+                      Óptimo: {(recommendedMb / 1024).toFixed(1)} GB
                     </span>
                   </div>
                 </div>
@@ -870,8 +1040,9 @@ export function SettingsPerformancePanel({
                 {overSafeThreshold && (
                   <div className="rounded-lg bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-3.5 py-2 flex items-center gap-2 text-xs text-amber-200">
                     <AlertTriangle className="h-3.5 w-3.5 text-[#F59E0B] shrink-0" />
-                    Supera el umbral seguro ({hardware.max_safe_ram_mb} MB) para
-                    portátiles con iGPU.
+                    Supera la memoria recomendada (
+                    {(hardware.max_safe_ram_mb / 1024).toFixed(1)} GB). Dejar
+                    poca memoria libre a Windows puede provocar tirones.
                   </div>
                 )}
               </section>
@@ -879,122 +1050,25 @@ export function SettingsPerformancePanel({
               {/* Opt-in Worldgen Mod Config Tuning */}
               <div className="space-y-2.5">
                 <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
-                  Generación de Terreno y Chunks
+                  Optimización Automática
                 </h2>
                 <div className="rounded-xl forge-panel divide-y divide-white/[0.05]">
                   <SettingRow
-                    title="Auto-configurar mods de terreno si faltan"
-                    description="Genera parámetros iniciales según tu CPU/RAM para Sodium, C2ME y Distant Horizons únicamente si el archivo de configuración no existe todavía (nunca pisa tus ajustes)."
+                    title="Ajustar mods de rendimiento automáticamente"
+                    description="Crea una configuración inicial adaptada a tu PC para Sodium, C2ME y Distant Horizons solo si aún no existe (nunca sobrescribe tus ajustes)."
                   >
                     <ToggleSwitch
                       checked={config.auto_tune_mod_configs}
                       onChange={(next) =>
                         void saveGlobal({ auto_tune_mod_configs: next })
                       }
-                      label="Auto-configurar mods de terreno si faltan"
+                      label="Ajustar mods de rendimiento automáticamente"
                     />
                   </SettingRow>
                 </div>
               </div>
 
-              {/* Java Runtime Manager */}
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <h2 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
-                    <Coffee className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
-                    Runtimes Java (Eclipse Temurin)
-                  </h2>
-                  <div className="flex items-center gap-1.5">
-                    {[8, 17, 21].map((major) => {
-                      const already = installedJavas.some(
-                        (j) => j.major === major,
-                      );
-                      return (
-                        <button
-                          key={major}
-                          type="button"
-                          disabled={already || installingMajor !== null}
-                          onClick={() => {
-                            setInstallingMajor(major);
-                            setJdkError(null);
-                            void onInstallJavaMajor(major)
-                              .then(() => refreshJavas())
-                              .catch((err) =>
-                                setJdkError(
-                                  err instanceof Error
-                                    ? err.message
-                                    : `No se pudo instalar Java ${major}`,
-                                ),
-                              )
-                              .finally(() => setInstallingMajor(null));
-                          }}
-                          className="rounded-md bg-[#121722] hover:bg-[#171D2B] border border-white/[0.07] disabled:opacity-45 px-2.5 py-1 text-[11px] font-mono text-slate-200 inline-flex items-center gap-1 transition-colors"
-                        >
-                          {already ? (
-                            <Check className="h-3 w-3 text-[var(--accent-primary)]" />
-                          ) : (
-                            <Download className="h-3 w-3 text-[var(--accent-primary)]" />
-                          )}
-                          {installingMajor === major ? "..." : `JDK ${major}`}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {jdkError && (
-                  <div className="rounded-lg bg-rose-950/50 border border-rose-500/35 px-3.5 py-2 text-xs text-rose-200">
-                    {jdkError}
-                  </div>
-                )}
-
-                <div className="rounded-xl forge-panel divide-y divide-white/[0.05]">
-                  {installedJavas.length === 0 ? (
-                    <div className="px-5 py-3.5 text-xs font-mono text-slate-500">
-                      Ningún runtime descargado todavía en shared/runtimes/.
-                    </div>
-                  ) : (
-                    installedJavas.map((rt) => (
-                      <div
-                        key={rt.major}
-                        className="px-5 py-3 flex items-center justify-between gap-4 text-xs font-mono"
-                      >
-                        <div className="min-w-0 truncate">
-                          <span className="text-slate-100 font-semibold">
-                            Java {rt.major}
-                          </span>
-                          <span className="text-slate-600 mx-2">·</span>
-                          <span className="text-slate-400">{rt.path}</span>
-                        </div>
-                        <span className="text-[var(--accent-primary)] shrink-0">
-                          {formatSize(rt.size_bytes)}
-                        </span>
-                      </div>
-                    ))
-                  )}
-
-                  <SettingRow
-                    title="Ruta personalizada de javaw.exe"
-                    description="Déjalo vacío para usar el runtime gestionado automáticamente por el launcher."
-                  >
-                    <input
-                      type="text"
-                      value={customJavaDraft}
-                      onChange={(e) => setCustomJavaDraft(e.target.value)}
-                      onBlur={() =>
-                        void onUpdateProfile({
-                          ...profile,
-                          custom_java_path: customJavaDraft.trim() || null,
-                        })
-                      }
-                      placeholder="C:\Program Files\...\bin\javaw.exe"
-                      className={`${INPUT_CLASS} font-mono sm:w-72`}
-                    />
-                  </SettingRow>
-                </div>
-              </div>
-
-              {/* Collapsed Advanced Accordion */}
+              {/* Collapsed Advanced Accordion (Java, Diagnostics Console, GC, Priority, Flags) */}
               <section className="rounded-xl forge-panel overflow-hidden">
                 <button
                   type="button"
@@ -1002,7 +1076,7 @@ export function SettingsPerformancePanel({
                   className="w-full px-5 py-3.5 flex items-center justify-between text-left hover:bg-white/[0.025] transition-colors"
                 >
                   <span className="text-[13px] font-medium text-slate-200">
-                    Avanzado (GC, Prioridad Win32, Flags JVM y Comando)
+                    Avanzado (Java, Consola de diagnóstico y Opciones técnicas)
                   </span>
                   {expertOpen ? (
                     <ChevronUp className="h-4 w-4 text-slate-400" />
@@ -1014,8 +1088,139 @@ export function SettingsPerformancePanel({
                 {expertOpen && (
                   <div className="border-t border-white/[0.05] divide-y divide-white/[0.05]">
                     <SettingRow
+                      title="Consola de diagnóstico"
+                      description="Abre el registro en tiempo real del juego para comprobar fallos o mods incompatibles (atajo Ctrl+L)."
+                    >
+                      <button
+                        type="button"
+                        onClick={onOpenConsole}
+                        className="inline-flex items-center gap-2 rounded-lg bg-[#121722] hover:bg-[#171D2B] border border-white/[0.08] px-3 py-1.5 text-xs font-medium text-slate-200 transition-colors"
+                      >
+                        <Terminal className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+                        Abrir consola de diagnóstico
+                      </button>
+                    </SettingRow>
+
+                    {/* Manual Java Runtime Management inside Advanced */}
+                    <div className="px-5 py-4 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="inline-flex items-center gap-1.5 text-[13px] font-medium text-slate-100">
+                            <Coffee className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+                            Versiones de Java gestionadas
+                          </div>
+                          <p className="text-[12px] text-slate-400">
+                            Vexel Launcher descarga Java automáticamente al
+                            jugar, pero aquí puedes preinstalar versiones
+                            manualmente.
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          {[8, 17, 21].map((major) => {
+                            const already = installedJavas.some(
+                              (j) => j.major === major,
+                            );
+                            return (
+                              <button
+                                key={major}
+                                type="button"
+                                disabled={already || installingMajor !== null}
+                                onClick={() => {
+                                  setInstallingMajor(major);
+                                  setJdkError(null);
+                                  void onInstallJavaMajor(major)
+                                    .then(() => refreshJavas())
+                                    .catch((err) =>
+                                      setJdkError(
+                                        err instanceof Error
+                                          ? err.message
+                                          : `No se pudo instalar Java ${major}`,
+                                      ),
+                                    )
+                                    .finally(() => setInstallingMajor(null));
+                                }}
+                                className="rounded-md bg-[#121722] hover:bg-[#171D2B] border border-white/[0.07] disabled:opacity-45 px-2.5 py-1 text-[11px] font-mono text-slate-200 inline-flex items-center gap-1 transition-colors"
+                              >
+                                {already ? (
+                                  <Check className="h-3 w-3 text-[var(--accent-primary)]" />
+                                ) : (
+                                  <Download className="h-3 w-3 text-[var(--accent-primary)]" />
+                                )}
+                                {installingMajor === major
+                                  ? "..."
+                                  : `Java ${major}`}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {jdkError && (
+                        <div className="rounded-lg bg-rose-950/50 border border-rose-500/35 px-3.5 py-2 text-xs text-rose-200">
+                          {jdkError}
+                        </div>
+                      )}
+
+                      <div className="rounded-lg bg-[#07090D] border border-white/[0.06] divide-y divide-white/[0.05]">
+                        {installedJavas.length === 0 ? (
+                          <div className="px-3.5 py-2.5 text-xs text-slate-500">
+                            Todavía no hay versiones de Java descargadas.
+                          </div>
+                        ) : (
+                          installedJavas.map((rt) => (
+                            <div
+                              key={rt.major}
+                              className="px-3.5 py-2 flex items-center justify-between gap-4 text-xs font-mono"
+                            >
+                              <div className="min-w-0 truncate">
+                                <span className="text-slate-100 font-semibold">
+                                  Java {rt.major}
+                                </span>
+                                <span className="text-slate-600 mx-2">·</span>
+                                <span className="text-slate-400">{rt.path}</span>
+                              </div>
+                              <span className="text-[var(--accent-primary)] shrink-0">
+                                {formatSize(rt.size_bytes)}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    <SettingRow
+                      title="Ruta personalizada de javaw.exe"
+                      description="Déjalo vacío para usar el Java gestionado automáticamente por Vexel Launcher."
+                    >
+                      <input
+                        type="text"
+                        value={customJavaDraft}
+                        onChange={(e) => setCustomJavaDraft(e.target.value)}
+                        onBlur={() =>
+                          void onUpdateProfile({
+                            ...profile,
+                            custom_java_path: customJavaDraft.trim() || null,
+                          })
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void onUpdateProfile({
+                              ...profile,
+                              custom_java_path: customJavaDraft.trim() || null,
+                            });
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        placeholder="C:\Program Files\...\bin\javaw.exe"
+                        className={`${INPUT_CLASS} font-mono sm:w-72`}
+                      />
+                    </SettingRow>
+
+                    <SettingRow
                       title="Recolector de Basura (GC)"
-                      description="Generational ZGC minimiza pausas en Java 21+; Aikar G1GC actúa como fallback estable."
+                      description="Generational ZGC minimiza pausas en Java 21+; Aikar G1GC actúa como alternativa clásica."
                     >
                       <div className="inline-flex rounded-lg bg-[#07090D] border border-white/[0.06] p-0.5">
                         {(
@@ -1049,18 +1254,22 @@ export function SettingsPerformancePanel({
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                         <div>
                           <div className="text-[13px] font-medium text-slate-100">
-                            Prioridad del proceso Win32
+                            Prioridad del proceso en Windows
                           </div>
                           <p className="text-[12px] text-slate-400">
-                            Clase de prioridad aplicada al proceso `javaw.exe` tras el arranque.
+                            Nivel de prioridad aplicado al proceso{" "}
+                            <code className="font-mono text-slate-300">
+                              javaw.exe
+                            </code>{" "}
+                            tras el arranque.
                           </p>
                         </div>
                         <div className="inline-flex rounded-lg bg-[#07090D] border border-white/[0.06] p-0.5 shrink-0">
                           {(
                             [
                               { id: "normal", label: "Normal" },
-                              { id: "above_normal", label: "Above Normal" },
-                              { id: "high", label: "High" },
+                              { id: "above_normal", label: "Alta suave" },
+                              { id: "high", label: "Alta" },
                             ] as { id: ProcessPriority; label: string }[]
                           ).map((opt) => (
                             <button
@@ -1084,16 +1293,17 @@ export function SettingsPerformancePanel({
                       {config.process_priority === "high" && (
                         <div className="rounded-lg bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-3.5 py-2 flex items-center gap-2 text-xs text-amber-200">
                           <AlertTriangle className="h-3.5 w-3.5 text-[#F59E0B] shrink-0" />
-                          La prioridad High puede restar CPU al audio o drivers
-                          de entrada en equipos con pocos núcleos. Se recomienda{" "}
-                          <span className="font-mono">Above Normal</span>.
+                          La prioridad Alta puede restar recursos al audio o
+                          otros programas en equipos con pocos núcleos. Se
+                          recomienda{" "}
+                          <span className="font-semibold">Alta suave</span>.
                         </div>
                       )}
                     </div>
 
                     <SettingRow
                       title="Argumentos JVM personalizados"
-                      description="Flags adicionales añadidos al lanzamiento de esta instancia."
+                      description="Parámetros adicionales añadidos al lanzamiento de esta instancia."
                     >
                       <input
                         type="text"
@@ -1105,6 +1315,16 @@ export function SettingsPerformancePanel({
                             custom_jvm_args: customJvmDraft.trim() || null,
                           })
                         }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void onUpdateProfile({
+                              ...profile,
+                              custom_jvm_args: customJvmDraft.trim() || null,
+                            });
+                            e.currentTarget.blur();
+                          }
+                        }}
                         placeholder="-XX:+UnlockDiagnosticVMOptions ..."
                         className={`${INPUT_CLASS} font-mono sm:w-72`}
                       />
@@ -1137,12 +1357,12 @@ export function SettingsPerformancePanel({
             </div>
           )}
 
-          {/* 3. ALMACENAMIENTO Y CACHÉ */}
+          {/* 3. ALMACENAMIENTO */}
           {section === "storage" && (
             <section className="space-y-3">
               <div>
                 <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
-                  Almacenamiento y Caché Híbrida
+                  Espacio en disco
                 </h2>
                 <p className="mt-0.5 text-xs font-mono text-slate-500">
                   {dataRoot}
@@ -1188,48 +1408,48 @@ export function SettingsPerformancePanel({
                         ))}
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-1 font-mono">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-1">
                         <div>
-                          <div className="inline-flex items-center gap-1.5 text-[11px] text-[var(--accent-primary)]">
+                          <div className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--accent-primary)]">
                             <span className="h-2 w-2 rounded-full bg-[var(--accent-primary)]" />
-                            Instancias
+                            Mundos y mods
                           </div>
-                          <div className="text-[13px] font-semibold text-white mt-0.5">
+                          <div className="text-[13px] font-mono font-semibold text-white mt-0.5">
                             {formatSize(storage.instances_bytes)}
                           </div>
                         </div>
                         <div>
-                          <div className="inline-flex items-center gap-1.5 text-[11px] text-slate-300">
+                          <div className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-300">
                             <span className="h-2 w-2 rounded-full bg-slate-400" />
-                            Assets
+                            Texturas y sonidos
                           </div>
-                          <div className="text-[13px] font-semibold text-white mt-0.5">
+                          <div className="text-[13px] font-mono font-semibold text-white mt-0.5">
                             {formatSize(storage.assets_bytes)}
                           </div>
                         </div>
                         <div>
-                          <div className="inline-flex items-center gap-1.5 text-[11px] text-indigo-300">
+                          <div className="inline-flex items-center gap-1.5 text-[11px] font-medium text-indigo-300">
                             <span className="h-2 w-2 rounded-full bg-indigo-400/85" />
-                            Librerías
+                            Archivos del juego
                           </div>
-                          <div className="text-[13px] font-semibold text-white mt-0.5">
+                          <div className="text-[13px] font-mono font-semibold text-white mt-0.5">
                             {formatSize(storage.libraries_bytes)}
                           </div>
                         </div>
                         <div>
-                          <div className="inline-flex items-center gap-1.5 text-[11px] text-teal-300">
+                          <div className="inline-flex items-center gap-1.5 text-[11px] font-medium text-teal-300">
                             <span className="h-2 w-2 rounded-full bg-teal-400/85" />
-                            Runtimes
+                            Java
                           </div>
-                          <div className="text-[13px] font-semibold text-white mt-0.5">
+                          <div className="text-[13px] font-mono font-semibold text-white mt-0.5">
                             {formatSize(storage.runtimes_bytes)}
                           </div>
                         </div>
                       </div>
                     </>
                   ) : (
-                    <p className="text-xs font-mono text-slate-500">
-                      Calculando uso de disco...
+                    <p className="text-xs text-slate-500">
+                      Calculando espacio ocupado...
                     </p>
                   )}
                 </div>
@@ -1241,19 +1461,19 @@ export function SettingsPerformancePanel({
                       void onRevalidateCache()
                         .then(() =>
                           setStorageFeedback(
-                            "Índice integrity_index.json reiniciado; se revalidará en el próximo arranque.",
+                            "Listo: todos los archivos del juego se comprobarán la próxima vez que pulses JUGAR.",
                           ),
                         )
                         .catch(() =>
                           setStorageFeedback(
-                            "No se pudo reiniciar integrity_index.json.",
+                            "No se pudo programar la comprobación de archivos.",
                           ),
                         );
                     }}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-[#121722] hover:bg-[#171D2B] border border-white/[0.07] px-3 py-1.5 text-xs font-medium text-slate-200 transition-colors"
                   >
                     <RefreshCw className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
-                    Revalidar caché
+                    Comprobar archivos del juego
                   </button>
 
                   <button
@@ -1262,20 +1482,20 @@ export function SettingsPerformancePanel({
                       void onCleanOldLogs()
                         .then((res) => {
                           setStorageFeedback(
-                            `Eliminados ${res.files_removed} logs antiguos (${formatSize(res.bytes_freed)} liberados).`,
+                            `Se eliminaron ${res.files_removed} registros antiguos (${formatSize(res.bytes_freed)} liberados).`,
                           );
                           void refreshStorage();
                         })
                         .catch(() =>
                           setStorageFeedback(
-                            "No se pudieron limpiar los logs antiguos.",
+                            "No se pudieron limpiar los registros antiguos.",
                           ),
                         );
                     }}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-[#121722] hover:bg-[#171D2B] border border-white/[0.07] px-3 py-1.5 text-xs font-medium text-slate-200 transition-colors"
                   >
                     <Trash2 className="h-3.5 w-3.5 text-amber-400" />
-                    Limpiar logs antiguos
+                    Limpiar registros antiguos
                   </button>
 
                   <button
@@ -1284,12 +1504,12 @@ export function SettingsPerformancePanel({
                     className="inline-flex items-center gap-1.5 rounded-lg bg-[#121722] hover:bg-[#171D2B] border border-white/[0.07] px-3 py-1.5 text-xs font-medium text-slate-200 transition-colors"
                   >
                     <FolderOpen className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
-                    Abrir carpeta raíz
+                    Abrir carpeta de datos
                   </button>
                 </div>
 
                 {storageFeedback && (
-                  <div className="px-5 py-3 text-xs font-mono text-[var(--accent-primary)]">
+                  <div className="px-5 py-3 text-xs text-[var(--accent-primary)]">
                     {storageFeedback}
                   </div>
                 )}
@@ -1306,9 +1526,9 @@ export function SettingsPerformancePanel({
                   model={config.skin_model}
                   username={config.offline_username}
                   paused={isAnyRunning}
-                  onUpdateUsername={(nick) =>
-                    saveGlobal({ offline_username: nick })
-                  }
+                  onUpdateUsername={async (nick) => {
+                    await saveGlobal({ offline_username: nick });
+                  }}
                   onChangeSkinClick={() => skinInputRef.current?.click()}
                   width={230}
                   height={305}
@@ -1317,8 +1537,48 @@ export function SettingsPerformancePanel({
 
               <div className="md:col-span-7 divide-y divide-white/[0.05] flex flex-col justify-center">
                 <SettingRow
+                  title="Nombre de jugador"
+                  description="Tu apodo dentro del juego (3 a 16 caracteres: letras, números o _)."
+                >
+                  <div className="w-full sm:w-56 space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        maxLength={16}
+                        value={usernameDraft}
+                        onChange={(e) => {
+                          setUsernameDraft(e.target.value);
+                          if (usernameError) setUsernameError(null);
+                        }}
+                        onBlur={() => void commitUsername()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void commitUsername();
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        placeholder="Jugador"
+                        className={`${INPUT_CLASS} font-mono`}
+                      />
+                    </div>
+                    {usernameError && (
+                      <p className="text-[11px] text-amber-300">
+                        {usernameError}
+                      </p>
+                    )}
+                    {usernameSaved && !usernameError && (
+                      <p className="inline-flex items-center gap-1 text-[11px] text-emerald-300">
+                        <Check className="h-3 w-3" />
+                        Guardado ✓
+                      </p>
+                    )}
+                  </div>
+                </SettingRow>
+
+                <SettingRow
                   title="Modelo de brazos"
-                  description="Elige el grosor del modelo compatible con tu textura."
+                  description="Elige el grosor de brazos compatible con tu skin."
                 >
                   <div className="inline-flex rounded-lg bg-[#07090D] border border-white/[0.06] p-0.5">
                     <button
@@ -1348,7 +1608,7 @@ export function SettingsPerformancePanel({
 
                 <SettingRow
                   title="Aplicar skin dentro del juego"
-                  description="Sincroniza _launcher_skin.zip en modo offline (solo visible localmente, sin cuenta Mojang)."
+                  description="Muestra tu skin personalizada al jugar sin conexión (solo visible localmente en tus partidas)."
                 >
                   <ToggleSwitch
                     checked={config.apply_skin_ingame}
@@ -1382,7 +1642,7 @@ export function SettingsPerformancePanel({
                     <Upload className="h-4 w-4" />
                     {uploadingSkin
                       ? "Guardando skin..."
-                      : "Subir skin personalizada (.png 64×64 / 64×32 / HD)"}
+                      : "Subir skin personalizada (.png)"}
                   </button>
                 </div>
               </div>
@@ -1399,7 +1659,7 @@ export function SettingsPerformancePanel({
               <div className="rounded-xl forge-panel divide-y divide-white/[0.05]">
                 <SettingRow
                   title="Color de acento principal"
-                  description="Personaliza botones principales, pedestal 3D e indicadores activos."
+                  description="Personaliza el color de los botones principales e indicadores activos."
                 >
                   <div className="flex flex-wrap items-center gap-1.5">
                     {ACCENT_OPTIONS.map((opt) => {
@@ -1430,8 +1690,8 @@ export function SettingsPerformancePanel({
                 </SettingRow>
 
                 <SettingRow
-                  title="Al lanzar Minecraft"
-                  description="Decide qué ocurre con la ventana del launcher cuando el juego arranca."
+                  title="Al abrir Minecraft"
+                  description="Elige qué hace la ventana de Vexel Launcher cuando empieza el juego."
                 >
                   <div className="inline-flex rounded-lg bg-[#07090D] border border-white/[0.06] p-0.5">
                     {(
@@ -1463,15 +1723,15 @@ export function SettingsPerformancePanel({
                 </SettingRow>
 
                 <SettingRow
-                  title="Abrir consola automáticamente en crash"
-                  description="Despliega el cajón de logs al instante cuando Minecraft termina con un código de error."
+                  title="Abrir consola si el juego se cierra por error"
+                  description="Muestra el registro automáticamente cuando Minecraft se cierra de forma inesperada."
                 >
                   <ToggleSwitch
                     checked={config.auto_open_console_on_crash}
                     onChange={(next) =>
                       void saveGlobal({ auto_open_console_on_crash: next })
                     }
-                    label="Abrir consola automáticamente en crash"
+                    label="Abrir consola si el juego se cierra por error"
                   />
                 </SettingRow>
               </div>
@@ -1479,6 +1739,69 @@ export function SettingsPerformancePanel({
           )}
         </div>
       </div>
+
+      {/* Safe Instance Delete Modal inside Settings (Checkbox Unchecked by Default) */}
+      {deleteModalOpen && (
+        <div
+          onClick={() => !deletingProfile && setDeleteModalOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-xl forge-card p-5 space-y-4 shadow-2xl"
+          >
+            <div className="space-y-1">
+              <h2 className="text-[14px] font-semibold text-white">
+                Eliminar instancia
+              </h2>
+              <p className="text-[13px] text-slate-400 leading-relaxed">
+                ¿Seguro que deseas quitar{" "}
+                <span className="font-semibold text-white">{profile.name}</span>{" "}
+                de la lista de instancias?
+              </p>
+            </div>
+
+            <label className="flex items-start gap-2.5 rounded-lg bg-[#07090D] border border-white/[0.06] px-3 py-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={deleteFilesChecked}
+                onChange={(e) => setDeleteFilesChecked(e.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 accent-rose-500 shrink-0"
+              />
+              <span className="text-xs text-slate-300 leading-snug">
+                Eliminar también la carpeta y mundos en disco (irreversible)
+              </span>
+            </label>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={deletingProfile}
+                onClick={() => setDeleteModalOpen(false)}
+                className="rounded-lg bg-white/[0.05] hover:bg-white/[0.09] px-3.5 py-1.5 text-xs font-medium text-slate-300 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={deletingProfile}
+                onClick={() => {
+                  const id = profile.id;
+                  const removeDisk = deleteFilesChecked;
+                  setDeletingProfile(true);
+                  void onDeleteProfile(id, removeDisk).finally(() => {
+                    setDeletingProfile(false);
+                    setDeleteModalOpen(false);
+                  });
+                }}
+                className="rounded-lg bg-rose-600 hover:bg-rose-500 px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50 transition-colors"
+              >
+                {deletingProfile ? "Eliminando..." : "Eliminar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,13 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import {
-  AlertTriangle,
-  Minus,
-  Search,
-  Square,
-  X,
-} from "lucide-react";
+import { AlertTriangle, Minus, Search, Square, X } from "lucide-react";
 import {
   ConsoleDrawer,
   createLogStore,
@@ -25,6 +19,7 @@ import {
   type MainView,
 } from "./components/SidebarProfiles";
 import { ACCENT_PALETTE } from "./theme/accents";
+import { extractIpcError, formatFriendlyError } from "./utils/errors";
 import type {
   BootstrapState,
   ContentItem,
@@ -33,7 +28,6 @@ import type {
   InstalledJavaRuntime,
   InstanceExitEvent,
   InstanceSummary,
-  IpcErrorPayload,
   JavaRuntimeStatus,
   JvmTuningOutput,
   LauncherConfig,
@@ -42,6 +36,7 @@ import type {
   LiveMemoryTelemetry,
   LogCleanupResult,
   LogLineEvent,
+  MinecraftVersionEntry,
   ModrinthSearchResult,
   ModrinthSort,
   PerformancePreset,
@@ -54,20 +49,6 @@ interface CrashToastState {
   exitCode: number;
 }
 
-function extractIpcError(err: unknown): IpcErrorPayload {
-  if (typeof err === "object" && err !== null) {
-    return err as IpcErrorPayload;
-  }
-  if (typeof err === "string") {
-    try {
-      return JSON.parse(err) as IpcErrorPayload;
-    } catch {
-      return { message: err };
-    }
-  }
-  return { message: "Error desconocido en IPC" };
-}
-
 export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapState | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string>("");
@@ -75,6 +56,9 @@ export function App() {
   const [settingsSection, setSettingsSection] =
     useState<SettingsSection>("instance");
   const [skinDataUrl, setSkinDataUrl] = useState<string | null>(null);
+  const [mcVersions, setMcVersions] = useState<MinecraftVersionEntry[]>([]);
+  const [loadingVersions, setLoadingVersions] = useState(false);
+  const [summaryRefreshKey, setSummaryRefreshKey] = useState(0);
   const [jvmTuning, setJvmTuning] = useState<JvmTuningOutput | null>(null);
   const [launchingProfileId, setLaunchingProfileId] = useState<string | null>(
     null,
@@ -176,10 +160,11 @@ export function App() {
         );
       }
     } catch (err) {
-      const parsed = extractIpcError(err);
       setBannerError(
-        parsed.message ??
-          "No se pudo conectar con el backend Tauri v2. Ejecuta `npm run tauri dev`.",
+        formatFriendlyError(
+          err,
+          "No se pudo iniciar Vexel Launcher. Cierra y vuelve a abrir la aplicación.",
+        ),
       );
     }
   }, []);
@@ -187,6 +172,25 @@ export function App() {
   useEffect(() => {
     void loadBootstrap();
   }, [loadBootstrap]);
+
+  // Fetch official Minecraft version catalog in background (cached 6h + offline fallback)
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingVersions(true);
+    void invoke<MinecraftVersionEntry[]>("list_minecraft_versions")
+      .then((list) => {
+        if (!cancelled) setMcVersions(list);
+      })
+      .catch(() => {
+        // Offline with empty cache: VersionPicker falls back gracefully to manual input
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingVersions(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const selectedProfile = useMemo(() => {
     if (!bootstrap) return null;
@@ -235,7 +239,7 @@ export function App() {
     setBootstrap((prev) => (prev ? { ...prev, config: nextConfig } : prev));
   };
 
-  const handleSaveProfile = async (profile: Profile) => {
+  const handleSaveProfile = async (profile: Profile): Promise<boolean> => {
     try {
       const nextConfig = await invoke<LauncherConfig>(
         "create_or_update_profile",
@@ -243,10 +247,12 @@ export function App() {
       );
       setBannerError(null);
       updateConfigState(nextConfig);
+      return true;
     } catch (err) {
       setBannerError(
-        extractIpcError(err).message ?? "Error al guardar el perfil",
+        formatFriendlyError(err, "No se pudieron guardar los cambios."),
       );
+      return false;
     }
   };
 
@@ -257,8 +263,10 @@ export function App() {
       name: `${source.name} (Copia)`,
       is_default: false,
     };
-    await handleSaveProfile(copy);
-    setSelectedProfileId(copy.id);
+    const ok = await handleSaveProfile(copy);
+    if (ok) {
+      setSelectedProfileId(copy.id);
+    }
   };
 
   const handleSetDefault = async (profileId: string) => {
@@ -270,7 +278,10 @@ export function App() {
       updateConfigState(nextConfig);
     } catch (err) {
       setBannerError(
-        extractIpcError(err).message ?? "No se pudo fijar el perfil predeterminado",
+        formatFriendlyError(
+          err,
+          "No se pudo fijar la instancia predeterminada.",
+        ),
       );
     }
   };
@@ -291,7 +302,7 @@ export function App() {
       }
     } catch (err) {
       setBannerError(
-        extractIpcError(err).message ?? "No se pudo eliminar el perfil",
+        formatFriendlyError(err, "No se pudo eliminar la instancia."),
       );
     }
   };
@@ -301,7 +312,7 @@ export function App() {
       await invoke("open_instance_folder", { profileId });
     } catch (err) {
       setBannerError(
-        extractIpcError(err).message ?? "No se pudo abrir la carpeta",
+        formatFriendlyError(err, "No se pudo abrir la carpeta de la instancia."),
       );
     }
   };
@@ -311,7 +322,7 @@ export function App() {
       await invoke("open_instance_saves_folder", { profileId });
     } catch (err) {
       setBannerError(
-        extractIpcError(err).message ?? "No se pudo abrir saves/",
+        formatFriendlyError(err, "No se pudo abrir la carpeta de mundos."),
       );
     }
   };
@@ -321,7 +332,7 @@ export function App() {
       await invoke("open_data_root_folder");
     } catch (err) {
       setBannerError(
-        extractIpcError(err).message ?? "No se pudo abrir la carpeta raíz",
+        formatFriendlyError(err, "No se pudo abrir la carpeta de datos."),
       );
     }
   };
@@ -334,7 +345,7 @@ export function App() {
       setBannerError(null);
       updateConfigState(nextConfig);
     } catch (err) {
-      const msg = extractIpcError(err).message ?? "Error guardando ajustes";
+      const msg = formatFriendlyError(err, "No se pudieron guardar los ajustes.");
       setBannerError(msg);
       throw new Error(msg);
     }
@@ -362,7 +373,10 @@ export function App() {
       setBannerError(null);
       setSkinDataUrl(dataUrl);
     } catch (err) {
-      const msg = extractIpcError(err).message ?? "Error al subir skin PNG";
+      const msg = formatFriendlyError(
+        err,
+        "No se pudo guardar la skin. Comprueba que es un archivo PNG válido.",
+      );
       setBannerError(msg);
       throw new Error(msg);
     }
@@ -377,7 +391,7 @@ export function App() {
       updateConfigState(nextConfig);
     } catch (err) {
       setBannerError(
-        extractIpcError(err).message ?? "Error al cambiar el modelo de brazos",
+        formatFriendlyError(err, "No se pudo cambiar el modelo de brazos."),
       );
     }
   };
@@ -400,7 +414,7 @@ export function App() {
     }
     if (profileToRun.loader === "forge" || profileToRun.loader === "neo_forge") {
       setBannerError(
-        "El soporte directo para Forge/NeoForge llegará próximamente. Cambia a Vanilla o Fabric para lanzar.",
+        "El soporte directo para Forge y NeoForge llegará próximamente. Cambia a Vanilla o Fabric para jugar.",
       );
       return;
     }
@@ -428,6 +442,7 @@ export function App() {
         return next;
       });
       setProgress(null);
+      setSummaryRefreshKey((k) => k + 1);
 
       if (ev.exit_code !== null && ev.exit_code !== 0) {
         const latestCfg = configRef.current;
@@ -455,7 +470,11 @@ export function App() {
       });
       setRunningProfiles((prev) => ({ ...prev, [profileToRun.id]: true }));
       logStore.push({
-        line: `[Launcher] Proceso activo PID ${result.pid} · Fast-Path O(1): ${result.fast_path_hits} · Descargados: ${result.downloaded_files}`,
+        line: `[Vexel] Juego iniciado (PID ${result.pid}) · ${
+          result.downloaded_files > 0
+            ? `${result.downloaded_files} archivos descargados`
+            : "todos los archivos listos"
+        }`,
         is_stderr: false,
         timestamp_ms: Date.now(),
       });
@@ -464,7 +483,9 @@ export function App() {
       if (parsed.code === "JAVA_NOT_FOUND" && parsed.required_major) {
         setMissingJavaMajor(parsed.required_major);
       } else {
-        setBannerError(parsed.message ?? "Fallo al lanzar Minecraft");
+        setBannerError(
+          formatFriendlyError(err, "No se pudo abrir Minecraft."),
+        );
       }
     } finally {
       setLaunchingProfileId(null);
@@ -481,9 +502,10 @@ export function App() {
         delete next[id];
         return next;
       });
+      setSummaryRefreshKey((k) => k + 1);
     } catch (err) {
       setBannerError(
-        extractIpcError(err).message ?? "Error al detener proceso",
+        formatFriendlyError(err, "No se pudo detener Minecraft."),
       );
     }
   };
@@ -500,9 +522,10 @@ export function App() {
         onProgress,
       });
     } catch (err) {
-      const msg =
-        extractIpcError(err).message ??
-        `Error instalando Eclipse Temurin Java ${major}`;
+      const msg = formatFriendlyError(
+        err,
+        `No se pudo descargar Java ${major}.`,
+      );
       setBannerError(msg);
       throw new Error(msg);
     } finally {
@@ -514,11 +537,11 @@ export function App() {
     setInstallingJava(true);
     setBannerError(null);
     setJavaInstallProgress({
-      phase: "Descargando JRE...",
+      phase: "Descargando Java...",
       completed: 0,
       total: 100,
       bytes_downloaded: 0,
-      detail: `Conectando con Eclipse Adoptium (Java ${major})...`,
+      detail: `Conectando para descargar Java ${major}...`,
       fast_path_hits: 0,
     });
 
@@ -537,8 +560,9 @@ export function App() {
       setJavaInstallProgress(null);
       await handlePlayProfile();
     } catch (err) {
-      const parsed = extractIpcError(err);
-      setBannerError(parsed.message ?? "Error descargando Java desde Adoptium");
+      setBannerError(
+        formatFriendlyError(err, `No se pudo descargar Java ${major}.`),
+      );
     } finally {
       setInstallingJava(false);
     }
@@ -550,7 +574,7 @@ export function App() {
       .map((l) => `[${formatLocalHms(l.timestamp_ms)}] ${l.line}`)
       .join("\n");
     try {
-      await navigator.clipboard.writeText(report || "Sin líneas de log.");
+      await navigator.clipboard.writeText(report || "Sin líneas de registro.");
       setCopiedLogs(true);
       setTimeout(() => setCopiedLogs(false), 1800);
     } catch {
@@ -637,11 +661,17 @@ export function App() {
   );
 
   const handleImportContent = useCallback(
-    async (profileId: string, kind: ContentKind, sourcePath: string) =>
+    async (
+      profileId: string,
+      kind: ContentKind,
+      sourcePath: string,
+      autoClassify = false,
+    ) =>
       invoke<ContentItem>("import_profile_content", {
         profileId,
         kind,
         sourcePath,
+        autoClassify,
       }),
     [],
   );
@@ -652,12 +682,14 @@ export function App() {
       kind: ContentKind,
       fileName: string,
       bytes: number[],
+      autoClassify = false,
     ) =>
       invoke<ContentItem>("import_profile_content_bytes", {
         profileId,
         kind,
         fileName,
         bytes,
+        autoClassify,
       }),
     [],
   );
@@ -757,13 +789,7 @@ export function App() {
             data-tauri-drag-region
             className="text-[13px] font-semibold tracking-tight text-slate-100"
           >
-            MC Launcher
-          </span>
-          <span
-            data-tauri-drag-region
-            className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[9px] font-mono font-semibold tracking-wider text-[var(--accent-primary)]"
-          >
-            RUST
+            Vexel Launcher
           </span>
         </div>
 
@@ -815,8 +841,8 @@ export function App() {
       {/* Main Body */}
       {!bootstrap || !selectedProfile ? (
         <main className="flex-1 flex items-center justify-center p-6">
-          <p className="text-xs font-mono text-slate-400">
-            {bannerError ?? "Inicializando..."}
+          <p className="text-xs text-slate-400">
+            {bannerError ?? "Iniciando Vexel Launcher..."}
           </p>
         </main>
       ) : (
@@ -826,14 +852,14 @@ export function App() {
             selectedProfileId={selectedProfile.id}
             runningProfileIds={runningProfiles}
             activeView={activeView}
-            consoleOpen={consoleOpen}
             hardware={bootstrap.hardware}
+            mcVersions={mcVersions}
+            loadingVersions={loadingVersions}
             onSelectProfile={setSelectedProfileId}
             onSelectView={(v) => {
               if (v === "performance") setSettingsSection("instance");
               setActiveView(v);
             }}
-            onToggleConsole={() => setConsoleOpen((v) => !v)}
             onPlayProfile={(id) => handlePlayProfile(id)}
             onStopProfile={(id) => handleStopProfile(id)}
             onOpenFolder={handleOpenFolder}
@@ -845,12 +871,13 @@ export function App() {
 
           <div className="relative flex-1 flex flex-col min-w-0 min-h-0">
             {bannerError && (
-              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 rounded-lg bg-[#121722] border border-rose-500/35 px-4 py-2 text-xs font-mono text-rose-200 flex items-center gap-3 shadow-2xl">
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 max-w-lg rounded-lg bg-[#121722] border border-rose-500/35 px-4 py-2.5 text-xs text-rose-200 flex items-center gap-3 shadow-2xl">
+                <AlertTriangle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
                 <span>{bannerError}</span>
                 <button
                   type="button"
                   onClick={() => setBannerError(null)}
-                  className="text-rose-400 hover:text-white"
+                  className="text-rose-400 hover:text-white shrink-0"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -913,6 +940,7 @@ export function App() {
                   launching={launchingProfileId === selectedProfile.id}
                   isRunning={Boolean(runningProfiles[selectedProfile.id])}
                   isAnyRunning={isAnyInstanceRunning}
+                  summaryRefreshKey={summaryRefreshKey}
                   progress={
                     launchingProfileId === selectedProfile.id || installingJava
                       ? progress
@@ -950,6 +978,7 @@ export function App() {
               {activeView === "content" && (
                 <ContentManagerPanel
                   profile={selectedProfile}
+                  onUpdateProfile={handleSaveProfile}
                   onListContent={handleListContent}
                   onGetDynamicRecommendations={handleGetDynamicRecommendations}
                   onSearchModrinth={handleSearchModrinth}
@@ -970,12 +999,21 @@ export function App() {
                   jvmTuning={jvmTuning}
                   skinDataUrl={skinDataUrl}
                   isAnyRunning={isAnyInstanceRunning}
+                  isProfileRunning={Boolean(
+                    runningProfiles[selectedProfile.id],
+                  )}
+                  profilesCount={bootstrap.config.profiles.length}
+                  mcVersions={mcVersions}
+                  loadingVersions={loadingVersions}
                   dataRoot={bootstrap.data_root}
                   initialSection={settingsSection}
                   onUpdateProfile={handleSaveProfile}
+                  onDuplicateProfile={handleDuplicateProfile}
+                  onDeleteProfile={handleDeleteProfile}
                   onSaveGlobalSettings={handleSaveGlobalSettings}
                   onUploadSkinBytes={handleUploadSkinBytes}
                   onSetSkinModel={handleSetSkinModel}
+                  onOpenConsole={() => setConsoleOpen(true)}
                   onOpenDataRoot={handleOpenDataRoot}
                   onListInstalledJavas={handleListInstalledJavas}
                   onInstallJavaMajor={handleInstallJavaMajorOnly}
@@ -988,7 +1026,7 @@ export function App() {
               )}
             </div>
 
-            {/* Slide-Up Console Drawer (Ctrl+L) */}
+            {/* Slide-Up Console Drawer (Ctrl+L or Advanced Settings / Crash Toast) */}
             {consoleOpen && (
               <ConsoleDrawer
                 logStore={logStore}
@@ -1016,7 +1054,7 @@ export function App() {
                 autoFocus
                 value={quickQuery}
                 onChange={(e) => setQuickQuery(e.target.value)}
-                placeholder="Cambiar instancia por nombre, versión o loader..."
+                placeholder="Buscar instancia por nombre o versión..."
                 className="flex-1 bg-transparent text-[13px] text-white placeholder:text-slate-500 focus:outline-none"
               />
               <kbd className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[10px] font-mono text-slate-400">

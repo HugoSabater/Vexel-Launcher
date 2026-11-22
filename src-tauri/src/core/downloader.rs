@@ -243,11 +243,11 @@ where
     let mut index_dirty = false;
 
     on_progress(DownloadProgress {
-        phase: "Verificando caché (Fast-Path)".to_string(),
+        phase: "Comprobando archivos...".to_string(),
         completed_files: 0,
         total_files: total_artifacts,
         bytes_downloaded: 0,
-        current_file: "Consultando integrity_index.json...".to_string(),
+        current_file: "Revisando archivos del juego...".to_string(),
         fast_path_hits: 0,
     });
 
@@ -290,14 +290,18 @@ where
     }
 
     on_progress(DownloadProgress {
-        phase: "Verificación completada".to_string(),
+        phase: "Comprobación completada".to_string(),
         completed_files: fast_path_hits + hashed_from_disk,
         total_files: total_artifacts,
         bytes_downloaded: 0,
-        current_file: format!(
-            "{fast_path_hits} hits instantáneos, {} pendientes",
-            pending_downloads.len()
-        ),
+        current_file: if pending_downloads.is_empty() {
+            "Todos los archivos están listos".to_string()
+        } else {
+            format!(
+                "{fast_path_hits} listos, {} por descargar",
+                pending_downloads.len()
+            )
+        },
         fast_path_hits,
     });
 
@@ -374,7 +378,7 @@ where
             let done = completed_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             let bytes = bytes_counter.load(std::sync::atomic::Ordering::Relaxed);
             progress_cb(DownloadProgress {
-                phase: "Descargando archivos (12x HTTP/2)".to_string(),
+                phase: "Descargando archivos...".to_string(),
                 completed_files: done,
                 total_files: total_artifacts,
                 bytes_downloaded: bytes,

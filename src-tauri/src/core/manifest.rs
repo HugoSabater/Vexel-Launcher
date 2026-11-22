@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +10,7 @@ use crate::error::{AppError, AppResult};
 
 pub const MOJANG_VERSION_MANIFEST_V2_URL: &str =
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
+const VERSION_MANIFEST_CACHE_TTL_SECS: u64 = 6 * 60 * 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionManifestList {
@@ -30,6 +32,15 @@ pub struct VersionSummary {
     pub version_type: String,
     pub url: String,
     pub sha1: Option<String>,
+    #[serde(default)]
+    pub release_time: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MinecraftVersionEntry {
+    pub id: String,
+    pub version_type: String,
+    pub release_time: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,6 +260,95 @@ pub async fn fetch_version_catalog(client: &reqwest::Client) -> AppResult<Versio
         .error_for_status()?;
     let catalog: VersionManifestList = response.json().await?;
     Ok(catalog)
+}
+
+#[must_use]
+fn catalog_to_version_entries(catalog: VersionManifestList) -> Vec<MinecraftVersionEntry> {
+    catalog
+        .versions
+        .into_iter()
+        .map(|v| MinecraftVersionEntry {
+            id: v.id,
+            version_type: v.version_type,
+            release_time: v.release_time.unwrap_or_default(),
+        })
+        .collect()
+}
+
+async fn fetch_or_load_version_list_with_url(
+    client: &reqwest::Client,
+    paths: &LauncherPaths,
+    catalog_url: &str,
+    ttl_secs: u64,
+) -> AppResult<Vec<MinecraftVersionEntry>> {
+    let cache_path = paths.shared_cache_dir().join("version_manifest_v2.json");
+
+    let mut cached_catalog: Option<VersionManifestList> = None;
+    let mut cache_is_fresh = false;
+
+    if tokio::fs::try_exists(&cache_path).await.unwrap_or(false) {
+        if let Ok(raw) = tokio::fs::read_to_string(&cache_path).await {
+            if let Ok(parsed) = serde_json::from_str::<VersionManifestList>(&raw) {
+                if let Ok(meta) = tokio::fs::metadata(&cache_path).await {
+                    if let Ok(modified) = meta.modified() {
+                        if let Ok(age) = SystemTime::now().duration_since(modified) {
+                            cache_is_fresh = age.as_secs() < ttl_secs;
+                        }
+                    }
+                }
+                cached_catalog = Some(parsed);
+            }
+        }
+    }
+
+    if cache_is_fresh {
+        if let Some(catalog) = cached_catalog {
+            return Ok(catalog_to_version_entries(catalog));
+        }
+    }
+
+    match async {
+        let raw = client
+            .get(catalog_url)
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+        let parsed: VersionManifestList = serde_json::from_str(&raw)?;
+        Ok::<(String, VersionManifestList), AppError>((raw, parsed))
+    }
+    .await
+    {
+        Ok((raw, catalog)) => {
+            if let Ok(()) = tokio::fs::create_dir_all(paths.shared_cache_dir()).await {
+                let tmp_path = cache_path.with_extension("json.tmp");
+                if tokio::fs::write(&tmp_path, raw.as_bytes()).await.is_ok() {
+                    let _ = tokio::fs::rename(&tmp_path, &cache_path).await;
+                }
+            }
+            Ok(catalog_to_version_entries(catalog))
+        }
+        Err(err) => {
+            if let Some(stale) = cached_catalog {
+                return Ok(catalog_to_version_entries(stale));
+            }
+            Err(err)
+        }
+    }
+}
+
+pub async fn fetch_or_load_version_list(
+    client: &reqwest::Client,
+    paths: &LauncherPaths,
+) -> AppResult<Vec<MinecraftVersionEntry>> {
+    fetch_or_load_version_list_with_url(
+        client,
+        paths,
+        MOJANG_VERSION_MANIFEST_V2_URL,
+        VERSION_MANIFEST_CACHE_TTL_SECS,
+    )
+    .await
 }
 
 pub fn validate_version_id(version_id: &str) -> AppResult<()> {
@@ -655,6 +755,76 @@ mod tests {
                 .join("0.15.3+mixin.0.8.7")
                 .join("sponge-mixin-0.15.3+mixin.0.8.7.jar")
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_version_list_uses_fresh_cache_and_falls_back_when_offline()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = std::env::temp_dir().join(format!(
+            "vexel-version-cache-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let paths = LauncherPaths::with_root(tmp.clone());
+        tokio::fs::create_dir_all(paths.shared_cache_dir()).await?;
+
+        let sample_catalog = r#"{
+            "latest": { "release": "1.21.5", "snapshot": "25w14a" },
+            "versions": [
+                {
+                    "id": "25w14a",
+                    "type": "snapshot",
+                    "url": "https://piston-meta.mojang.com/v1/packages/aa/25w14a.json",
+                    "releaseTime": "2025-04-02T13:00:00+00:00"
+                },
+                {
+                    "id": "1.21.5",
+                    "type": "release",
+                    "url": "https://piston-meta.mojang.com/v1/packages/bb/1.21.5.json",
+                    "releaseTime": "2025-03-25T12:14:58+00:00"
+                },
+                {
+                    "id": "1.21.4",
+                    "type": "release",
+                    "url": "https://piston-meta.mojang.com/v1/packages/cc/1.21.4.json",
+                    "releaseTime": "2024-12-03T10:12:57+00:00"
+                }
+            ]
+        }"#;
+
+        let cache_path = paths.shared_cache_dir().join("version_manifest_v2.json");
+        tokio::fs::write(&cache_path, sample_catalog).await?;
+
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_millis(150))
+            .build()?;
+
+        // 1. Fresh cache (< 6h) must return cached versions immediately without network
+        let fresh_entries = super::fetch_or_load_version_list_with_url(
+            &client,
+            &paths,
+            "http://127.0.0.1:1/unreachable",
+            super::VERSION_MANIFEST_CACHE_TTL_SECS,
+        )
+        .await?;
+        assert_eq!(fresh_entries.len(), 3);
+        assert_eq!(fresh_entries[0].id, "25w14a");
+        assert_eq!(fresh_entries[0].version_type, "snapshot");
+        assert_eq!(fresh_entries[1].id, "1.21.5");
+        assert_eq!(fresh_entries[1].version_type, "release");
+        assert_eq!(fresh_entries[1].release_time, "2025-03-25T12:14:58+00:00");
+
+        // 2. Expired TTL (0s) with unreachable endpoint must fall back to local cache cleanly
+        let fallback_entries = super::fetch_or_load_version_list_with_url(
+            &client,
+            &paths,
+            "http://127.0.0.1:1/unreachable",
+            0,
+        )
+        .await?;
+        assert_eq!(fallback_entries, fresh_entries);
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
         Ok(())
     }
 }

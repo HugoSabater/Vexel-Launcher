@@ -195,3 +195,9 @@ export interface IpcErrorPayload {
   message?: string;
   required_major?: number;
 }
+
+export interface MinecraftVersionEntry {
+  id: string;
+  version_type: string;
+  release_time: string;
+}

@@ -1110,11 +1110,63 @@ async fn finalize_imported_item(
     })
 }
 
-pub async fn import_content_file(
+fn is_zip_filename(file_name: &str) -> bool {
+    let lower = file_name.to_lowercase();
+    lower.ends_with(".zip") || lower.ends_with(".zip.disabled")
+}
+
+#[must_use]
+fn classify_zip_archive<R: Read + std::io::Seek>(
+    archive: &zip::ZipArchive<R>,
+    fallback: ContentKind,
+) -> ContentKind {
+    let mut has_pack_mcmeta = false;
+    for raw_name in archive.file_names() {
+        let norm = raw_name.replace('\\', "/").to_lowercase();
+        let trimmed = norm.trim_start_matches('/');
+        if trimmed == "shaders"
+            || trimmed.starts_with("shaders/")
+            || trimmed.contains("/shaders/")
+        {
+            return ContentKind::Shader;
+        }
+        if trimmed == "pack.mcmeta" || trimmed.ends_with("/pack.mcmeta") {
+            has_pack_mcmeta = true;
+        }
+    }
+    if has_pack_mcmeta {
+        ContentKind::ResourcePack
+    } else {
+        fallback
+    }
+}
+
+#[must_use]
+pub fn classify_zip_file_blocking(path: &Path) -> ContentKind {
+    let Ok(file) = File::open(path) else {
+        return ContentKind::ResourcePack;
+    };
+    let Ok(archive) = zip::ZipArchive::new(file) else {
+        return ContentKind::ResourcePack;
+    };
+    classify_zip_archive(&archive, ContentKind::ResourcePack)
+}
+
+#[must_use]
+pub fn classify_zip_bytes_blocking(bytes: &[u8]) -> ContentKind {
+    let cursor = std::io::Cursor::new(bytes);
+    let Ok(archive) = zip::ZipArchive::new(cursor) else {
+        return ContentKind::ResourcePack;
+    };
+    classify_zip_archive(&archive, ContentKind::ResourcePack)
+}
+
+pub async fn import_content_file_with_options(
     paths: &LauncherPaths,
     profile_id: &str,
     kind: ContentKind,
     source_path: &Path,
+    auto_classify_zip: bool,
 ) -> AppResult<ContentItem> {
     validate_profile_id(profile_id)?;
     paths.ensure_instance_dirs(profile_id).await?;
@@ -1122,18 +1174,70 @@ pub async fn import_content_file(
     let file_name = source_path
         .file_name()
         .and_then(|n| n.to_str())
-        .ok_or_else(|| AppError::ContentError("Invalid source file name".to_string()))?;
+        .ok_or_else(|| AppError::ContentError("Nombre de archivo no válido".to_string()))?;
     validate_file_name(file_name)?;
 
-    if !is_valid_extension_for_kind(file_name, kind) {
+    let effective_kind = if auto_classify_zip && is_zip_filename(file_name) {
+        let src_clone = source_path.to_path_buf();
+        tokio::task::spawn_blocking(move || classify_zip_file_blocking(&src_clone))
+            .await
+            .unwrap_or(ContentKind::ResourcePack)
+    } else {
+        kind
+    };
+
+    if !is_valid_extension_for_kind(file_name, effective_kind) {
         return Err(AppError::ContentError(format!(
-            "File '{file_name}' has an incompatible extension"
+            "El archivo '{file_name}' no tiene una extensión compatible"
         )));
     }
 
-    let dst_path = content_dir(paths, profile_id, kind).join(file_name);
+    let dst_path = content_dir(paths, profile_id, effective_kind).join(file_name);
     tokio::fs::copy(source_path, &dst_path).await?;
-    finalize_imported_item(paths, profile_id, kind, file_name, &dst_path).await
+    finalize_imported_item(paths, profile_id, effective_kind, file_name, &dst_path).await
+}
+
+pub async fn import_content_file(
+    paths: &LauncherPaths,
+    profile_id: &str,
+    kind: ContentKind,
+    source_path: &Path,
+) -> AppResult<ContentItem> {
+    import_content_file_with_options(paths, profile_id, kind, source_path, false).await
+}
+
+pub async fn import_content_bytes_with_options(
+    paths: &LauncherPaths,
+    profile_id: &str,
+    kind: ContentKind,
+    file_name: &str,
+    bytes: Vec<u8>,
+    auto_classify_zip: bool,
+) -> AppResult<ContentItem> {
+    validate_profile_id(profile_id)?;
+    validate_file_name(file_name)?;
+    paths.ensure_instance_dirs(profile_id).await?;
+
+    let (effective_kind, bytes) = if auto_classify_zip && is_zip_filename(file_name) {
+        tokio::task::spawn_blocking(move || {
+            let detected = classify_zip_bytes_blocking(&bytes);
+            (detected, bytes)
+        })
+        .await
+        .map_err(|err| AppError::ContentError(format!("No se pudo inspeccionar el archivo ZIP: {err}")))?
+    } else {
+        (kind, bytes)
+    };
+
+    if !is_valid_extension_for_kind(file_name, effective_kind) {
+        return Err(AppError::ContentError(format!(
+            "El archivo '{file_name}' no tiene una extensión compatible"
+        )));
+    }
+
+    let dst_path = content_dir(paths, profile_id, effective_kind).join(file_name);
+    tokio::fs::write(&dst_path, &bytes).await?;
+    finalize_imported_item(paths, profile_id, effective_kind, file_name, &dst_path).await
 }
 
 pub async fn import_content_bytes(
@@ -1143,19 +1247,8 @@ pub async fn import_content_bytes(
     file_name: &str,
     bytes: &[u8],
 ) -> AppResult<ContentItem> {
-    validate_profile_id(profile_id)?;
-    validate_file_name(file_name)?;
-    paths.ensure_instance_dirs(profile_id).await?;
-
-    if !is_valid_extension_for_kind(file_name, kind) {
-        return Err(AppError::ContentError(format!(
-            "File '{file_name}' has an incompatible extension"
-        )));
-    }
-
-    let dst_path = content_dir(paths, profile_id, kind).join(file_name);
-    tokio::fs::write(&dst_path, bytes).await?;
-    finalize_imported_item(paths, profile_id, kind, file_name, &dst_path).await
+    import_content_bytes_with_options(paths, profile_id, kind, file_name, bytes.to_vec(), false)
+        .await
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1219,7 +1312,7 @@ pub fn compute_performance_warning(
     categories: &[String],
 ) -> Option<String> {
     if kind == ContentKind::Shader || slug.eq_ignore_ascii_case("iris") {
-        return Some("Alto impacto en GPU/iGPU (Shaders)".to_string());
+        return Some("Puede reducir los FPS (Shaders)".to_string());
     }
 
     if kind == ContentKind::ResourcePack {
@@ -1234,7 +1327,7 @@ pub fn compute_performance_warning(
                     .any(|c| c.to_lowercase().contains(tok))
         });
         if has_high_res {
-            return Some("Alta resolución (≥128x): mayor consumo de VRAM/iGPU".to_string());
+            return Some("Alta resolución (≥128x): requiere más memoria gráfica".to_string());
         }
     }
 
@@ -1649,7 +1742,7 @@ where
                     continue;
                 }
                 on_progress(DownloadProgress {
-                    phase: "Resolviendo Modrinth + Dependencias".to_string(),
+                    phase: "Preparando descarga...".to_string(),
                     completed_files: resolved_count,
                     total_files: resolved_count + queue.len() + 1,
                     bytes_downloaded: 0,
@@ -1672,11 +1765,11 @@ where
                     continue;
                 }
                 on_progress(DownloadProgress {
-                    phase: "Resolviendo dependencia requerida".to_string(),
+                    phase: "Buscando complementos necesarios...".to_string(),
                     completed_files: resolved_count,
                     total_files: resolved_count + queue.len() + 1,
                     bytes_downloaded: 0,
-                    current_file: format!("version/{ver_id}"),
+                    current_file: "Comprobando requisitos...".to_string(),
                     fast_path_hits: 0,
                 });
 
@@ -2330,6 +2423,117 @@ mod tests {
             "data:image/png;base64,AAAA".to_string()
         ))
         .is_none());
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_zip_auto_classification_shader_vs_resource_pack()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "vexel-zip-classify-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let paths = LauncherPaths::with_root(tmp.clone());
+        paths.ensure_instance_dirs("zip-prof").await?;
+        let staging = tmp.join("staging");
+        tokio::fs::create_dir_all(&staging).await?;
+
+        // 1. Shader ZIP with shaders/ folder at root
+        let shader_src = staging.join("complementary.zip");
+        {
+            let file = std::fs::File::create(&shader_src)?;
+            let mut w = zip::ZipWriter::new(file);
+            w.start_file("shaders/composite.fsh", SimpleFileOptions::default())?;
+            w.write_all(b"// shader fragment")?;
+            w.finish()?;
+        }
+
+        // 2. Shader ZIP with nested wrapper directory containing shaders/
+        let nested_shader_bytes = {
+            let mut cursor = std::io::Cursor::new(Vec::new());
+            {
+                let mut w = zip::ZipWriter::new(&mut cursor);
+                w.start_file(
+                    "BSL_v8/shaders/gbuffers_terrain.vsh",
+                    SimpleFileOptions::default(),
+                )?;
+                w.write_all(b"// nested shader")?;
+                w.finish()?;
+            }
+            cursor.into_inner()
+        };
+
+        // 3. Resource Pack ZIP with pack.mcmeta
+        let rp_src = staging.join("bare-bones.zip");
+        {
+            let file = std::fs::File::create(&rp_src)?;
+            let mut w = zip::ZipWriter::new(file);
+            w.start_file("pack.mcmeta", SimpleFileOptions::default())?;
+            w.write_all(br#"{"pack":{"pack_format":34,"description":"Bare Bones"}}"#)?;
+            w.finish()?;
+        }
+
+        assert_eq!(
+            super::classify_zip_file_blocking(&shader_src),
+            ContentKind::Shader
+        );
+        assert_eq!(
+            super::classify_zip_bytes_blocking(&nested_shader_bytes),
+            ContentKind::Shader
+        );
+        assert_eq!(
+            super::classify_zip_file_blocking(&rp_src),
+            ContentKind::ResourcePack
+        );
+
+        // Full auto-classified imports route each ZIP to its exact folder
+        let imported_shader = super::import_content_file_with_options(
+            &paths,
+            "zip-prof",
+            ContentKind::ResourcePack,
+            &shader_src,
+            true,
+        )
+        .await?;
+        assert_eq!(imported_shader.kind, ContentKind::Shader);
+        assert!(paths
+            .instance_shaderpacks_dir("zip-prof")
+            .join("complementary.zip")
+            .exists());
+
+        let imported_nested = super::import_content_bytes_with_options(
+            &paths,
+            "zip-prof",
+            ContentKind::ResourcePack,
+            "bsl-nested.zip",
+            nested_shader_bytes,
+            true,
+        )
+        .await?;
+        assert_eq!(imported_nested.kind, ContentKind::Shader);
+        assert!(paths
+            .instance_shaderpacks_dir("zip-prof")
+            .join("bsl-nested.zip")
+            .exists());
+
+        let imported_rp = super::import_content_file_with_options(
+            &paths,
+            "zip-prof",
+            ContentKind::Shader,
+            &rp_src,
+            true,
+        )
+        .await?;
+        assert_eq!(imported_rp.kind, ContentKind::ResourcePack);
+        assert!(paths
+            .instance_resourcepacks_dir("zip-prof")
+            .join("bare-bones.zip")
+            .exists());
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
         Ok(())

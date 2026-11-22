@@ -32,6 +32,7 @@ interface ProfileDashboardProps {
   launching: boolean;
   isRunning: boolean;
   isAnyRunning: boolean;
+  summaryRefreshKey: number;
   progress: LaunchProgressEvent | null;
   missingJavaMajor: number | null;
   installingJava: boolean;
@@ -54,16 +55,8 @@ interface ProfileDashboardProps {
   onDismissJavaModal: () => void;
 }
 
-const LOADER_VIGNETTE: Record<ModLoaderKind, string> = {
-  vanilla:
-    "radial-gradient(85% 95% at 74% 34%, rgba(16, 185, 129, 0.14) 0%, rgba(7, 9, 13, 0.88) 64%, #07090D 100%)",
-  fabric:
-    "radial-gradient(85% 95% at 74% 34%, rgba(56, 189, 248, 0.14) 0%, rgba(7, 9, 13, 0.88) 64%, #07090D 100%)",
-  forge:
-    "radial-gradient(85% 95% at 74% 34%, rgba(245, 158, 11, 0.13) 0%, rgba(7, 9, 13, 0.88) 64%, #07090D 100%)",
-  neo_forge:
-    "radial-gradient(85% 95% at 74% 34%, rgba(249, 115, 22, 0.13) 0%, rgba(7, 9, 13, 0.88) 64%, #07090D 100%)",
-};
+const HERO_ACCENT_VIGNETTE =
+  "radial-gradient(85% 95% at 74% 34%, rgba(var(--accent-rgb), 0.14) 0%, rgba(7, 9, 13, 0.88) 64%, #07090D 100%)";
 
 const LOADER_LABEL: Record<ModLoaderKind, string> = {
   vanilla: "Vanilla",
@@ -131,7 +124,13 @@ function getWorldModeBadge(world: WorldSummary): {
   }
 }
 
-function ModChipThumb({ iconUrl, alt }: { iconUrl?: string | null; alt: string }) {
+function ModChipThumb({
+  iconUrl,
+  alt,
+}: {
+  iconUrl?: string | null;
+  alt: string;
+}) {
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -156,6 +155,7 @@ export function ProfileDashboard({
   launching,
   isRunning,
   isAnyRunning,
+  summaryRefreshKey,
   progress,
   missingJavaMajor,
   installingJava,
@@ -180,6 +180,7 @@ export function ProfileDashboard({
     latest_screenshot_data_url: null,
   });
   const [copiedSeedFolder, setCopiedSeedFolder] = useState<string | null>(null);
+  const [mismatchWorld, setMismatchWorld] = useState<WorldSummary | null>(null);
   const quickSkinInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -203,7 +204,7 @@ export function ProfileDashboard({
     return () => {
       cancelled = true;
     };
-  }, [onGetInstanceSummary, onListContent, profile.id]);
+  }, [onGetInstanceSummary, onListContent, profile.id, summaryRefreshKey]);
 
   const progressPct =
     progress && progress.total > 0
@@ -245,6 +246,16 @@ export function ProfileDashboard({
     }
   };
 
+  const handleWorldClick = (world: WorldSummary) => {
+    const hasMismatch =
+      Boolean(world.mc_version) && world.mc_version !== profile.mc_version;
+    if (hasMismatch) {
+      setMismatchWorld(world);
+      return;
+    }
+    void onPlayWorld(world.folder_name);
+  };
+
   return (
     <div className="h-full w-full flex flex-col bg-[#07090D] overflow-hidden">
       <input
@@ -268,7 +279,7 @@ export function ProfileDashboard({
 
         <div
           className="pointer-events-none absolute inset-0"
-          style={{ background: LOADER_VIGNETTE[profile.loader] }}
+          style={{ background: HERO_ACCENT_VIGNETTE }}
         />
 
         <div className="relative z-10 w-full max-w-5xl mx-auto grid grid-cols-12 items-center gap-6">
@@ -279,13 +290,13 @@ export function ProfileDashboard({
                 {profile.is_default && (
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-soft)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)]">
                     <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent-primary)]" />
-                    Perfil predeterminado
+                    Instancia predeterminada
                   </span>
                 )}
                 {profile.server_address && (
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.04] border border-white/[0.08] px-2.5 py-0.5 text-[11px] font-mono text-slate-300">
                     <Radio className="h-3 w-3 text-[var(--accent-primary)]" />
-                    QuickPlay · {profile.server_address}
+                    Conexión directa · {profile.server_address}
                   </span>
                 )}
               </div>
@@ -294,10 +305,10 @@ export function ProfileDashboard({
                 {profile.name}
               </h1>
 
-              {/* Technical Metadata Chips (Real Engine Metrics Only) */}
+              {/* Metadata Chips */}
               <div className="flex flex-wrap items-center gap-2 pt-0.5">
                 <span className="rounded-md bg-white/[0.04] border border-white/[0.06] px-2.5 py-1 text-[11px] font-mono text-slate-200">
-                  MC {profile.mc_version}
+                  Minecraft {profile.mc_version}
                 </span>
                 <span className="rounded-md bg-white/[0.04] border border-white/[0.06] px-2.5 py-1 text-[11px] font-mono text-slate-300">
                   {LOADER_LABEL[profile.loader]}
@@ -312,74 +323,102 @@ export function ProfileDashboard({
               </div>
             </div>
 
-            {isWorking && progress && (
-              <div className="text-xs font-mono text-[var(--accent-primary)] truncate">
-                {progress.phase}
-                {progress.total > 0 ? ` (${progressPct}%)` : ""} ·{" "}
-                {progress.detail}
-              </div>
-            )}
-
             {unsupportedLoader && (
               <div className="inline-flex items-center gap-2 rounded-lg bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-3.5 py-2 text-xs text-amber-200">
                 <AlertTriangle className="h-3.5 w-3.5 text-[#F59E0B] shrink-0" />
                 <span>
                   {LOADER_LABEL[profile.loader]} estará disponible próximamente.
-                  Cambia el loader a Vanilla o Fabric en Ajustes para jugar.
+                  Cambia el tipo de instalación a Vanilla o Fabric en Ajustes
+                  para jugar.
                 </span>
               </div>
             )}
 
             {/* Primary CTA + Grouped Utility Toolbar */}
-            <div className="flex items-center gap-3 pt-1">
-              {isRunning ? (
-                <button
-                  type="button"
-                  onClick={() => void onStop()}
-                  className="h-12 min-w-[196px] px-7 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-[0.985] shadow-[0_10px_28px_-8px_rgba(244,63,94,0.55)] inline-flex items-center justify-center gap-2.5 text-[13px] font-bold tracking-[0.06em] text-white transition-all"
-                >
-                  <Square className="h-4 w-4 fill-current" />
-                  DETENER
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={isWorking || unsupportedLoader}
-                  onClick={() => void onPlay()}
-                  className="btn-play-hero h-12 min-w-[196px] px-7 rounded-xl disabled:opacity-50 inline-flex items-center justify-center gap-2.5 text-[13px] font-bold tracking-[0.06em]"
-                >
-                  <Play className="h-4 w-4 fill-current" />
-                  {unsupportedLoader
-                    ? "PRÓXIMAMENTE"
-                    : launching
-                      ? "INICIANDO..."
-                      : "JUGAR"}
-                </button>
-              )}
+            <div className="space-y-3 pt-1">
+              <div className="flex items-center gap-3">
+                {isRunning ? (
+                  <button
+                    type="button"
+                    onClick={() => void onStop()}
+                    className="h-12 min-w-[196px] px-7 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-[0.985] shadow-[0_10px_28px_-8px_rgba(244,63,94,0.55)] inline-flex items-center justify-center gap-2.5 text-[13px] font-bold tracking-[0.06em] text-white transition-all"
+                  >
+                    <Square className="h-4 w-4 fill-current" />
+                    DETENER
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isWorking || unsupportedLoader}
+                    onClick={() => void onPlay()}
+                    className="btn-play-hero h-12 min-w-[196px] px-7 rounded-xl disabled:opacity-50 inline-flex items-center justify-center gap-2.5 text-[13px] font-bold tracking-[0.06em]"
+                  >
+                    <Play className="h-4 w-4 fill-current" />
+                    {unsupportedLoader
+                      ? "PRÓXIMAMENTE"
+                      : launching
+                        ? "INICIANDO..."
+                        : "JUGAR"}
+                  </button>
+                )}
 
-              <div className="inline-flex items-center rounded-xl bg-[#121722]/90 border border-white/[0.07] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] p-1 gap-0.5">
-                <button
-                  type="button"
-                  onClick={() => void onOpenFolder()}
-                  title="Abrir carpeta de la instancia"
-                  className="h-10 w-10 rounded-lg hover:bg-white/[0.06] flex items-center justify-center text-slate-300 hover:text-white transition-colors"
-                >
-                  <FolderOpen className="h-4 w-4" />
-                </button>
+                <div className="inline-flex items-center rounded-xl bg-[#121722]/90 border border-white/[0.07] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] p-1 gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => void onOpenFolder()}
+                    title="Abrir carpeta de la instancia"
+                    className="h-10 w-10 rounded-lg hover:bg-white/[0.06] flex items-center justify-center text-slate-300 hover:text-white transition-colors"
+                  >
+                    <FolderOpen className="h-4 w-4" />
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={onOpenSettings}
-                  title="Ajustes del perfil"
-                  className="h-10 w-10 rounded-lg hover:bg-white/[0.06] flex items-center justify-center text-slate-300 hover:text-white transition-colors"
-                >
-                  <SlidersHorizontal className="h-4 w-4" />
-                </button>
+                  <button
+                    type="button"
+                    onClick={onOpenSettings}
+                    title="Ajustes de la instancia"
+                    className="h-10 w-10 rounded-lg hover:bg-white/[0.06] flex items-center justify-center text-slate-300 hover:text-white transition-colors"
+                  >
+                    <SlidersHorizontal className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
+
+              {/* Prominent Compact Launch Progress Bar */}
+              {isWorking && progress && (
+                <div className="max-w-sm rounded-xl bg-[#0D1118]/90 border border-white/[0.08] px-3.5 py-2.5 space-y-2 shadow-lg">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="font-medium text-slate-100 truncate">
+                      {progress.phase}
+                    </span>
+                    <span className="font-mono font-semibold text-[var(--accent-primary)] shrink-0">
+                      {progress.total > 0 ? `${progressPct}%` : "..."}
+                    </span>
+                  </div>
+
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.08]">
+                    <div
+                      className={`h-full rounded-full bg-[var(--accent-primary)] transition-all duration-150 ${
+                        progress.total === 0 ? "w-1/2 animate-pulse" : ""
+                      }`}
+                      style={
+                        progress.total > 0
+                          ? { width: `${Math.max(6, progressPct)}%` }
+                          : undefined
+                      }
+                    />
+                  </div>
+
+                  {progress.detail && (
+                    <div className="text-[11px] text-slate-400 truncate">
+                      {progress.detail}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Right 5 Cols: 3D Character on Obsidian Pedestal + Floating Micro-Controls */}
+          {/* Right 5 Cols: 3D Character + Floating Micro-Controls */}
           <div className="hidden md:flex col-span-5 items-center justify-center">
             <SkinViewer3D
               skinUrl={skinDataUrl}
@@ -393,16 +432,6 @@ export function ProfileDashboard({
             />
           </div>
         </div>
-
-        {/* 2px Accent Progress Line on Bottom Edge */}
-        {isWorking && (
-          <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-white/[0.06]">
-            <div
-              className="h-full bg-[var(--accent-primary)] transition-all duration-150"
-              style={{ width: `${Math.max(8, progressPct)}%` }}
-            />
-          </div>
-        )}
       </section>
 
       {/* Bottom Surface: Rich Recent Worlds + Active Mods */}
@@ -423,9 +452,9 @@ export function ProfileDashboard({
               <button
                 type="button"
                 onClick={() => void onOpenSavesFolder()}
-                className="text-[11px] font-mono text-slate-500 hover:text-[var(--accent-primary)] transition-colors"
+                className="text-[11px] text-slate-400 hover:text-[var(--accent-primary)] transition-colors"
               >
-                Abrir saves/
+                Carpeta de mundos
               </button>
             </div>
 
@@ -452,7 +481,7 @@ export function ProfileDashboard({
                       aria-disabled={!canLaunchWorld}
                       onClick={() => {
                         if (canLaunchWorld) {
-                          void onPlayWorld(world.folder_name);
+                          handleWorldClick(world);
                         }
                       }}
                       onKeyDown={(e) => {
@@ -461,7 +490,7 @@ export function ProfileDashboard({
                           (e.key === "Enter" || e.key === " ")
                         ) {
                           e.preventDefault();
-                          void onPlayWorld(world.folder_name);
+                          handleWorldClick(world);
                         }
                       }}
                       title={`Entrar directamente a "${world.level_name}"`}
@@ -502,7 +531,7 @@ export function ProfileDashboard({
                             )}
                             {versionMismatch && world.mc_version && (
                               <span
-                                title={`Jugado en MC ${world.mc_version} (instancia actual: ${profile.mc_version})`}
+                                title={`Jugado en Minecraft ${world.mc_version} (instancia actual: ${profile.mc_version})`}
                                 className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 border border-amber-500/35 px-1.5 py-[1px] text-[10px] font-mono text-amber-300"
                               >
                                 <AlertTriangle className="h-2.5 w-2.5" />
@@ -529,7 +558,7 @@ export function ProfileDashboard({
                               )
                             }
                             title={`Copiar semilla: ${world.seed}`}
-                            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-mono text-slate-400 hover:text-[var(--accent-primary)] hover:bg-white/[0.05] transition-colors shrink-0"
+                            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-slate-400 hover:text-[var(--accent-primary)] hover:bg-white/[0.05] transition-colors shrink-0"
                           >
                             {isSeedCopied ? (
                               <>
@@ -541,7 +570,7 @@ export function ProfileDashboard({
                             ) : (
                               <>
                                 <KeyRound className="h-2.5 w-2.5" />
-                                <span>Seed</span>
+                                <span>Semilla</span>
                               </>
                             )}
                           </button>
@@ -579,7 +608,9 @@ export function ProfileDashboard({
                   onClick={onOpenMods}
                   className="text-[var(--accent-primary)] hover:underline font-medium"
                 >
-                  Explorar Modrinth
+                  {profile.loader === "fabric"
+                    ? "Instalar Pack de FPS"
+                    : "Explorar contenido"}
                 </button>
               </div>
             ) : (
@@ -611,7 +642,75 @@ export function ProfileDashboard({
         </div>
       </footer>
 
-      {/* Adoptium JRE Confirmation & Progress Modal */}
+      {/* World Version Mismatch Confirmation Modal */}
+      {mismatchWorld && (
+        <div
+          onClick={() => setMismatchWorld(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-xl forge-card p-6 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-start gap-3">
+              <div className="h-9 w-9 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                <AlertTriangle className="h-4 w-4" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-[14px] font-semibold text-white">
+                  Versión de Minecraft diferente
+                </h3>
+                <p className="text-xs text-slate-400">
+                  {mismatchWorld.level_name} ·{" "}
+                  <span className="font-mono text-amber-300">
+                    {mismatchWorld.mc_version}
+                  </span>{" "}
+                  →{" "}
+                  <span className="font-mono text-white">
+                    {profile.mc_version}
+                  </span>
+                </p>
+              </div>
+            </div>
+
+            <p className="text-[13px] text-slate-300 leading-relaxed">
+              Este mundo se jugó por última vez en Minecraft{" "}
+              <span className="font-mono font-semibold text-amber-300">
+                {mismatchWorld.mc_version}
+              </span>
+              , pero esta instancia usa{" "}
+              <span className="font-mono font-semibold text-white">
+                {profile.mc_version}
+              </span>
+              . Abrirlo en otra versión puede convertirlo o dañarlo de forma
+              irreversible.
+            </p>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-white/[0.06]">
+              <button
+                type="button"
+                onClick={() => setMismatchWorld(null)}
+                className="rounded-lg bg-white/[0.05] hover:bg-white/[0.09] px-3.5 py-1.5 text-xs font-medium text-slate-300 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const folder = mismatchWorld.folder_name;
+                  setMismatchWorld(null);
+                  void onPlayWorld(folder);
+                }}
+                className="rounded-lg bg-amber-500 hover:bg-amber-400 px-4 py-1.5 text-xs font-semibold text-slate-950 transition-colors"
+              >
+                Abrir de todas formas
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Friendly Java Required & Download Modal */}
       {missingJavaMajor !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
           <div className="w-full max-w-md rounded-xl forge-card p-6 space-y-4 shadow-2xl">
@@ -623,22 +722,19 @@ export function ProfileDashboard({
               </div>
               <div>
                 <h3 className="text-[14px] font-semibold text-white">
-                  Eclipse Temurin Java {missingJavaMajor} Requerido
+                  Minecraft {profile.mc_version} necesita Java{" "}
+                  {missingJavaMajor}
                 </h3>
-                <p className="text-[11px] font-mono text-slate-400">
-                  MC {profile.mc_version} · shared/runtimes/java-
-                  {missingJavaMajor}/
+                <p className="text-[11px] text-slate-400">
+                  Descarga automática e independiente
                 </p>
               </div>
             </div>
 
             <p className="text-[13px] text-slate-400 leading-relaxed">
-              No se detectó un runtime local para Java {missingJavaMajor}. Se
-              descargará el JRE oficial x64 desde{" "}
-              <span className="font-mono text-[var(--accent-primary)]">
-                api.adoptium.net
-              </span>{" "}
-              sin alterar tu sistema.
+              Para abrir esta versión del juego hace falta Java{" "}
+              {missingJavaMajor}. Lo descargaremos automáticamente dentro de
+              Vexel Launcher sin tocar tu PC ni instalar programas externos.
             </p>
 
             {installingJava && javaInstallProgress && (
@@ -699,8 +795,8 @@ export function ProfileDashboard({
                 className="btn-accent rounded-lg px-4 py-1.5 text-xs font-semibold disabled:opacity-50"
               >
                 {installingJava
-                  ? javaInstallProgress?.phase ?? "Instalando JRE..."
-                  : `Instalar Java ${missingJavaMajor}`}
+                  ? (javaInstallProgress?.phase ?? "Instalando Java...")
+                  : `Descargar Java ${missingJavaMajor}`}
               </button>
             </div>
           </div>

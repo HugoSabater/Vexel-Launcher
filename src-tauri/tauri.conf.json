@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "MC Launcher Rust",
+  "productName": "Vexel Launcher",
   "version": "0.1.0",
   "identifier": "com.mclauncher.rust",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "MC Launcher Rust",
+        "title": "Vexel Launcher",
         "width": 1240,
         "height": 800,
         "minWidth": 980,

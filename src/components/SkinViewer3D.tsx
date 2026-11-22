@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Layers, Pause, Play, Shirt } from "lucide-react";
+import { Layers, Pause, Pencil, Play, Shirt } from "lucide-react";
 import { IdleAnimation, SkinViewer } from "skinview3d";
 import { USERNAME_REGEX } from "../theme/accents";
 
@@ -170,7 +170,7 @@ export function SkinViewer3D({
       return;
     }
     if (!USERNAME_REGEX.test(trimmed)) {
-      setNameError("3-16 chars (A-Z, 0-9, _)");
+      setNameError("Usa entre 3 y 16 caracteres (letras, números o _)");
       return;
     }
     setEditing(false);
@@ -220,21 +220,28 @@ export function SkinViewer3D({
               />
             </form>
           ) : (
-            <button
-              type="button"
-              onClick={() => {
-                if (onUpdateUsername) {
-                  setNameError(null);
-                  setEditing(true);
+            <div className="group/tag relative inline-flex items-center">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onUpdateUsername) {
+                    setNameError(null);
+                    setEditing(true);
+                  }
+                }}
+                title={
+                  onUpdateUsername
+                    ? "Clic para cambiar tu nombre de jugador"
+                    : undefined
                 }
-              }}
-              title={
-                onUpdateUsername ? "Clic para editar nombre offline" : undefined
-              }
-              className="mc-nametag hover:bg-black/40 transition-colors cursor-pointer"
-            >
-              {username}
-            </button>
+                className="mc-nametag hover:bg-black/40 transition-colors cursor-pointer"
+              >
+                {username}
+              </button>
+              {onUpdateUsername && (
+                <Pencil className="pointer-events-none absolute -right-5 h-3 w-3 text-white/75 opacity-0 group-hover/tag:opacity-100 transition-opacity drop-shadow" />
+              )}
+            </div>
           )}
           {nameError && (
             <span className="bg-black/75 px-1.5 py-0.5 text-[10px] font-mono text-amber-300">

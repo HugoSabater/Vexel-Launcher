@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 
 use crate::core::content::{
     delete_content_item, get_dynamic_recommendations as fetch_dynamic_recommendations,
-    import_content_bytes, import_content_file, inject_modrinth_preset,
+    import_content_bytes_with_options, import_content_file_with_options, inject_modrinth_preset,
     install_single_modrinth_item, list_instance_content, search_modrinth_catalog,
     toggle_content_item, ContentItem, ContentKind, ModrinthSearchResult, PerformancePreset,
 };
@@ -31,7 +31,8 @@ use crate::core::jvm_optimizer::{generate_jvm_flags, GcPreset, JvmTuningInput, J
 use crate::core::loaders::{merge_overlay_into_plan, resolve_fabric_overlay};
 use crate::core::manifest::{
     build_download_plan, extract_game_arguments, fetch_or_load_asset_index,
-    fetch_or_load_version_manifest, validate_version_id,
+    fetch_or_load_version_list, fetch_or_load_version_manifest, validate_version_id,
+    MinecraftVersionEntry,
 };
 use crate::core::paths::LauncherPaths;
 use crate::core::runner::{
@@ -154,6 +155,13 @@ pub async fn get_bootstrap_state(state: State<'_, AppState>) -> AppResult<Bootst
         config,
         data_root: state.paths.root().to_string_lossy().into_owned(),
     })
+}
+
+#[tauri::command]
+pub async fn list_minecraft_versions(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<MinecraftVersionEntry>> {
+    fetch_or_load_version_list(&state.client, &state.paths).await
 }
 
 fn validate_offline_username(raw: &str) -> AppResult<String> {
@@ -340,8 +348,16 @@ pub async fn import_profile_content(
     profile_id: String,
     kind: ContentKind,
     source_path: String,
+    auto_classify: Option<bool>,
 ) -> AppResult<ContentItem> {
-    import_content_file(&state.paths, &profile_id, kind, &PathBuf::from(source_path)).await
+    import_content_file_with_options(
+        &state.paths,
+        &profile_id,
+        kind,
+        &PathBuf::from(source_path),
+        auto_classify.unwrap_or(false),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -351,8 +367,17 @@ pub async fn import_profile_content_bytes(
     kind: ContentKind,
     file_name: String,
     bytes: Vec<u8>,
+    auto_classify: Option<bool>,
 ) -> AppResult<ContentItem> {
-    import_content_bytes(&state.paths, &profile_id, kind, &file_name, &bytes).await
+    import_content_bytes_with_options(
+        &state.paths,
+        &profile_id,
+        kind,
+        &file_name,
+        bytes,
+        auto_classify.unwrap_or(false),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -958,8 +983,8 @@ pub async fn install_adoptium_java(
         &state.paths,
         move |done, total, phase, detail| {
             let (completed, total_units) = match phase {
-                "Extrayendo runtime..." => (95, 100),
-                "Runtime listo" => (100, 100),
+                "Extrayendo runtime..." | "Preparando Java..." => (95, 100),
+                "Runtime listo" | "Java listo" => (100, 100),
                 _ => match total {
                     Some(t) if t > 0 => {
                         let pct = ((done.saturating_mul(90)) / t).min(90) as usize;
@@ -1070,11 +1095,11 @@ pub async fn launch_profile(
     };
 
     let _ = on_progress.send(LaunchProgressEvent {
-        phase: "Resolviendo manifiesto".to_string(),
+        phase: "Preparando Minecraft...".to_string(),
         completed: 0,
         total: 4,
         bytes_downloaded: 0,
-        detail: format!("Cargando metadatos de Minecraft {}...", profile.mc_version),
+        detail: format!("Preparando Minecraft {}...", profile.mc_version),
         fast_path_hits: 0,
     });
 
@@ -1184,11 +1209,11 @@ pub async fn launch_profile(
         ModLoaderKind::Vanilla => {}
         ModLoaderKind::Fabric => {
             let _ = on_progress.send(LaunchProgressEvent {
-                phase: "Resolviendo Fabric Meta API".to_string(),
+                phase: "Preparando Fabric...".to_string(),
                 completed: 1,
                 total: 4,
                 bytes_downloaded: 0,
-                detail: format!("Obteniendo perfil Fabric para MC {}...", profile.mc_version),
+                detail: format!("Configurando Fabric para Minecraft {}...", profile.mc_version),
                 fast_path_hits: 0,
             });
             let overlay = resolve_fabric_overlay(
@@ -1224,14 +1249,11 @@ pub async fn launch_profile(
     .await?;
 
     let _ = on_progress.send(LaunchProgressEvent {
-        phase: "Lanzando JVM".to_string(),
+        phase: "Abriendo el juego...".to_string(),
         completed: summary.total_artifacts,
         total: summary.total_artifacts.max(1),
         bytes_downloaded: 0,
-        detail: format!(
-            "Arrancando {} ({} Fast-Path hits)",
-            profile.name, summary.fast_path_hits
-        ),
+        detail: format!("Iniciando {}...", profile.name),
         fast_path_hits: summary.fast_path_hits,
     });
 

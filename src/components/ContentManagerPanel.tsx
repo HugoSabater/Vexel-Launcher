@@ -9,6 +9,7 @@ import {
   FileArchive,
   FolderPlus,
   Globe2,
+  Info,
   Package,
   RefreshCw,
   Rocket,
@@ -18,7 +19,9 @@ import {
   Sun,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
+import { formatFriendlyError } from "../utils/errors";
 import type {
   ContentItem,
   ContentKind,
@@ -39,8 +42,14 @@ type DiscoveryChip =
   | "shader";
 type LocalSort = "name" | "size" | "enabled";
 
+interface StatusNotice {
+  kind: "success" | "error" | "info";
+  text: string;
+}
+
 interface ContentManagerPanelProps {
   profile: Profile;
+  onUpdateProfile: (updated: Profile) => Promise<boolean>;
   onListContent: (
     profileId: string,
     kind: ContentKind,
@@ -76,12 +85,14 @@ interface ContentManagerPanelProps {
     profileId: string,
     kind: ContentKind,
     sourcePath: string,
+    autoClassify?: boolean,
   ) => Promise<ContentItem>;
   onImportContentBytes: (
     profileId: string,
     kind: ContentKind,
     fileName: string,
     bytes: number[],
+    autoClassify?: boolean,
   ) => Promise<ContentItem>;
   onInjectPreset: (
     profileId: string,
@@ -149,6 +160,38 @@ function formatDownloads(dl: number): string {
   return `${dl}`;
 }
 
+function kindDestinationLabel(kind: ContentKind): string {
+  switch (kind) {
+    case "mod":
+      return "Mods";
+    case "shader":
+      return "Shaders";
+    case "resource_pack":
+      return "Resource Packs";
+  }
+}
+
+function summarizeImportedItems(items: ContentItem[]): string {
+  if (items.length === 1) {
+    const item = items[0];
+    return `Importado "${item.display_name}" en ${kindDestinationLabel(item.kind)}.`;
+  }
+  const counts: Record<ContentKind, number> = {
+    mod: 0,
+    resource_pack: 0,
+    shader: 0,
+  };
+  for (const item of items) {
+    counts[item.kind] += 1;
+  }
+  const parts: string[] = [];
+  if (counts.mod > 0) parts.push(`${counts.mod} en Mods`);
+  if (counts.resource_pack > 0)
+    parts.push(`${counts.resource_pack} en Resource Packs`);
+  if (counts.shader > 0) parts.push(`${counts.shader} en Shaders`);
+  return `Importados ${items.length} archivos (${parts.join(", ")}).`;
+}
+
 function ContentThumb({
   iconUrl,
   alt,
@@ -190,6 +233,7 @@ function ContentThumb({
 
 export function ContentManagerPanel({
   profile,
+  onUpdateProfile,
   onListContent,
   onGetDynamicRecommendations,
   onSearchModrinth,
@@ -201,8 +245,9 @@ export function ContentManagerPanel({
   onInstallItem,
 }: ContentManagerPanelProps) {
   const [activeTab, setActiveTab] = useState<ContentTab>("recommended");
-  const [discoveryChip, setDiscoveryChip] =
-    useState<DiscoveryChip>("performance");
+  const [discoveryChip, setDiscoveryChip] = useState<DiscoveryChip>(() =>
+    profile.loader === "vanilla" ? "resource_pack" : "performance",
+  );
   const [installedMods, setInstalledMods] = useState<ContentItem[]>([]);
   const [resourcePacks, setResourcePacks] = useState<ContentItem[]>([]);
   const [shaderPacks, setShaderPacks] = useState<ContentItem[]>([]);
@@ -213,7 +258,9 @@ export function ContentManagerPanel({
   const [loadingFeed, setLoadingFeed] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchKind, setSearchKind] = useState<ContentKind>("mod");
+  const [searchKind, setSearchKind] = useState<ContentKind>(() =>
+    profile.loader === "vanilla" ? "resource_pack" : "mod",
+  );
   const [modrinthSort, setModrinthSort] = useState<ModrinthSort>("downloads");
   const [searchResults, setSearchResults] = useState<
     ModrinthSearchResult[] | null
@@ -230,8 +277,9 @@ export function ContentManagerPanel({
 
   const [loading, setLoading] = useState(false);
   const [busySlug, setBusySlug] = useState<string | null>(null);
+  const [switchingLoader, setSwitchingLoader] = useState(false);
   const [progress, setProgress] = useState<LaunchProgressEvent | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusNotice, setStatusNotice] = useState<StatusNotice | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -241,7 +289,7 @@ export function ContentManagerPanel({
   const feedReqRef = useRef(0);
   const searchReqRef = useRef(0);
 
-  // Reset search/transient state cleanly when switching profile
+  // Reset search/transient state cleanly when switching profile or loader
   useEffect(() => {
     searchReqRef.current += 1;
     setSearchQuery("");
@@ -249,9 +297,18 @@ export function ContentManagerPanel({
     setSearchOffset(0);
     setSearchHasMore(false);
     setConfirmDeleteFile(null);
-    setStatusMessage(null);
+    setStatusNotice(null);
     setFeedOffset(0);
-  }, [profile.id]);
+    if (profile.loader === "vanilla") {
+      setDiscoveryChip("resource_pack");
+      setSearchKind("resource_pack");
+    } else {
+      setDiscoveryChip((curr) =>
+        curr === "resource_pack" ? "performance" : curr,
+      );
+      setSearchKind("mod");
+    }
+  }, [profile.id, profile.loader]);
 
   const refreshLocal = useCallback(async () => {
     const reqId = ++localReqRef.current;
@@ -268,9 +325,10 @@ export function ContentManagerPanel({
       setShaderPacks(shaders);
     } catch (err) {
       if (reqId !== localReqRef.current) return;
-      setStatusMessage(
-        err instanceof Error ? err.message : "Error cargando contenido local",
-      );
+      setStatusNotice({
+        kind: "error",
+        text: formatFriendlyError(err, "No se pudo cargar tu contenido local."),
+      });
     } finally {
       if (reqId === localReqRef.current) {
         setLoading(false);
@@ -337,7 +395,7 @@ export function ContentManagerPanel({
     }
   }, [activeTab, fetchFeedPage, modrinthSort, searchResults]);
 
-  // Native Tauri v2 Drag & Drop listener (leak-free on fast unmount + respects Shaders tab)
+  // Native Tauri v2 Drag & Drop listener with smart .zip auto-classification
   useEffect(() => {
     let active = true;
     let unlisten: (() => void) | null = null;
@@ -354,36 +412,54 @@ export function ContentManagerPanel({
             const paths = event.payload.paths;
             if (!paths || paths.length === 0) return;
 
+            const currentTab = activeTabRef.current;
+            const autoClassifyZip =
+              currentTab === "recommended" || currentTab === "installed";
             const zipTargetKind: ContentKind =
-              activeTabRef.current === "shaders" ? "shader" : "resource_pack";
+              currentTab === "shaders" ? "shader" : "resource_pack";
 
             void (async () => {
               try {
-                let imported = 0;
+                const importedItems: ContentItem[] = [];
                 for (const fullPath of paths) {
                   const lower = fullPath.toLowerCase();
                   if (lower.endsWith(".jar") || lower.endsWith(".jar.disabled")) {
-                    await onImportContent(profile.id, "mod", fullPath);
-                    imported += 1;
+                    const item = await onImportContent(
+                      profile.id,
+                      "mod",
+                      fullPath,
+                      false,
+                    );
+                    importedItems.push(item);
                   } else if (
                     lower.endsWith(".zip") ||
                     lower.endsWith(".zip.disabled")
                   ) {
-                    await onImportContent(profile.id, zipTargetKind, fullPath);
-                    imported += 1;
+                    const item = await onImportContent(
+                      profile.id,
+                      zipTargetKind,
+                      fullPath,
+                      autoClassifyZip,
+                    );
+                    importedItems.push(item);
                   }
                 }
-                if (imported > 0 && active) {
-                  setStatusMessage(
-                    `Importados ${imported} archivo(s) en ${zipTargetKind === "shader" ? "shaderpacks/" : "la instancia"}.`,
-                  );
+                if (importedItems.length > 0 && active) {
+                  setStatusNotice({
+                    kind: "success",
+                    text: summarizeImportedItems(importedItems),
+                  });
                   await refreshLocal();
                 }
               } catch (err) {
                 if (active) {
-                  setStatusMessage(
-                    err instanceof Error ? err.message : JSON.stringify(err),
-                  );
+                  setStatusNotice({
+                    kind: "error",
+                    text: formatFriendlyError(
+                      err,
+                      "No se pudo importar el archivo.",
+                    ),
+                  });
                 }
               }
             })();
@@ -428,6 +504,21 @@ export function ContentManagerPanel({
     [installedMods],
   );
 
+  const handleSwitchToFabric = async () => {
+    setSwitchingLoader(true);
+    try {
+      const ok = await onUpdateProfile({ ...profile, loader: "fabric" });
+      if (ok) {
+        setStatusNotice({
+          kind: "success",
+          text: `Instancia cambiada a Fabric para Minecraft ${profile.mc_version}. Ya puedes instalar mods.`,
+        });
+      }
+    } finally {
+      setSwitchingLoader(false);
+    }
+  };
+
   const handleToggle = async (item: ContentItem, kind: ContentKind) => {
     try {
       const updated = await onToggleContent(
@@ -446,9 +537,10 @@ export function ContentManagerPanel({
         setShaderPacks(updater);
       }
     } catch (err) {
-      setStatusMessage(
-        err instanceof Error ? err.message : JSON.stringify(err),
-      );
+      setStatusNotice({
+        kind: "error",
+        text: formatFriendlyError(err, "No se pudo cambiar el estado del archivo."),
+      });
     }
   };
 
@@ -465,11 +557,15 @@ export function ContentManagerPanel({
         setShaderPacks(remover);
       }
       setConfirmDeleteFile(null);
-      setStatusMessage(`Eliminado ${item.display_name} (${item.file_name}).`);
+      setStatusNotice({
+        kind: "success",
+        text: `Eliminado "${item.display_name}".`,
+      });
     } catch (err) {
-      setStatusMessage(
-        err instanceof Error ? err.message : JSON.stringify(err),
-      );
+      setStatusNotice({
+        kind: "error",
+        text: formatFriendlyError(err, "No se pudo eliminar el archivo."),
+      });
     }
   };
 
@@ -478,34 +574,39 @@ export function ContentManagerPanel({
   ) => {
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) return;
+    const autoClassifyZip =
+      activeTab === "recommended" || activeTab === "installed";
     const zipTargetKind: ContentKind =
       activeTab === "shaders" ? "shader" : "resource_pack";
 
     try {
-      let count = 0;
+      const importedItems: ContentItem[] = [];
       for (const file of files) {
         const lower = file.name.toLowerCase();
-        const kind: ContentKind =
-          lower.endsWith(".zip") || lower.endsWith(".zip.disabled")
-            ? zipTargetKind
-            : "mod";
+        const isZip = lower.endsWith(".zip") || lower.endsWith(".zip.disabled");
+        const kind: ContentKind = isZip ? zipTargetKind : "mod";
         const buffer = await file.arrayBuffer();
-        await onImportContentBytes(
+        const item = await onImportContentBytes(
           profile.id,
           kind,
           file.name,
           Array.from(new Uint8Array(buffer)),
+          isZip && autoClassifyZip,
         );
-        count += 1;
+        importedItems.push(item);
       }
-      if (count > 0) {
-        setStatusMessage(`Importados ${count} archivo(s) en la instancia.`);
+      if (importedItems.length > 0) {
+        setStatusNotice({
+          kind: "success",
+          text: summarizeImportedItems(importedItems),
+        });
         await refreshLocal();
       }
     } catch (err) {
-      setStatusMessage(
-        err instanceof Error ? err.message : JSON.stringify(err),
-      );
+      setStatusNotice({
+        kind: "error",
+        text: formatFriendlyError(err, "No se pudo importar el archivo."),
+      });
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
@@ -528,7 +629,7 @@ export function ContentManagerPanel({
     }
     const reqId = ++searchReqRef.current;
     setSearching(true);
-    setStatusMessage(null);
+    setStatusNotice(null);
     try {
       const hits = await onSearchModrinth(
         profile.id,
@@ -559,9 +660,10 @@ export function ContentManagerPanel({
       setSearchHasMore(hits.length >= 12);
     } catch (err) {
       if (reqId !== searchReqRef.current) return;
-      setStatusMessage(
-        err instanceof Error ? err.message : JSON.stringify(err),
-      );
+      setStatusNotice({
+        kind: "error",
+        text: formatFriendlyError(err, "No se pudo completar la búsqueda."),
+      });
     } finally {
       if (reqId === searchReqRef.current) {
         setSearching(false);
@@ -576,19 +678,26 @@ export function ContentManagerPanel({
 
   const handleRefreshSuggestions = async () => {
     const nextOffset = feedHasMore ? feedOffset + 10 : 0;
-    const items = await onGetDynamicRecommendations(
-      profile.id,
-      discoveryChip,
-      discoveryKind,
-      nextOffset,
-      modrinthSort,
-    );
-    if (items.length === 0 && nextOffset > 0) {
-      await fetchFeedPage(0, false, modrinthSort);
-    } else {
-      setDynamicFeed(items);
-      setFeedOffset(nextOffset);
-      setFeedHasMore(items.length >= 10);
+    try {
+      const items = await onGetDynamicRecommendations(
+        profile.id,
+        discoveryChip,
+        discoveryKind,
+        nextOffset,
+        modrinthSort,
+      );
+      if (items.length === 0 && nextOffset > 0) {
+        await fetchFeedPage(0, false, modrinthSort);
+      } else {
+        setDynamicFeed(items);
+        setFeedOffset(nextOffset);
+        setFeedHasMore(items.length >= 10);
+      }
+    } catch (err) {
+      setStatusNotice({
+        kind: "error",
+        text: formatFriendlyError(err, "No se pudieron renovar las sugerencias."),
+      });
     }
   };
 
@@ -608,20 +717,22 @@ export function ContentManagerPanel({
 
   const handlePreset = async (preset: PerformancePreset) => {
     setBusySlug(preset);
-    setStatusMessage(null);
+    setStatusNotice(null);
     try {
       const installed = await onInjectPreset(profile.id, preset, (ev) =>
         setProgress(ev),
       );
-      setStatusMessage(
-        `Instalados (${installed.length} con dependencias): ${installed.join(", ")}`,
-      );
+      setStatusNotice({
+        kind: "success",
+        text: `Listo: se instalaron ${installed.length} archivos correctamente.`,
+      });
       await refreshLocal();
       await fetchFeedPage(feedOffset, false, modrinthSort);
     } catch (err) {
-      setStatusMessage(
-        err instanceof Error ? err.message : JSON.stringify(err),
-      );
+      setStatusNotice({
+        kind: "error",
+        text: formatFriendlyError(err, "No se pudo instalar el paquete."),
+      });
     } finally {
       setBusySlug(null);
       setProgress(null);
@@ -630,7 +741,7 @@ export function ContentManagerPanel({
 
   const handleInstallSingle = async (item: ModrinthSearchResult) => {
     setBusySlug(item.slug);
-    setStatusMessage(null);
+    setStatusNotice(null);
     try {
       const installed = await onInstallItem(
         profile.id,
@@ -638,7 +749,13 @@ export function ContentManagerPanel({
         item.kind,
         (ev) => setProgress(ev),
       );
-      setStatusMessage(`Instalado ${item.title}: ${installed.join(", ")}`);
+      setStatusNotice({
+        kind: "success",
+        text:
+          installed.length > 1
+            ? `Instalado "${item.title}" junto con ${installed.length - 1} complemento(s) necesario(s).`
+            : `Instalado "${item.title}" correctamente.`,
+      });
       await refreshLocal();
       if (searchResults) {
         setSearchResults((prev) =>
@@ -652,9 +769,10 @@ export function ContentManagerPanel({
         setDynamicFeed((prev) => prev.filter((r) => r.slug !== item.slug));
       }
     } catch (err) {
-      setStatusMessage(
-        err instanceof Error ? err.message : JSON.stringify(err),
-      );
+      setStatusNotice({
+        kind: "error",
+        text: formatFriendlyError(err, `No se pudo instalar "${item.title}".`),
+      });
     } finally {
       setBusySlug(null);
       setProgress(null);
@@ -717,7 +835,7 @@ export function ContentManagerPanel({
               Mods, Resource Packs y Shaders
             </h1>
             <p className="text-[11px] font-mono text-slate-500">
-              {profile.name} · MC {profile.mc_version} ({profile.loader})
+              {profile.name} · Minecraft {profile.mc_version} ({profile.loader})
             </p>
           </div>
 
@@ -807,8 +925,11 @@ export function ContentManagerPanel({
 
         {dragActive && (
           <div className="rounded-xl border-2 border-dashed border-[var(--accent-primary)] bg-[var(--accent-soft)] p-4 text-center text-xs font-medium text-[var(--accent-primary)]">
-            Suelta tus archivos .jar o .zip aquí para instalarlos en{" "}
-            {activeTab === "shaders" ? "shaderpacks/" : profile.name}
+            {activeTab === "shaders"
+              ? "Suelta tus archivos .zip aquí para añadirlos a Shaders"
+              : activeTab === "resource_packs"
+                ? "Suelta tus archivos .zip aquí para añadirlos a Resource Packs"
+                : "Suelta archivos .jar o .zip aquí (mods, shaders y resource packs se clasifican automáticamente)"}
           </div>
         )}
 
@@ -822,17 +943,88 @@ export function ContentManagerPanel({
                 {progress.completed}/{progress.total}
               </span>
             </div>
-            <div className="text-[11px] font-mono text-slate-500 truncate">
+            <div className="text-[11px] text-slate-400 truncate">
               {progress.detail}
             </div>
           </div>
         )}
 
-        {statusMessage && (
-          <div className="rounded-xl forge-panel px-4 py-2.5 text-xs font-mono text-slate-300">
-            {statusMessage}
+        {/* Dismissible Success / Error Status Banner */}
+        {statusNotice && (
+          <div
+            className={`rounded-xl border px-4 py-2.5 text-xs flex items-center justify-between gap-3 ${
+              statusNotice.kind === "error"
+                ? "bg-rose-500/10 border-rose-500/35 text-rose-200"
+                : statusNotice.kind === "success"
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-200"
+                  : "forge-panel text-slate-200"
+            }`}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              {statusNotice.kind === "error" ? (
+                <AlertTriangle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+              ) : statusNotice.kind === "success" ? (
+                <Check className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+              ) : (
+                <Info className="h-3.5 w-3.5 text-[var(--accent-primary)] shrink-0" />
+              )}
+              <span className="leading-relaxed">{statusNotice.text}</span>
+            </div>
+            <button
+              type="button"
+              aria-label="Cerrar aviso"
+              onClick={() => setStatusNotice(null)}
+              className="p-0.5 rounded text-current opacity-70 hover:opacity-100 shrink-0 transition-opacity"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
           </div>
         )}
+
+        {/* Helpful Vanilla Banner explaining Mods require Fabric */}
+        {profile.loader === "vanilla" &&
+          (activeTab === "recommended" || activeTab === "installed") && (
+            <div className="rounded-xl bg-[#0D1118] border border-[var(--accent-border)] p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3.5">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="h-8 w-8 rounded-lg bg-[var(--accent-soft)] flex items-center justify-center text-[var(--accent-primary)] shrink-0 mt-0.5">
+                  <Info className="h-4 w-4" />
+                </div>
+                <div className="space-y-0.5">
+                  <h2 className="text-[13px] font-semibold text-white">
+                    Esta instancia usa Minecraft Vanilla (sin mods)
+                  </h2>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Para instalar mods necesitas cambiar la instancia a{" "}
+                    <span className="text-slate-200 font-medium">Fabric</span>.
+                    Tus mundos seguirán ahí, o también puedes instalar Resource
+                    Packs en Vanilla.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={switchingLoader}
+                  onClick={() => void handleSwitchToFabric()}
+                  className="btn-accent rounded-lg px-3.5 py-1.5 text-xs font-semibold disabled:opacity-50"
+                >
+                  {switchingLoader ? "Cambiando..." : "Cambiar a Fabric"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab("recommended");
+                    setSearchResults(null);
+                    setDiscoveryChip("resource_pack");
+                    setSearchKind("resource_pack");
+                  }}
+                  className="rounded-lg bg-white/[0.06] hover:bg-white/[0.1] px-3 py-1.5 text-xs font-medium text-slate-200 transition-colors"
+                >
+                  Ver Resource Packs
+                </button>
+              </div>
+            </div>
+          )}
 
         {/* TAB: RECOMENDADOS & SMART SEARCH */}
         {activeTab === "recommended" && (
@@ -844,7 +1036,7 @@ export function ContentManagerPanel({
                   <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
                       <Check className="h-4 w-4" />
-                      Stack FPS Puros instalado (9 mods)
+                      Pack de FPS instalado (9 mods)
                     </span>
                     <button
                       type="button"
@@ -861,16 +1053,15 @@ export function ContentManagerPanel({
                       <div className="flex items-center justify-between gap-2">
                         <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
                           <Rocket className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
-                          FPS Puros (Core Estable)
+                          Pack de FPS (Recomendado)
                         </span>
                         <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
-                          9 mods + deps
+                          9 mods
                         </span>
                       </div>
                       <p className="text-xs text-slate-400 leading-relaxed">
-                        Sodium, Lithium, FerriteCore, ImmediatelyFast,
-                        ModernFix, EntityCulling, MoreCulling, Dynamic FPS y
-                        BadOptimizations.
+                        Aumenta al máximo los FPS y elimina tirones con Sodium,
+                        Lithium y los optimizadores esenciales.
                       </p>
                     </div>
                     <button
@@ -880,8 +1071,8 @@ export function ContentManagerPanel({
                       className="btn-accent w-full rounded-lg disabled:opacity-45 py-2 text-xs font-semibold transition-colors"
                     >
                       {busySlug === "fps_pure"
-                        ? "Instalando FPS Puros..."
-                        : "Instalar FPS Puros"}
+                        ? "Instalando Pack de FPS..."
+                        : "Instalar Pack de FPS"}
                     </button>
                   </div>
                 )}
@@ -890,7 +1081,7 @@ export function ContentManagerPanel({
                   <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
                       <Check className="h-4 w-4" />
-                      Acelerador C2ME instalado
+                      Carga rápida de terreno instalada
                     </span>
                     <button
                       type="button"
@@ -906,15 +1097,15 @@ export function ContentManagerPanel({
                       <div className="flex items-center justify-between gap-2">
                         <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
                           <Cpu className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
-                          Acelerador de Chunks Singleplayer
+                          Carga rápida de terreno
                         </span>
                         <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
-                          C2ME · Multihilo
+                          C2ME
                         </span>
                       </div>
                       <p className="text-xs text-slate-400 leading-relaxed">
-                        Generación y carga paralela de chunks en local (ideal
-                        para /tp y vuelos rápidos). Experimental en snapshots.
+                        Genera y carga el mapa mucho más rápido en un jugador,
+                        ideal para volar con élitros o explorar sin esperas.
                       </p>
                     </div>
                     <button
@@ -925,7 +1116,7 @@ export function ContentManagerPanel({
                     >
                       {busySlug === "c2me_chunk_accel"
                         ? "Instalando C2ME..."
-                        : "Añadir C2ME (Singleplayer)"}
+                        : "Añadir carga rápida"}
                     </button>
                   </div>
                 )}
@@ -934,7 +1125,7 @@ export function ContentManagerPanel({
                   <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
                       <Check className="h-4 w-4" />
-                      Bobby (Chunks Multijugador) instalado
+                      Ver más lejos en servidores (Bobby) instalado
                     </span>
                     <button
                       type="button"
@@ -950,15 +1141,15 @@ export function ContentManagerPanel({
                       <div className="flex items-center justify-between gap-2">
                         <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
                           <Globe2 className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
-                          Horizonte Multijugador (Bobby)
+                          Ver más lejos en servidores
                         </span>
                         <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
-                          Caché MP
+                          Bobby
                         </span>
                       </div>
                       <p className="text-xs text-slate-400 leading-relaxed">
-                        Guarda chunks en caché local para ver más allá del
-                        límite de view-distance de servidores multijugador.
+                        Recuerda las zonas que ya visitaste para ver mucho más
+                        lejos del límite normal en servidores multijugador.
                       </p>
                     </div>
                     <button
@@ -969,7 +1160,7 @@ export function ContentManagerPanel({
                     >
                       {busySlug === "bobby_multiplayer"
                         ? "Instalando Bobby..."
-                        : "Añadir Bobby (Multijugador)"}
+                        : "Añadir Bobby"}
                     </button>
                   </div>
                 )}
@@ -978,7 +1169,7 @@ export function ContentManagerPanel({
                   <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
                       <Check className="h-4 w-4" />
-                      Distant Horizons instalado
+                      Horizonte infinito (Distant Horizons) instalado
                     </span>
                     <button
                       type="button"
@@ -994,15 +1185,15 @@ export function ContentManagerPanel({
                       <div className="flex items-center justify-between gap-2">
                         <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
                           <Compass className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
-                          Horizonte Opcional (LODs)
+                          Horizonte infinito (Distant Horizons)
                         </span>
                         <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
-                          64+ chunks
+                          Distancia extrema
                         </span>
                       </div>
                       <p className="text-xs text-slate-400 leading-relaxed">
-                        Distant Horizons independiente del pack base para
-                        horizontes masivos bajo demanda.
+                        Permite ver montañas y paisajes a distancias enormes sin
+                        hundir el rendimiento.
                       </p>
                     </div>
                     <button
@@ -1038,7 +1229,7 @@ export function ContentManagerPanel({
                       setSearchHasMore(false);
                     }
                   }}
-                  placeholder={`Buscar en Modrinth para ${profile.loader} ${profile.mc_version}...`}
+                  placeholder={`Buscar contenido para Minecraft ${profile.mc_version}...`}
                   className="w-full rounded-lg bg-[#0D1118] border border-white/[0.08] pl-9 pr-3 py-2 text-[13px] text-white placeholder:text-slate-500 focus:border-[var(--accent-primary)] focus:outline-none"
                 />
               </div>
@@ -1071,9 +1262,9 @@ export function ContentManagerPanel({
                 title="Ordenar resultados"
                 className="rounded-lg bg-[#0D1118] border border-white/[0.08] px-3 py-2 text-xs text-slate-200 focus:border-[var(--accent-primary)] focus:outline-none"
               >
-                <option value="downloads">Descargas</option>
+                <option value="downloads">Más descargados</option>
                 <option value="relevance">Relevancia</option>
-                <option value="newest">Nuevos</option>
+                <option value="newest">Más recientes</option>
                 <option value="updated">Actualizados</option>
               </select>
 
@@ -1133,8 +1324,8 @@ export function ContentManagerPanel({
                 <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
                   <Sparkles className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                   {searchResults
-                    ? `Resultados de Modrinth (${searchResults.length})`
-                    : `Te podría gustar · MC ${profile.mc_version}`}
+                    ? `Resultados (${searchResults.length})`
+                    : `Te podría gustar · Minecraft ${profile.mc_version}`}
                 </span>
                 {searchResults && (
                   <button
@@ -1147,17 +1338,17 @@ export function ContentManagerPanel({
                     }}
                     className="text-xs text-[var(--accent-primary)] hover:underline"
                   >
-                    Volver a descubrimiento
+                    Volver a recomendaciones
                   </button>
                 )}
               </div>
 
               {loadingFeed && displayList.length === 0 && !searchResults ? (
-                <div className="rounded-xl forge-panel p-6 text-center text-xs font-mono text-slate-500">
-                  Consultando Modrinth API v2...
+                <div className="rounded-xl forge-panel p-6 text-center text-xs text-slate-400">
+                  Buscando...
                 </div>
               ) : displayList.length === 0 ? (
-                <div className="rounded-xl forge-panel p-6 text-center text-xs font-mono text-slate-500">
+                <div className="rounded-xl forge-panel p-6 text-center text-xs text-slate-400">
                   No se encontraron resultados nuevos para esta categoría.
                 </div>
               ) : (
@@ -1198,7 +1389,7 @@ export function ContentManagerPanel({
                                   {item.title}
                                 </span>
                                 <span className="shrink-0 text-[10px] font-mono text-slate-500">
-                                  {formatDownloads(item.downloads)} DL
+                                  {formatDownloads(item.downloads)} descargas
                                 </span>
                               </div>
                               <p className="text-xs text-slate-400 line-clamp-1">
@@ -1212,7 +1403,7 @@ export function ContentManagerPanel({
                                   </span>
                                 )}
                                 {item.performance_warning && (
-                                  <span className="inline-flex items-center gap-1 rounded bg-[#F59E0B]/10 px-1.5 py-0.5 text-[10px] font-mono text-[#F59E0B]">
+                                  <span className="inline-flex items-center gap-1 rounded bg-[#F59E0B]/10 px-1.5 py-0.5 text-[10px] text-[#F59E0B]">
                                     <AlertTriangle className="h-2.5 w-2.5" />
                                     {item.performance_warning}
                                   </span>
@@ -1222,7 +1413,7 @@ export function ContentManagerPanel({
                           </div>
 
                           {item.installed ? (
-                            <span className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-soft)] px-2.5 py-1.5 text-[11px] font-mono text-[var(--accent-primary)]">
+                            <span className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-soft)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--accent-primary)]">
                               <Check className="h-3 w-3" />
                               Instalado
                             </span>
@@ -1233,6 +1424,11 @@ export function ContentManagerPanel({
                                 busySlug !== null ||
                                 disabledByLoader ||
                                 !item.compatible
+                              }
+                              title={
+                                disabledByLoader
+                                  ? "Cambia la instancia a Fabric para instalar mods"
+                                  : undefined
                               }
                               onClick={() => void handleInstallSingle(item)}
                               className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.11] disabled:opacity-40 px-3 py-1.5 text-xs font-medium text-white transition-colors"
@@ -1279,7 +1475,7 @@ export function ContentManagerPanel({
                   type="text"
                   value={localQuery}
                   onChange={(e) => setLocalQuery(e.target.value)}
-                  placeholder="Filtrar elementos instalados por nombre o archivo..."
+                  placeholder="Filtrar por nombre..."
                   className="w-full rounded-lg bg-[#0D1118] border border-white/[0.08] pl-9 pr-3 py-2 text-[13px] text-white placeholder:text-slate-500 focus:border-[var(--accent-primary)] focus:outline-none"
                 />
               </div>
@@ -1297,24 +1493,37 @@ export function ContentManagerPanel({
 
             <div className="rounded-xl border border-dashed border-white/[0.08] bg-[#0D1118]/70 px-4 py-3 flex items-center justify-between gap-3 text-xs text-slate-400">
               <span className="inline-flex items-center gap-2">
-                <Upload className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
-                Arrastra archivos{" "}
-                <code className="text-[var(--accent-primary)]">
-                  {activeTab === "installed" ? ".jar" : ".zip"}
-                </code>{" "}
-                a esta ventana para importarlos en{" "}
-                <code className="text-slate-300">
-                  {activeTab === "shaders"
-                    ? "shaderpacks/"
-                    : activeTab === "resource_packs"
-                      ? "resourcepacks/"
-                      : "mods/"}
-                </code>
+                <Upload className="h-3.5 w-3.5 text-[var(--accent-primary)] shrink-0" />
+                {activeTab === "shaders" ? (
+                  <>
+                    Arrastra archivos{" "}
+                    <code className="text-[var(--accent-primary)]">.zip</code>{" "}
+                    aquí para añadirlos a{" "}
+                    <span className="text-slate-200 font-medium">Shaders</span>.
+                  </>
+                ) : activeTab === "resource_packs" ? (
+                  <>
+                    Arrastra archivos{" "}
+                    <code className="text-[var(--accent-primary)]">.zip</code>{" "}
+                    aquí para añadirlos a{" "}
+                    <span className="text-slate-200 font-medium">
+                      Resource Packs
+                    </span>
+                    .
+                  </>
+                ) : (
+                  <>
+                    Arrastra archivos{" "}
+                    <code className="text-[var(--accent-primary)]">.jar</code> o{" "}
+                    <code className="text-[var(--accent-primary)]">.zip</code>{" "}
+                    aquí para importarlos (se clasifican automáticamente).
+                  </>
+                )}
               </span>
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="text-[var(--accent-primary)] hover:underline font-medium"
+                className="text-[var(--accent-primary)] hover:underline font-medium shrink-0"
               >
                 Seleccionar archivo
               </button>
@@ -1322,7 +1531,7 @@ export function ContentManagerPanel({
 
             <div className="divide-y divide-white/[0.05] rounded-xl forge-panel overflow-hidden">
               {filteredLocalItems.length === 0 ? (
-                <div className="p-8 text-center text-xs font-mono text-slate-500">
+                <div className="p-8 text-center text-xs text-slate-500">
                   {localQuery.trim()
                     ? "Sin coincidencias para el filtro actual."
                     : "No hay elementos instalados todavía."}

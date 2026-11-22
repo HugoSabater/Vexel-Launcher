@@ -76,7 +76,8 @@ function classifyLogLine(entry: LogLineEvent): string {
     entry.line.startsWith("[GPU Preference]") ||
     entry.line.startsWith("[WorldGen Tuning]") ||
     entry.line.startsWith("[Java Probe]") ||
-    entry.line.startsWith("[Launcher]")
+    entry.line.startsWith("[Launcher]") ||
+    entry.line.startsWith("[Vexel]")
   ) {
     return "text-[var(--accent-primary)]";
   }
@@ -145,7 +146,7 @@ export const ConsoleDrawer = memo(function ConsoleDrawer({
         <div className="flex items-center gap-2">
           <Terminal className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
           <span className="text-xs font-medium text-slate-200">
-            Consola de Ejecución (Hora Local)
+            Consola de diagnóstico
           </span>
           <span className="text-[10px] font-mono text-slate-500">
             ({lines.length})
@@ -156,25 +157,25 @@ export const ConsoleDrawer = memo(function ConsoleDrawer({
           <button
             type="button"
             onClick={() => setAutoScroll((v) => !v)}
-            className={`rounded-md px-2 py-0.5 text-[10px] font-mono transition-colors ${
+            className={`rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors ${
               autoScroll
                 ? "bg-[var(--accent-soft)] text-[var(--accent-primary)]"
                 : "bg-white/[0.04] text-slate-500 hover:text-slate-300"
             }`}
           >
-            auto-scroll
+            Desplazamiento automático
           </button>
           <button
             type="button"
             onClick={() => void handleCopy()}
-            className="inline-flex items-center gap-1 rounded-md bg-white/[0.04] hover:bg-white/[0.08] px-2 py-0.5 text-[10px] font-mono text-slate-300 transition-colors"
+            className="inline-flex items-center gap-1 rounded-md bg-white/[0.04] hover:bg-white/[0.08] px-2 py-0.5 text-[10px] font-medium text-slate-300 transition-colors"
           >
             {copied ? (
               <Check className="h-3 w-3 text-[var(--accent-primary)]" />
             ) : (
               <Copy className="h-3 w-3" />
             )}
-            copiar
+            Copiar
           </button>
           <button
             type="button"
@@ -210,7 +211,7 @@ export const ConsoleDrawer = memo(function ConsoleDrawer({
       >
         {lines.length === 0 ? (
           <div className="text-slate-600">
-            $ esperando salida del proceso javaw.exe...
+            Esperando a que inicie Minecraft...
           </div>
         ) : (
           lines.map((entry, idx) => (
