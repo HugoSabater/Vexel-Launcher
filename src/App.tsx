@@ -827,7 +827,6 @@ export function App() {
             runningProfileIds={runningProfiles}
             activeView={activeView}
             consoleOpen={consoleOpen}
-            offlineUsername={bootstrap.config.offline_username}
             hardware={bootstrap.hardware}
             onSelectProfile={setSelectedProfileId}
             onSelectView={(v) => {
@@ -835,7 +834,6 @@ export function App() {
               setActiveView(v);
             }}
             onToggleConsole={() => setConsoleOpen((v) => !v)}
-            onUpdateUsername={handleUpdateUsername}
             onPlayProfile={(id) => handlePlayProfile(id)}
             onStopProfile={(id) => handleStopProfile(id)}
             onOpenFolder={handleOpenFolder}

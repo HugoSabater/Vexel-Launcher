@@ -189,9 +189,9 @@ export function SkinViewer3D({
       className={`group relative inline-flex flex-col items-center justify-center ${className}`}
       style={{ width, height }}
     >
-      {/* Minecraft-Style Floating Nametag directly above head */}
+      {/* Minecraft Vanilla-Style Floating Nametag directly above head */}
       {username !== undefined && (
-        <div className="absolute top-2 z-20 flex flex-col items-center gap-1">
+        <div className="absolute top-3 z-20 flex flex-col items-center gap-1">
           {editing && onUpdateUsername ? (
             <form
               onSubmit={(e) => {
@@ -216,7 +216,7 @@ export function SkinViewer3D({
                   }
                 }}
                 onBlur={() => void commitName()}
-                className="mc-nametag w-36 text-center bg-black/55 border-0 focus:outline-none"
+                className="mc-nametag w-36 text-center bg-black/40 border-0 outline-none focus:outline-none focus:ring-0"
               />
             </form>
           ) : (
@@ -231,27 +231,18 @@ export function SkinViewer3D({
               title={
                 onUpdateUsername ? "Clic para editar nombre offline" : undefined
               }
-              className="mc-nametag hover:bg-black/50 transition-colors cursor-pointer"
+              className="mc-nametag hover:bg-black/40 transition-colors cursor-pointer"
             >
               {username}
             </button>
           )}
           {nameError && (
-            <span className="bg-black/80 px-1.5 py-0.5 text-[10px] font-mono text-amber-300">
+            <span className="bg-black/75 px-1.5 py-0.5 text-[10px] font-mono text-amber-300">
               {nameError}
             </span>
           )}
         </div>
       )}
-
-      {/* Concentric Obsidian Light Pedestal under character feet */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute bottom-10 left-1/2 -translate-x-1/2 flex items-center justify-center"
-      >
-        <div className="skin-pedestal h-6 w-36 rounded-full" />
-        <div className="absolute h-3 w-24 rounded-full border border-[rgba(var(--accent-rgb),0.32)]" />
-      </div>
 
       <canvas
         ref={canvasRef}

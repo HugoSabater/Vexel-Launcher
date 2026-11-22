@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: "Minecraft";
+  src: url("skinview3d/assets/minecraft.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   color-scheme: dark;
   --forge-bg: #07090d;
@@ -143,20 +151,6 @@ pre,
   transform: scale(0.985);
 }
 
-/* Concentric Obsidian Pedestal for 3D Avatar */
-.skin-pedestal {
-  background: radial-gradient(
-    ellipse at center,
-    rgba(var(--accent-rgb), 0.24) 0%,
-    rgba(var(--accent-rgb), 0.08) 44%,
-    transparent 74%
-  );
-  border: 1px solid rgba(var(--accent-rgb), 0.26);
-  box-shadow:
-    inset 0 0 14px rgba(var(--accent-rgb), 0.14),
-    0 0 26px -4px rgba(var(--accent-rgb), 0.25);
-}
-
 input[type="range"].forge-slider {
   -webkit-appearance: none;
   appearance: none;
@@ -178,18 +172,20 @@ input[type="range"].forge-slider::-webkit-slider-thumb {
   cursor: pointer;
 }
 
-/* Minecraft-faithful floating nametag backed by local Silkscreen */
+/* Minecraft Vanilla-faithful floating nametag backed by bundled minecraft.woff2 */
 .mc-nametag {
-  font-family: "Silkscreen", "Consolas", "Courier New", monospace;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: 0.02em;
+  font-family: "Minecraft", "Consolas", monospace;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
   color: #ffffff;
-  text-shadow: 1.5px 1.5px 0 #3f3f3f;
-  background-color: rgba(0, 0, 0, 0.34);
+  text-shadow: 2px 2px 0 #3f3f3f;
+  background-color: rgba(0, 0, 0, 0.25);
+  border: 0;
   border-radius: 0;
-  padding: 2px 7px;
+  padding: 2px 6px;
+  box-shadow: none;
   image-rendering: pixelated;
   -webkit-font-smoothing: none;
 }

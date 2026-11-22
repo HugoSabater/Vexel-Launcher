@@ -1,23 +1,19 @@
 import { useEffect, useState } from "react";
 import {
-  Check,
   Copy,
   FolderOpen,
   Gauge,
   Globe,
   Home,
   Layers,
-  Pencil,
   Play,
   Plus,
   Square,
   Star,
   Terminal,
   Trash2,
-  User,
   X,
 } from "lucide-react";
-import { USERNAME_REGEX } from "../theme/accents";
 import type {
   GcPreset,
   HardwareInfo,
@@ -33,12 +29,10 @@ interface SidebarProfilesProps {
   runningProfileIds: Record<string, boolean>;
   activeView: MainView;
   consoleOpen: boolean;
-  offlineUsername: string;
   hardware: HardwareInfo;
   onSelectProfile: (profileId: string) => void;
   onSelectView: (view: MainView) => void;
   onToggleConsole: () => void;
-  onUpdateUsername: (username: string) => Promise<void>;
   onPlayProfile: (profileId: string) => Promise<void>;
   onStopProfile: (profileId: string) => Promise<void>;
   onOpenFolder: (profileId: string) => Promise<void>;
@@ -75,12 +69,10 @@ export function SidebarProfiles({
   runningProfileIds,
   activeView,
   consoleOpen,
-  offlineUsername,
   hardware,
   onSelectProfile,
   onSelectView,
   onToggleConsole,
-  onUpdateUsername,
   onPlayProfile,
   onStopProfile,
   onOpenFolder,
@@ -94,8 +86,6 @@ export function SidebarProfiles({
   const [deleteTarget, setDeleteTarget] = useState<Profile | null>(null);
   const [deleteFilesChecked, setDeleteFilesChecked] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [editingNick, setEditingNick] = useState(false);
-  const [nickDraft, setNickDraft] = useState(offlineUsername);
 
   const [name, setName] = useState("");
   const [mcVersion, setMcVersion] = useState("1.21.4");
@@ -104,10 +94,6 @@ export function SidebarProfiles({
   const [gcPreset, setGcPreset] = useState<GcPreset>("generational_zgc");
   const [serverAddress, setServerAddress] = useState("");
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setNickDraft(offlineUsername);
-  }, [offlineUsername]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -170,85 +156,10 @@ export function SidebarProfiles({
     }
   };
 
-  const handleCommitNick = async () => {
-    setEditingNick(false);
-    const trimmed = nickDraft.trim();
-    if (trimmed && trimmed !== offlineUsername) {
-      if (!USERNAME_REGEX.test(trimmed)) {
-        setNickDraft(offlineUsername);
-        try {
-          await onUpdateUsername(trimmed);
-        } catch {
-          // Validation error already shown in global banner
-        }
-        return;
-      }
-      try {
-        await onUpdateUsername(trimmed);
-      } catch {
-        setNickDraft(offlineUsername);
-      }
-    } else {
-      setNickDraft(offlineUsername);
-    }
-  };
-
   return (
     <aside className="w-[240px] shrink-0 bg-[#0D1118] border-r border-white/[0.06] flex flex-col">
-      {/* Borderless Player Identity Strip (Zero Nested Boxes) */}
-      <div className="px-3.5 py-3 border-b border-white/[0.06]">
-        <div className="flex items-center gap-2.5">
-          <div className="h-8 w-8 rounded-lg bg-[var(--accent-soft)] flex items-center justify-center text-[var(--accent-primary)] shrink-0">
-            <User className="h-4 w-4" />
-          </div>
-          <div className="min-w-0 flex-1">
-            {editingNick ? (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void handleCommitNick();
-                }}
-                className="flex items-center gap-1"
-              >
-                <input
-                  type="text"
-                  autoFocus
-                  maxLength={16}
-                  value={nickDraft}
-                  onChange={(e) => setNickDraft(e.target.value)}
-                  onBlur={() => void handleCommitNick()}
-                  className="w-full rounded-md bg-[#07090D] border border-[var(--accent-primary)] px-2 py-0.5 text-[13px] font-mono text-white focus:outline-none"
-                />
-                <button
-                  type="submit"
-                  className="p-0.5 text-[var(--accent-primary)]"
-                >
-                  <Check className="h-3.5 w-3.5" />
-                </button>
-              </form>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setEditingNick(true)}
-                title="Clic para editar nombre offline"
-                className="group w-full flex items-center justify-between gap-1 text-left"
-              >
-                <span className="truncate text-[13px] font-semibold text-slate-100 group-hover:text-white transition-colors">
-                  {offlineUsername}
-                </span>
-                <Pencil className="h-3 w-3 text-slate-600 group-hover:text-[var(--accent-primary)] shrink-0 transition-colors" />
-              </button>
-            )}
-            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] font-mono text-slate-500">
-              <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent-primary)]" />
-              <span>Offline</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Center: Borderless Instance List */}
-      <div className="px-3.5 pt-3.5 pb-1.5 flex items-center justify-between">
+      {/* Top: Clean Instance List Header */}
+      <div className="px-3.5 pt-3.5 pb-2 flex items-center justify-between">
         <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
           Instancias ({profiles.length})
         </span>
