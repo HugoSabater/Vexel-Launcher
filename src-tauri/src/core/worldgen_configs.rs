@@ -22,6 +22,7 @@ fn classify_mod_token(raw: &str, flags: &mut ActiveWorldgenMods) {
 
     if norm == "sodium"
         || norm.starts_with("sodiumfabric")
+        || norm.starts_with("sodiumneoforge")
         || norm.starts_with("sodiummc")
     {
         flags.has_sodium = true;
@@ -229,7 +230,7 @@ pub async fn ensure_worldgen_mod_configs(
 
     let active = detect_active_worldgen_mods(paths, profile_id).await;
     let is_fabric = loader == ModLoaderKind::Fabric;
-    let tune_sodium = is_fabric && active.has_sodium;
+    let tune_sodium = matches!(loader, ModLoaderKind::Fabric | ModLoaderKind::NeoForge) && active.has_sodium;
     let tune_c2me = is_fabric && active.has_c2me;
     let tune_dh = active.has_distant_horizons;
 
@@ -292,7 +293,7 @@ pub async fn reoptimize_worldgen_mod_configs(
 
     let active = detect_active_worldgen_mods(paths, profile_id).await;
     let is_fabric = loader == ModLoaderKind::Fabric;
-    let tune_sodium = is_fabric && active.has_sodium;
+    let tune_sodium = matches!(loader, ModLoaderKind::Fabric | ModLoaderKind::NeoForge) && active.has_sodium;
     let tune_c2me = is_fabric && active.has_c2me;
     let tune_dh = active.has_distant_horizons;
 
@@ -514,6 +515,26 @@ mod tests {
         assert_eq!(forge_dh_updated, vec!["config/DistantHorizons.toml"]);
         assert!(!config_dir.join("sodium-options.json").exists());
         let _ = tokio::fs::remove_file(mods_dir.join("DistantHorizons-3.0.jar")).await;
+        let _ = tokio::fs::remove_file(config_dir.join("DistantHorizons.toml")).await;
+
+        // NeoForge with active Sodium & DH must tune both Sodium and DH, but NEVER C2ME
+        tokio::fs::write(mods_dir.join("sodium-neoforge-0.6.5+mc1.21.1.jar"), b"jar").await?;
+        tokio::fs::write(mods_dir.join("DistantHorizons-3.0.jar"), b"jar").await?;
+        let (nf_updated, _) = reoptimize_worldgen_mod_configs(
+            &paths,
+            profile_id,
+            &hw,
+            ModLoaderKind::NeoForge,
+            1_700_000_000,
+        )
+        .await?;
+        assert_eq!(
+            nf_updated,
+            vec!["config/sodium-options.json", "config/DistantHorizons.toml"]
+        );
+        let _ = tokio::fs::remove_file(mods_dir.join("sodium-neoforge-0.6.5+mc1.21.1.jar")).await;
+        let _ = tokio::fs::remove_file(mods_dir.join("DistantHorizons-3.0.jar")).await;
+        let _ = tokio::fs::remove_file(config_dir.join("sodium-options.json")).await;
         let _ = tokio::fs::remove_file(config_dir.join("DistantHorizons.toml")).await;
 
         // Fabric profile re-optimizes only active Sodium & C2ME, backing up old c2me.toml

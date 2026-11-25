@@ -1,11 +1,13 @@
 pub mod content;
 pub mod downloader;
+pub mod global_options;
 pub mod hardware;
 pub mod instance;
 pub mod java;
 pub mod jvm_optimizer;
 pub mod loaders;
 pub mod manifest;
+pub mod mrpack;
 pub mod paths;
 pub mod runner;
 pub mod skin_pack;

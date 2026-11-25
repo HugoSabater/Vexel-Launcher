@@ -142,6 +142,15 @@ pub fn run() {
             commands::install_adoptium_java,
             commands::stop_instance,
             commands::open_instance_folder,
+            commands::import_mrpack_bytes,
+            commands::export_profile_mrpack,
+            commands::get_global_game_options,
+            commands::save_global_game_options,
+            commands::import_global_options_from_instance,
+            commands::apply_global_options_to_instance,
+            commands::apply_global_options_to_all_instances,
+            commands::check_launcher_update,
+            commands::open_external_url,
             commands::launch_profile,
         ]);
 

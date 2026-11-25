@@ -110,6 +110,26 @@ impl LauncherPaths {
     }
 
     #[must_use]
+    pub fn shared_neoforge_cache_dir(&self) -> PathBuf {
+        self.shared_cache_dir().join("neoforge")
+    }
+
+    #[must_use]
+    pub fn neoforge_ready_stamp_path(&self, neoforge_version_id: &str) -> PathBuf {
+        self.version_dir(neoforge_version_id).join(".neoforge_ready")
+    }
+
+    #[must_use]
+    pub fn global_options_path(&self) -> PathBuf {
+        self.shared_dir().join("global_options.json")
+    }
+
+    #[must_use]
+    pub fn update_check_cache_path(&self) -> PathBuf {
+        self.shared_cache_dir().join("update_check.json")
+    }
+
+    #[must_use]
     pub fn shared_skins_dir(&self) -> PathBuf {
         self.shared_dir().join("skins")
     }

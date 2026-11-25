@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::{State, Window};
 use tokio::sync::Mutex;
@@ -17,6 +17,11 @@ use crate::core::content::{
     ModrinthSearchResult, OptimizationStackInfo, PerformancePreset,
 };
 use crate::core::downloader::{verify_and_download_all, DownloadProgress};
+use crate::core::global_options::{
+    apply_global_options_to_instance_dir, import_global_options_from_instance_dir,
+    load_global_options, update_global_options_from_ui, ApplyGlobalOptionsResult,
+    GlobalGameOptionsResponse, SaveGlobalGameOptionsPayload,
+};
 use crate::core::hardware::{
     sample_live_memory_telemetry, HardwareInfo, LiveMemoryTelemetry,
 };
@@ -31,11 +36,16 @@ use crate::core::java::{
 use crate::core::jvm_optimizer::{generate_jvm_flags, GcPreset, JvmTuningInput, JvmTuningOutput};
 use crate::core::loaders::{
     merge_overlay_into_plan_dedup, resolve_fabric_overlay, resolve_forge_overlay,
+    resolve_neoforge_overlay,
 };
 use crate::core::manifest::{
     build_download_plan, extract_game_arguments, fetch_or_load_asset_index,
     fetch_or_load_version_list, fetch_or_load_version_manifest, validate_version_id,
     MinecraftVersionEntry,
+};
+use crate::core::mrpack::{
+    detect_loader_from_dependencies, export_instance_to_mrpack, populate_instance_from_mrpack,
+    read_mrpack_index_blocking, slugify_profile_name, MrpackExportResult, MrpackImportResult,
 };
 use crate::core::paths::LauncherPaths;
 use crate::core::runner::{
@@ -252,8 +262,26 @@ pub async fn create_or_update_profile(
         }
     }
 
+    let is_new_profile = !guard.profiles.iter().any(|p| p.id == profile.id);
+    let new_profile_id = profile.id.clone();
+
     upsert_profile(&state.paths, &mut guard, profile).await?;
-    Ok(guard.clone())
+    let next_config = guard.clone();
+    drop(guard);
+
+    if is_new_profile {
+        let global_opts = load_global_options(&state.paths).await;
+        if global_opts.auto_apply_on_new_instance && !global_opts.entries.is_empty() {
+            let inst_dir = state.paths.instance_dir(&new_profile_id);
+            let _ = ensure_optimized_options_txt(&inst_dir).await;
+            let ts = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let _ = apply_global_options_to_instance_dir(&inst_dir, &global_opts, ts).await;
+        }
+    }
+
+    Ok(next_config)
 }
 
 #[tauri::command]
@@ -668,7 +696,8 @@ pub async fn get_launch_command_preview(
                 "cpw.mods.bootstraplauncher.BootstrapLauncher".to_string()
             }
         }
-        _ => "net.minecraft.client.main.Main".to_string(),
+        ModLoaderKind::NeoForge => "cpw.mods.bootstraplauncher.BootstrapLauncher".to_string(),
+        ModLoaderKind::Vanilla => "net.minecraft.client.main.Main".to_string(),
     };
 
     let req = LaunchRequest {
@@ -959,7 +988,12 @@ pub async fn inject_performance_preset(
     )
     .await?;
 
-    if auto_tune && matches!(profile.loader, ModLoaderKind::Fabric | ModLoaderKind::Forge) {
+    if auto_tune
+        && matches!(
+            profile.loader,
+            ModLoaderKind::Fabric | ModLoaderKind::Forge | ModLoaderKind::NeoForge
+        )
+    {
         let _ = ensure_worldgen_mod_configs(
             &state.paths,
             &profile.id,
@@ -1014,7 +1048,10 @@ pub async fn install_modrinth_item(
 
     if auto_tune
         && kind == ContentKind::Mod
-        && matches!(profile.loader, ModLoaderKind::Fabric | ModLoaderKind::Forge)
+        && matches!(
+            profile.loader,
+            ModLoaderKind::Fabric | ModLoaderKind::Forge | ModLoaderKind::NeoForge
+        )
     {
         let _ = ensure_worldgen_mod_configs(
             &state.paths,
@@ -1265,9 +1302,12 @@ pub async fn launch_profile(
     // Seed optimized options.txt ONLY if missing, BEFORE skin pack modifies resourcePacks
     let _ = ensure_optimized_options_txt(&state.paths.instance_dir(&profile.id)).await;
 
-    // Seed hardware-tuned worldgen mod configs (Fabric: Sodium/C2ME/DH; Forge: DH only) ONLY if missing & opt-in enabled
+    // Seed hardware-tuned worldgen mod configs (Fabric: Sodium/C2ME/DH; NeoForge: Sodium/DH; Forge: DH only)
     if config_snapshot.auto_tune_mod_configs
-        && matches!(profile.loader, ModLoaderKind::Fabric | ModLoaderKind::Forge)
+        && matches!(
+            profile.loader,
+            ModLoaderKind::Fabric | ModLoaderKind::Forge | ModLoaderKind::NeoForge
+        )
     {
         match ensure_worldgen_mod_configs(
             &state.paths,
@@ -1403,10 +1443,52 @@ pub async fn launch_profile(
             extra_game_args.append(&mut loader_game);
         }
         ModLoaderKind::NeoForge => {
-            return Err(AppError::LoaderError(
-                "El soporte directo para NeoForge llegará próximamente. Usa Vanilla, Fabric o Forge."
-                    .to_string(),
-            ));
+            // Ensure vanilla client.jar is present on disk BEFORE running NeoForge installer processors ({MINECRAFT_JAR})
+            let client_jar_path = state.paths.version_jar_path(&profile.mc_version);
+            if !tokio::fs::try_exists(&client_jar_path).await.unwrap_or(false) {
+                if let Some(client_artifact) = plan
+                    .artifacts
+                    .iter()
+                    .find(|a| a.destination == client_jar_path)
+                    .cloned()
+                {
+                    let pre_progress = on_progress.clone();
+                    verify_and_download_all(
+                        &state.client,
+                        vec![client_artifact],
+                        &state.paths.integrity_index_path(),
+                        move |ev| {
+                            let _ = pre_progress.send(ev.into());
+                        },
+                    )
+                    .await?;
+                }
+            }
+
+            let nf_progress = on_progress.clone();
+            let overlay = resolve_neoforge_overlay(
+                &state.client,
+                &profile.mc_version,
+                profile.loader_version.as_deref(),
+                &javaw_path,
+                &state.paths,
+                move |phase, completed, total, detail| {
+                    let _ = nf_progress.send(LaunchProgressEvent {
+                        phase: phase.to_string(),
+                        completed,
+                        total,
+                        bytes_downloaded: 0,
+                        detail: detail.to_string(),
+                        fast_path_hits: 0,
+                    });
+                },
+            )
+            .await?;
+            let (loader_main, loader_jvm, mut loader_game) =
+                merge_overlay_into_plan_dedup(&mut plan, overlay, &libraries_dir);
+            main_class = loader_main;
+            extra_jvm_args.extend(loader_jvm);
+            extra_game_args.append(&mut loader_game);
         }
     }
 
@@ -1522,9 +1604,446 @@ pub async fn launch_profile(
     })
 }
 
+#[tauri::command]
+pub async fn import_mrpack_bytes(
+    state: State<'_, AppState>,
+    bytes: Vec<u8>,
+    on_progress: Channel<LaunchProgressEvent>,
+) -> AppResult<MrpackImportResult> {
+    state.paths.ensure_base_dirs().await?;
+    let temp_path = state.paths.shared_cache_dir().join(format!(
+        "import-{}.mrpack",
+        uuid::Uuid::new_v4().simple()
+    ));
+    tokio::fs::write(&temp_path, &bytes).await?;
+
+    let temp_for_read = temp_path.clone();
+    let index_res =
+        tokio::task::spawn_blocking(move || read_mrpack_index_blocking(&temp_for_read))
+            .await
+            .map_err(|err| AppError::ContentError(format!("Error leyendo .mrpack: {err}")));
+
+    let index = match index_res {
+        Ok(Ok(idx)) => idx,
+        Ok(Err(err)) => {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(err);
+        }
+        Err(err) => {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(err);
+        }
+    };
+
+    let (mc_version, loader, loader_version) =
+        match detect_loader_from_dependencies(&index.dependencies) {
+            Ok(v) => v,
+            Err(err) => {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return Err(err);
+            }
+        };
+
+    if let Err(err) = validate_version_id(&mc_version) {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(err);
+    }
+
+    let profile_name = if index.name.trim().is_empty() {
+        format!("Modpack {mc_version}")
+    } else {
+        index.name.trim().to_string()
+    };
+    let profile_id = slugify_profile_name(&profile_name);
+    let ram_mb = if loader == ModLoaderKind::Vanilla {
+        state.hardware.recommended_vanilla_mb
+    } else {
+        state.hardware.recommended_modded_mb
+    };
+
+    let profile = Profile {
+        id: profile_id.clone(),
+        name: profile_name,
+        mc_version,
+        loader,
+        loader_version,
+        ram_mb,
+        gc_preset: GcPreset::GenerationalZgc,
+        server_address: None,
+        is_default: false,
+        window_width: None,
+        window_height: None,
+        fullscreen: false,
+        custom_jvm_args: None,
+        custom_java_path: None,
+    };
+
+    state.paths.ensure_instance_dirs(&profile.id).await?;
+    let inst_dir = state.paths.instance_dir(&profile.id);
+
+    let progress_cb = on_progress.clone();
+    let pop_res = populate_instance_from_mrpack(
+        &state.client,
+        &temp_path,
+        &index,
+        &inst_dir,
+        move |ev| {
+            let _ = progress_cb.send(ev.into());
+        },
+    )
+    .await;
+    let _ = tokio::fs::remove_file(&temp_path).await;
+
+    let (downloaded_files, extracted_overrides, skipped_server_only) = match pop_res {
+        Ok(counts) => counts,
+        Err(err) => {
+            let _ = tokio::fs::remove_dir_all(&inst_dir).await;
+            return Err(err);
+        }
+    };
+
+    // Seed optimized options.txt and apply global portable game options if enabled
+    let _ = ensure_optimized_options_txt(&inst_dir).await;
+    let global_opts = load_global_options(&state.paths).await;
+    if global_opts.auto_apply_on_new_instance && !global_opts.entries.is_empty() {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let _ = apply_global_options_to_instance_dir(&inst_dir, &global_opts, ts).await;
+    }
+
+    {
+        let mut guard = state.config.lock().await;
+        upsert_profile(&state.paths, &mut guard, profile.clone()).await?;
+    }
+
+    Ok(MrpackImportResult {
+        profile,
+        downloaded_files,
+        extracted_overrides,
+        skipped_server_only,
+    })
+}
+
+#[tauri::command]
+pub async fn export_profile_mrpack(
+    state: State<'_, AppState>,
+    profile_id: String,
+    include_config: bool,
+) -> AppResult<MrpackExportResult> {
+    validate_profile_id(&profile_id)?;
+    let profile = {
+        let guard = state.config.lock().await;
+        guard
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .cloned()
+            .ok_or_else(|| AppError::ConfigError(format!("Profile '{profile_id}' not found")))?
+    };
+
+    export_instance_to_mrpack(&state.client, &state.paths, &profile, include_config, None).await
+}
+
+#[tauri::command]
+pub async fn get_global_game_options(
+    state: State<'_, AppState>,
+) -> AppResult<GlobalGameOptionsResponse> {
+    let opts = load_global_options(&state.paths).await;
+    Ok(opts.into())
+}
+
+#[tauri::command]
+pub async fn save_global_game_options(
+    state: State<'_, AppState>,
+    payload: SaveGlobalGameOptionsPayload,
+) -> AppResult<GlobalGameOptionsResponse> {
+    let updated = update_global_options_from_ui(&state.paths, payload).await?;
+    Ok(updated.into())
+}
+
+#[tauri::command]
+pub async fn import_global_options_from_instance(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> AppResult<GlobalGameOptionsResponse> {
+    validate_profile_id(&profile_id)?;
+    let profile = {
+        let guard = state.config.lock().await;
+        guard
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .cloned()
+            .ok_or_else(|| AppError::ConfigError(format!("Profile '{profile_id}' not found")))?
+    };
+
+    let inst_dir = state.paths.instance_dir(&profile.id);
+    let updated =
+        import_global_options_from_instance_dir(&state.paths, &inst_dir, &profile.name).await?;
+    Ok(updated.into())
+}
+
+#[tauri::command]
+pub async fn apply_global_options_to_instance(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> AppResult<ApplyGlobalOptionsResult> {
+    validate_profile_id(&profile_id)?;
+    {
+        let running = state.running_processes.lock().await;
+        if running.contains_key(&profile_id) {
+            return Err(AppError::ConfigError(
+                "Detén Minecraft antes de aplicar los ajustes globales a esta instancia."
+                    .to_string(),
+            ));
+        }
+    }
+
+    let opts = load_global_options(&state.paths).await;
+    if opts.entries.is_empty() {
+        return Err(AppError::ConfigError(
+            "Todavía no hay ajustes globales guardados. Importa desde una instancia o configura tus preferencias primero."
+                .to_string(),
+        ));
+    }
+
+    let inst_dir = state.paths.instance_dir(&profile_id);
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let mut backups = Vec::new();
+    if let Some(bak) = apply_global_options_to_instance_dir(&inst_dir, &opts, ts).await? {
+        backups.push(bak);
+    }
+
+    Ok(ApplyGlobalOptionsResult {
+        applied_instances: 1,
+        skipped_running: 0,
+        backups_created: backups,
+    })
+}
+
+#[tauri::command]
+pub async fn apply_global_options_to_all_instances(
+    state: State<'_, AppState>,
+) -> AppResult<ApplyGlobalOptionsResult> {
+    let opts = load_global_options(&state.paths).await;
+    if opts.entries.is_empty() {
+        return Err(AppError::ConfigError(
+            "Todavía no hay ajustes globales guardados.".to_string(),
+        ));
+    }
+
+    let profile_ids: Vec<String> = {
+        let guard = state.config.lock().await;
+        guard.profiles.iter().map(|p| p.id.clone()).collect()
+    };
+    let running_ids: std::collections::HashSet<String> = {
+        let running = state.running_processes.lock().await;
+        running.keys().cloned().collect()
+    };
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let mut applied = 0_usize;
+    let mut skipped = 0_usize;
+    let mut backups = Vec::new();
+
+    for pid in profile_ids {
+        if running_ids.contains(&pid) {
+            skipped += 1;
+            continue;
+        }
+        let inst_dir = state.paths.instance_dir(&pid);
+        if let Some(bak) = apply_global_options_to_instance_dir(&inst_dir, &opts, ts).await? {
+            backups.push(format!("{pid}/{bak}"));
+        }
+        applied += 1;
+    }
+
+    Ok(ApplyGlobalOptionsResult {
+        applied_instances: applied,
+        skipped_running: skipped,
+        backups_created: backups,
+    })
+}
+
+const GITHUB_RELEASES_API_URL: &str =
+    "https://api.github.com/repos/HugoSabater/mc-launcher-rust/releases/latest";
+const ALLOWED_RELEASE_URL_PREFIX: &str =
+    "https://github.com/HugoSabater/mc-launcher-rust/releases/";
+const UPDATE_CHECK_TTL_SECS: u64 = 24 * 3600;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateCheckResult {
+    pub current_version: String,
+    pub latest_version: String,
+    pub update_available: bool,
+    pub release_url: String,
+    #[serde(default)]
+    pub checked_at_secs: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubLatestRelease {
+    tag_name: String,
+    html_url: String,
+}
+
+#[must_use]
+fn parse_semver_triple(raw: &str) -> Option<(u64, u64, u64)> {
+    let trimmed = raw.trim().trim_start_matches('v').trim_start_matches('V');
+    let core = trimmed.split('-').next()?.split('+').next()?;
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse::<u64>().ok()?;
+    let minor = parts.next()?.parse::<u64>().ok()?;
+    let patch = parts.next().unwrap_or("0").parse::<u64>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
+#[must_use]
+fn is_newer_semver(current: &str, latest: &str) -> bool {
+    let Some(curr_t) = parse_semver_triple(current) else {
+        return false;
+    };
+    let Some(lat_t) = parse_semver_triple(latest) else {
+        return false;
+    };
+    if lat_t != curr_t {
+        return lat_t > curr_t;
+    }
+    // Same numeric triple: stable release is newer than a pre-release (e.g. 1.1.0 > 1.1.0-beta.1)
+    let curr_pre = current.contains('-');
+    let lat_pre = latest.contains('-');
+    curr_pre && !lat_pre
+}
+
+#[must_use]
+fn is_safe_release_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    if !trimmed.starts_with(ALLOWED_RELEASE_URL_PREFIX) {
+        return false;
+    }
+    !trimmed.chars().any(|c| {
+        c.is_control()
+            || c.is_whitespace()
+            || matches!(
+                c,
+                '&' | '|' | '"' | '\'' | '<' | '>' | ';' | '`' | '$' | '(' | ')' | '%' | '^'
+            )
+    })
+}
+
+#[tauri::command]
+pub async fn check_launcher_update(state: State<'_, AppState>) -> AppResult<UpdateCheckResult> {
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let cache_path = state.paths.update_check_cache_path();
+
+    if let Ok(raw) = tokio::fs::read_to_string(&cache_path).await {
+        if let Ok(mut cached) = serde_json::from_str::<UpdateCheckResult>(&raw) {
+            if now_secs.saturating_sub(cached.checked_at_secs) < UPDATE_CHECK_TTL_SECS {
+                cached.current_version = current.clone();
+                cached.update_available = is_newer_semver(&current, &cached.latest_version)
+                    && is_safe_release_url(&cached.release_url);
+                return Ok(cached);
+            }
+        }
+    }
+
+    let fallback = UpdateCheckResult {
+        current_version: current.clone(),
+        latest_version: current.clone(),
+        update_available: false,
+        release_url: String::new(),
+        checked_at_secs: now_secs,
+    };
+
+    let Ok(resp) = state
+        .client
+        .get(GITHUB_RELEASES_API_URL)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+    else {
+        return Ok(fallback);
+    };
+    if !resp.status().is_success() {
+        return Ok(fallback);
+    }
+    let Ok(release) = resp.json::<GithubLatestRelease>().await else {
+        return Ok(fallback);
+    };
+
+    let latest_clean = release
+        .tag_name
+        .trim()
+        .trim_start_matches('v')
+        .trim_start_matches('V')
+        .to_string();
+    let safe_url = if is_safe_release_url(&release.html_url) {
+        release.html_url.trim().to_string()
+    } else {
+        String::new()
+    };
+    let update_available =
+        !safe_url.is_empty() && is_newer_semver(&current, &release.tag_name);
+
+    let result = UpdateCheckResult {
+        current_version: current,
+        latest_version: latest_clean,
+        update_available,
+        release_url: safe_url,
+        checked_at_secs: now_secs,
+    };
+
+    if let Ok(serialized) = serde_json::to_vec_pretty(&result) {
+        let _ = state.paths.ensure_base_dirs().await;
+        let tmp = cache_path.with_extension("json.tmp");
+        if tokio::fs::write(&tmp, &serialized).await.is_ok()
+            && tokio::fs::rename(&tmp, &cache_path).await.is_err()
+        {
+            let _ = tokio::fs::remove_file(&tmp).await;
+        }
+    }
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn open_external_url(url: String) -> AppResult<()> {
+    let trimmed = url.trim();
+    if !is_safe_release_url(trimmed) {
+        return Err(AppError::ConfigError(
+            "URL externa no permitida por la política de seguridad.".to_string(),
+        ));
+    }
+
+    #[cfg(windows)]
+    {
+        tokio::process::Command::new("explorer.exe")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|err| AppError::ProcessLaunch(format!("No se pudo abrir el navegador: {err}")))?;
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = trimmed;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{validate_offline_username, validate_skin_png};
+    use super::{is_newer_semver, is_safe_release_url, validate_offline_username, validate_skin_png};
 
     fn make_png_header(width: u32, height: u32) -> Vec<u8> {
         let mut buf = Vec::with_capacity(24);
@@ -1574,5 +2093,28 @@ mod tests {
         assert_eq!(super::infer_java_major_for_mc_version("1.20.5"), 21);
         assert_eq!(super::infer_java_major_for_mc_version("1.21.4"), 21);
         assert_eq!(super::infer_java_major_for_mc_version("24w45a"), 21);
+    }
+
+    #[test]
+    fn test_semver_update_comparison_and_safe_release_url() {
+        assert!(is_newer_semver("1.0.0", "1.1.0"));
+        assert!(is_newer_semver("1.0.0", "v1.1.0"));
+        assert!(is_newer_semver("1.0.9", "1.1.0"));
+        assert!(is_newer_semver("1.1.0-beta.1", "1.1.0"));
+        assert!(!is_newer_semver("1.1.0", "1.1.0"));
+        assert!(!is_newer_semver("1.1.0", "v1.0.9"));
+        assert!(!is_newer_semver("1.1.0", "1.1.0-beta.2"));
+        assert!(!is_newer_semver("1.0.0", "invalid-tag"));
+
+        assert!(is_safe_release_url(
+            "https://github.com/HugoSabater/mc-launcher-rust/releases/tag/v1.1.0"
+        ));
+        assert!(!is_safe_release_url("https://evil.example/releases/v1.1.0"));
+        assert!(!is_safe_release_url(
+            "https://github.com/HugoSabater/mc-launcher-rust/releases/tag/v1.1.0&calc.exe"
+        ));
+        assert!(!is_safe_release_url(
+            "https://github.com/HugoSabater/mc-launcher-rust/releases/tag/v1.1.0 | whoami"
+        ));
     }
 }

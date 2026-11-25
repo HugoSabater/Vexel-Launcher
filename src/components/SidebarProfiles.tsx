@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Copy,
+  Download,
   FolderOpen,
   Gauge,
   Globe,
@@ -12,11 +13,13 @@ import {
   Square,
   Star,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import { VersionPicker } from "./VersionPicker";
 import type {
   HardwareInfo,
+  LaunchProgressEvent,
   MinecraftVersionEntry,
   ModLoaderKind,
   Profile,
@@ -41,6 +44,11 @@ interface SidebarProfilesProps {
   onSetDefault: (profileId: string) => Promise<void>;
   onSaveProfile: (profile: Profile) => Promise<boolean>;
   onDeleteProfile: (profileId: string, deleteFiles: boolean) => Promise<void>;
+  onImportMrpack: (
+    bytes: number[],
+    onProgress: (ev: LaunchProgressEvent) => void,
+  ) => Promise<void>;
+  onExportMrpack: (profileId: string, includeConfig: boolean) => Promise<void>;
 }
 
 const LOADER_DOT: Record<ModLoaderKind, string> = {
@@ -81,8 +89,14 @@ export function SidebarProfiles({
   onSetDefault,
   onSaveProfile,
   onDeleteProfile,
+  onImportMrpack,
+  onExportMrpack,
 }: SidebarProfilesProps) {
   const [modalOpen, setModalOpen] = useState(false);
+  const [importingPack, setImportingPack] = useState(false);
+  const [importProgress, setImportProgress] =
+    useState<LaunchProgressEvent | null>(null);
+  const mrpackInputRef = useRef<HTMLInputElement | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Profile | null>(null);
   const [deleteFilesChecked, setDeleteFilesChecked] = useState(false);
@@ -168,22 +182,83 @@ export function SidebarProfiles({
     }
   };
 
+  const handleMrpackFileChange = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setImportingPack(true);
+    setImportProgress(null);
+    try {
+      const buf = await file.arrayBuffer();
+      await onImportMrpack(Array.from(new Uint8Array(buf)), (ev) =>
+        setImportProgress(ev),
+      );
+    } catch {
+      // Error surfaced via App banner
+    } finally {
+      setImportingPack(false);
+      setImportProgress(null);
+      if (mrpackInputRef.current) mrpackInputRef.current.value = "";
+    }
+  };
+
   return (
     <aside className="w-[240px] shrink-0 bg-[#0D1118] border-r border-white/[0.06] flex flex-col">
+      <input
+        ref={mrpackInputRef}
+        type="file"
+        accept=".mrpack"
+        onChange={(e) => void handleMrpackFileChange(e)}
+        className="hidden"
+      />
+
       {/* Top: Clean Instance List Header */}
-      <div className="px-3.5 pt-3.5 pb-2 flex items-center justify-between">
+      <div className="px-3.5 pt-3.5 pb-2 flex items-center justify-between gap-1">
         <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
           Instancias ({profiles.length})
         </span>
-        <button
-          type="button"
-          onClick={openModal}
-          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] transition-colors"
-        >
-          <Plus className="h-3 w-3" />
-          Nueva
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            disabled={importingPack}
+            title="Importar modpack (.mrpack)"
+            onClick={() => mrpackInputRef.current?.click()}
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-slate-400 hover:text-white hover:bg-white/[0.06] disabled:opacity-45 transition-colors"
+          >
+            <Upload className="h-3 w-3" />
+            .mrpack
+          </button>
+          <button
+            type="button"
+            onClick={openModal}
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] transition-colors"
+          >
+            <Plus className="h-3 w-3" />
+            Nueva
+          </button>
+        </div>
       </div>
+
+      {importingPack && (
+        <div className="mx-2.5 mb-2 rounded-lg bg-[#121722] border border-[var(--accent-border)] px-2.5 py-2 space-y-1">
+          <div className="flex items-center justify-between text-[10px] font-medium text-[var(--accent-primary)]">
+            <span className="truncate">
+              {importProgress?.phase ?? "Importando .mrpack..."}
+            </span>
+            {importProgress && importProgress.total > 0 && (
+              <span className="font-mono shrink-0">
+                {importProgress.completed}/{importProgress.total}
+              </span>
+            )}
+          </div>
+          {importProgress?.detail && (
+            <div className="text-[10px] text-slate-400 truncate">
+              {importProgress.detail}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
         {profiles.map((profile) => {
@@ -378,6 +453,19 @@ export function SidebarProfiles({
             onClick={() => {
               const id = contextMenu.profile.id;
               setContextMenu(null);
+              void onExportMrpack(id, true);
+            }}
+            className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-white/[0.06] flex items-center gap-2.5 transition-colors"
+          >
+            <Download className="h-3.5 w-3.5 text-slate-400" />
+            Exportar .mrpack
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const id = contextMenu.profile.id;
+              setContextMenu(null);
               void onSetDefault(id);
             }}
             className="w-full px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-white/[0.06] flex items-center gap-2.5 transition-colors"
@@ -474,9 +562,7 @@ export function SidebarProfiles({
                     <option value="vanilla">Vanilla (sin mods)</option>
                     <option value="fabric">Fabric (con mods)</option>
                     <option value="forge">Forge (con mods)</option>
-                    <option value="neo_forge" disabled>
-                      NeoForge (Próximamente)
-                    </option>
+                    <option value="neo_forge">NeoForge (con mods)</option>
                   </select>
                 </div>
               </div>

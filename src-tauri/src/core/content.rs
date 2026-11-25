@@ -118,6 +118,43 @@ pub const FPS_FORGE_120_PLUS_MODS: &[(&str, &str)] = &[
     ("saturn", "Saturn"),
 ];
 
+pub const FPS_NEOFORGE_120_MODS: &[(&str, &str)] = &[
+    ("embeddium", "Embeddium"),
+    ("ferrite-core", "FerriteCore"),
+    ("modernfix", "ModernFix"),
+    ("immediatelyfast", "ImmediatelyFast"),
+    ("entityculling", "Entity Culling"),
+    ("dynamic-fps", "Dynamic FPS"),
+    ("badoptimizations", "BadOptimizations"),
+    ("noisium", "Noisium"),
+];
+
+pub const FPS_NEOFORGE_121_1_MODS: &[(&str, &str)] = &[
+    ("sodium", "Sodium"),
+    ("lithium", "Lithium"),
+    ("ferrite-core", "FerriteCore"),
+    ("immediatelyfast", "ImmediatelyFast"),
+    ("modernfix", "ModernFix"),
+    ("entityculling", "Entity Culling"),
+    ("moreculling", "MoreCulling"),
+    ("dynamic-fps", "Dynamic FPS"),
+    ("badoptimizations", "BadOptimizations"),
+    ("scalablelux", "ScalableLux"),
+];
+
+pub const FPS_NEOFORGE_121_2_PLUS_MODS: &[(&str, &str)] = &[
+    ("sodium", "Sodium"),
+    ("lithium", "Lithium"),
+    ("ferrite-core", "FerriteCore"),
+    ("immediatelyfast", "ImmediatelyFast"),
+    ("modernfix", "ModernFix"),
+    ("entityculling", "Entity Culling"),
+    ("moreculling", "MoreCulling"),
+    ("dynamic-fps", "Dynamic FPS"),
+    ("badoptimizations", "BadOptimizations"),
+    ("noisium", "Noisium"),
+];
+
 pub const DISTANT_HORIZONS_MOD: &[(&str, &str)] = &[("distanthorizons", "Distant Horizons")];
 pub const C2ME_CHUNK_ACCEL_MOD: &[(&str, &str)] = &[("c2me-fabric", "C2ME")];
 pub const BOBBY_MULTIPLAYER_MOD: &[(&str, &str)] = &[("bobby", "Bobby")];
@@ -140,7 +177,7 @@ pub struct OptimizationStackInfo {
 }
 
 #[must_use]
-pub fn parse_mc_version_pair(mc_version: &str) -> (u32, u32) {
+pub fn parse_mc_version_triple(mc_version: &str) -> (u32, u32, u32) {
     let clean = mc_version.split('-').next().unwrap_or(mc_version);
     let mut parts = clean.split('.');
     let major = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
@@ -148,12 +185,22 @@ pub fn parse_mc_version_pair(mc_version: &str) -> (u32, u32) {
         .next()
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(21);
+    let patch = parts
+        .next()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+    (major, minor, patch)
+}
+
+#[must_use]
+pub fn parse_mc_version_pair(mc_version: &str) -> (u32, u32) {
+    let (major, minor, _) = parse_mc_version_triple(mc_version);
     (major, minor)
 }
 
 #[must_use]
 pub fn fps_stack_for(loader: &str, mc_version: &str) -> &'static [(&'static str, &'static str)] {
-    let (major, minor) = parse_mc_version_pair(mc_version);
+    let (major, minor, patch) = parse_mc_version_triple(mc_version);
     match loader {
         "fabric" => {
             if major == 1 && minor <= 17 {
@@ -175,6 +222,15 @@ pub fn fps_stack_for(loader: &str, mc_version: &str) -> &'static [(&'static str,
                 FPS_FORGE_119_MODS
             } else {
                 FPS_FORGE_120_PLUS_MODS
+            }
+        }
+        "neoforge" | "neo_forge" => {
+            if major == 1 && minor <= 20 {
+                FPS_NEOFORGE_120_MODS
+            } else if major == 1 && minor == 21 && patch <= 1 {
+                FPS_NEOFORGE_121_1_MODS
+            } else {
+                FPS_NEOFORGE_121_2_PLUS_MODS
             }
         }
         _ => &[],
@@ -207,13 +263,18 @@ pub async fn get_optimization_stack_info(
         });
     }
 
+    let is_neoforge = loader == "neoforge" || loader == "neo_forge";
+    let supports_distant_horizons = loader == "fabric"
+        || loader == "forge"
+        || (is_neoforge && (major > 1 || minor >= 21));
+
     Ok(OptimizationStackInfo {
         total_count: mods.len(),
         installed_count,
         mods,
         supports_c2me: loader == "fabric" && (major > 1 || minor >= 18),
         supports_bobby: loader == "fabric",
-        supports_distant_horizons: loader == "fabric" || loader == "forge",
+        supports_distant_horizons,
     })
 }
 
@@ -808,23 +869,18 @@ fn inspect_archive_blocking(archive_path: &Path, kind: ContentKind) -> ArchiveIn
                 return out;
             }
 
-            // 2. Fallback to Forge metadata (META-INF/mods.toml)
-            let forge_raw: Option<String> = {
-                if let Ok(entry) = archive.by_name("META-INF/mods.toml") {
+            // 2. Fallback to NeoForge (META-INF/neoforge.mods.toml) then Forge (META-INF/mods.toml)
+            let forge_raw: Option<String> = ["META-INF/neoforge.mods.toml", "META-INF/mods.toml"]
+                .iter()
+                .find_map(|entry_name| {
+                    let entry = archive.by_name(entry_name).ok()?;
                     let mut raw = String::new();
-                    if entry
+                    entry
                         .take(MAX_FABRIC_MOD_JSON_BYTES)
                         .read_to_string(&mut raw)
-                        .is_ok()
-                    {
-                        Some(raw)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            };
+                        .ok()?;
+                    Some(raw)
+                });
 
             if let Some(raw_toml) = forge_raw {
                 let parsed = parse_forge_mods_toml(&raw_toml);
@@ -882,6 +938,7 @@ const CURATED_LABELS: &[CuratedLabelEntry] = &[
     CuratedLabelEntry { slug: "saturn", name: "Saturn" },
     CuratedLabelEntry { slug: "memoryleakfix", name: "MemoryLeakFix" },
     CuratedLabelEntry { slug: "ai-improvements", name: "AI Improvements" },
+    CuratedLabelEntry { slug: "noisium", name: "Noisium" },
     CuratedLabelEntry { slug: "c2me-fabric", name: "C2ME" },
     CuratedLabelEntry { slug: "bobby", name: "Bobby" },
     CuratedLabelEntry { slug: "distanthorizons", name: "Distant Horizons" },
@@ -3173,7 +3230,92 @@ mod tests {
         assert!(forge_120.iter().any(|(s, _)| *s == "radium"));
         assert!(!forge_120.iter().any(|(s, _)| *s == "sodium"));
 
+        let nf_1204 = super::fps_stack_for("neoforge", "1.20.4");
+        assert_eq!(nf_1204.len(), 8);
+        assert!(nf_1204.iter().any(|(s, _)| *s == "embeddium"));
+        assert!(nf_1204.iter().any(|(s, _)| *s == "noisium"));
+
+        let nf_1211 = super::fps_stack_for("neoforge", "1.21.1");
+        assert_eq!(nf_1211.len(), 10);
+        assert!(nf_1211.iter().any(|(s, _)| *s == "sodium"));
+        assert!(nf_1211.iter().any(|(s, _)| *s == "scalablelux"));
+
+        let nf_1214 = super::fps_stack_for("neoforge", "1.21.4");
+        assert_eq!(nf_1214.len(), 10);
+        assert!(nf_1214.iter().any(|(s, _)| *s == "sodium"));
+        assert!(nf_1214.iter().any(|(s, _)| *s == "noisium"));
+        assert!(!nf_1214.iter().any(|(s, _)| *s == "scalablelux"));
+
         assert!(super::fps_stack_for("vanilla", "1.21.4").is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_inspect_neoforge_mods_toml_and_logo_extraction()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "vexel-neoforge-mod-toml-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let paths = LauncherPaths::with_root(tmp.clone());
+        paths.ensure_instance_dirs("nf-prof").await?;
+
+        let logo_png: &[u8] = b"\x89PNG\r\n\x1a\nSODIUM_NF_LOGO_PNG";
+        let jar_path = paths
+            .instance_mods_dir("nf-prof")
+            .join("sodium-neoforge-0.6.5+mc1.21.1.jar");
+        {
+            let file = std::fs::File::create(&jar_path)?;
+            let mut w = zip::ZipWriter::new(file);
+            w.start_file("META-INF/neoforge.mods.toml", SimpleFileOptions::default())?;
+            w.write_all(
+                br#"
+modLoader="javafml"
+loaderVersion="[4,)"
+
+[[mods]]
+modId="sodium"
+version="${file.jarVersion}"
+displayName="Sodium"
+logoFile="assets/sodium/icon.png"
+"#,
+            )?;
+            // Also include an older mods.toml to verify neoforge.mods.toml takes precedence
+            w.start_file("META-INF/mods.toml", SimpleFileOptions::default())?;
+            w.write_all(b"[[mods]]\nmodId=\"legacy\"\ndisplayName=\"Legacy\"\n")?;
+            w.start_file("META-INF/MANIFEST.MF", SimpleFileOptions::default())?;
+            w.write_all(b"Manifest-Version: 1.0\r\nImplementation-Version: 0.6.5+mc1.21.1\r\n")?;
+            w.start_file("assets/sodium/icon.png", SimpleFileOptions::default())?;
+            w.write_all(logo_png)?;
+            w.finish()?;
+        }
+
+        let items = super::list_instance_content(&paths, "nf-prof", ContentKind::Mod).await?;
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].mod_id.as_deref(), Some("sodium"));
+        assert_eq!(items[0].display_name, "Sodium");
+        assert_eq!(items[0].version.as_deref(), Some("0.6.5+mc1.21.1"));
+        assert_eq!(
+            items[0].icon_url.as_deref(),
+            Some(super::encode_png_data_url(logo_png).as_str())
+        );
+
+        let stack_1211 =
+            super::get_optimization_stack_info(&paths, "nf-prof", "neoforge", "1.21.1").await?;
+        assert_eq!(stack_1211.total_count, 10);
+        assert_eq!(stack_1211.installed_count, 1);
+        assert!(stack_1211.supports_distant_horizons);
+        assert!(!stack_1211.supports_c2me);
+
+        let stack_1204 =
+            super::get_optimization_stack_info(&paths, "nf-prof", "neoforge", "1.20.4").await?;
+        assert_eq!(stack_1204.total_count, 8);
+        assert!(!stack_1204.supports_distant_horizons);
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        Ok(())
     }
 
     #[tokio::test]

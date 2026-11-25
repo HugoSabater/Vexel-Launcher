@@ -9,8 +9,10 @@ import {
   Copy,
   Download,
   FolderOpen,
+  Gamepad2,
   Gauge,
   HardDrive,
+  Package,
   Palette,
   RefreshCw,
   Shirt,
@@ -19,12 +21,15 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
+import { GlobalOptionsSection } from "./GlobalOptionsSection";
 import { SkinViewer3D } from "./SkinViewer3D";
 import { VersionPicker } from "./VersionPicker";
 import { ACCENT_OPTIONS, USERNAME_REGEX } from "../theme/accents";
 import { formatFriendlyError } from "../utils/errors";
 import type {
+  ApplyGlobalOptionsResult,
   GcPreset,
+  GlobalGameOptions,
   GlobalSettingsPayload,
   HardwareInfo,
   InstalledJavaRuntime,
@@ -35,14 +40,17 @@ import type {
   LogCleanupResult,
   MinecraftVersionEntry,
   ModLoaderKind,
+  MrpackExportResult,
   ProcessPriority,
   Profile,
   ReoptimizeResult,
+  SaveGlobalGameOptionsPayload,
   StorageBreakdown,
 } from "../types/launcher";
 
 export type SettingsSection =
   | "instance"
+  | "controls"
   | "performance"
   | "storage"
   | "skin"
@@ -77,6 +85,21 @@ interface SettingsPerformancePanelProps {
   onGetLaunchCommandPreview: (profileId: string) => Promise<string>;
   onGetLiveMemoryTelemetry: () => Promise<LiveMemoryTelemetry>;
   onReoptimizeInstance: (profileId: string) => Promise<ReoptimizeResult>;
+  onExportMrpack: (
+    profileId: string,
+    includeConfig: boolean,
+  ) => Promise<MrpackExportResult>;
+  onGetGlobalGameOptions: () => Promise<GlobalGameOptions>;
+  onSaveGlobalGameOptions: (
+    payload: SaveGlobalGameOptionsPayload,
+  ) => Promise<GlobalGameOptions>;
+  onImportGlobalOptionsFromInstance: (
+    profileId: string,
+  ) => Promise<GlobalGameOptions>;
+  onApplyGlobalOptionsToInstance: (
+    profileId: string,
+  ) => Promise<ApplyGlobalOptionsResult>;
+  onApplyGlobalOptionsToAllInstances: () => Promise<ApplyGlobalOptionsResult>;
 }
 
 function formatSize(bytes: number): string {
@@ -177,9 +200,18 @@ export function SettingsPerformancePanel({
   onGetLaunchCommandPreview,
   onGetLiveMemoryTelemetry,
   onReoptimizeInstance,
+  onExportMrpack,
+  onGetGlobalGameOptions,
+  onSaveGlobalGameOptions,
+  onImportGlobalOptionsFromInstance,
+  onApplyGlobalOptionsToInstance,
+  onApplyGlobalOptionsToAllInstances,
 }: SettingsPerformancePanelProps) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [expertOpen, setExpertOpen] = useState(false);
+  const [exportIncludeConfig, setExportIncludeConfig] = useState(true);
+  const [exportingMrpack, setExportingMrpack] = useState(false);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
 
   const [nameDraft, setNameDraft] = useState(profile.name);
   const [ramDraft, setRamDraft] = useState(profile.ram_mb);
@@ -550,6 +582,11 @@ export function SettingsPerformancePanel({
   }[] = [
     { id: "instance", label: "Instancia", icon: <Box className="h-3.5 w-3.5" /> },
     {
+      id: "controls",
+      label: "Controles",
+      icon: <Gamepad2 className="h-3.5 w-3.5" />,
+    },
+    {
       id: "performance",
       label: "Rendimiento",
       icon: <Gauge className="h-3.5 w-3.5" />,
@@ -677,9 +714,7 @@ export function SettingsPerformancePanel({
                       <option value="vanilla">Vanilla</option>
                       <option value="fabric">Fabric</option>
                       <option value="forge">Forge</option>
-                      <option value="neo_forge" disabled>
-                        NeoForge (Próx.)
-                      </option>
+                      <option value="neo_forge">NeoForge</option>
                     </select>
                   </div>
                 </SettingRow>
@@ -791,6 +826,67 @@ export function SettingsPerformancePanel({
                 </SettingRow>
               </div>
 
+              {/* Export Modpack (.mrpack) */}
+              <div className="space-y-2">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
+                  Compartir instancia (.mrpack)
+                </h3>
+                <div className="rounded-xl forge-panel px-5 py-3.5 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="space-y-1">
+                      <p className="text-xs text-slate-300">
+                        Exporta tus mods, packs y shaders en un paquete estándar{" "}
+                        <code className="font-mono text-slate-200">.mrpack</code>{" "}
+                        (excluye mundos y registros privados).
+                      </p>
+                      <label className="inline-flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={exportIncludeConfig}
+                          onChange={(e) =>
+                            setExportIncludeConfig(e.target.checked)
+                          }
+                          className="accent-[var(--accent-primary)] h-3.5 w-3.5"
+                        />
+                        Incluir carpeta de configuración (<code>config/</code>)
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={exportingMrpack}
+                      onClick={() => {
+                        setExportingMrpack(true);
+                        setExportNotice(null);
+                        void onExportMrpack(profile.id, exportIncludeConfig)
+                          .then((res) => {
+                            setExportNotice(
+                              `Exportado "${res.file_name}" (${res.modrinth_files_count} de Modrinth, ${res.override_files_count} locales) en ${res.output_path}`,
+                            );
+                          })
+                          .catch((err) => {
+                            setExportNotice(
+                              formatFriendlyError(
+                                err,
+                                "No se pudo exportar la instancia.",
+                              ),
+                            );
+                          })
+                          .finally(() => setExportingMrpack(false));
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#121722] hover:bg-[#171D2B] border border-white/[0.08] disabled:opacity-50 px-3 py-1.5 text-xs font-medium text-slate-100 shrink-0 transition-colors"
+                    >
+                      <Package className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+                      {exportingMrpack ? "Exportando..." : "Exportar .mrpack"}
+                    </button>
+                  </div>
+                  {exportNotice && (
+                    <p className="text-[11px] font-mono text-emerald-300 break-all">
+                      {exportNotice}
+                    </p>
+                  )}
+                </div>
+              </div>
+
               {/* Discoverable Instance Actions: Duplicate & Delete */}
               <div className="space-y-2">
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
@@ -833,6 +929,24 @@ export function SettingsPerformancePanel({
                 </div>
               </div>
             </section>
+          )}
+
+          {/* 1B. CONTROLES Y JUEGO (CENTRALIZADOR GLOBAL) */}
+          {section === "controls" && (
+            <GlobalOptionsSection
+              profile={profile}
+              profiles={config.profiles}
+              isProfileRunning={isProfileRunning}
+              onGetGlobalGameOptions={onGetGlobalGameOptions}
+              onSaveGlobalGameOptions={onSaveGlobalGameOptions}
+              onImportGlobalOptionsFromInstance={
+                onImportGlobalOptionsFromInstance
+              }
+              onApplyGlobalOptionsToInstance={onApplyGlobalOptionsToInstance}
+              onApplyGlobalOptionsToAllInstances={
+                onApplyGlobalOptionsToAllInstances
+              }
+            />
           )}
 
           {/* 2. RENDIMIENTO */}

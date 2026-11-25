@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { AlertTriangle, Minus, Search, Square, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  Minus,
+  Search,
+  Square,
+  X,
+} from "lucide-react";
 import {
   ConsoleDrawer,
   createLogStore,
@@ -21,9 +28,11 @@ import {
 import { ACCENT_PALETTE } from "./theme/accents";
 import { extractIpcError, formatFriendlyError } from "./utils/errors";
 import type {
+  ApplyGlobalOptionsResult,
   BootstrapState,
   ContentItem,
   ContentKind,
+  GlobalGameOptions,
   GlobalSettingsPayload,
   InstalledJavaRuntime,
   InstanceExitEvent,
@@ -39,11 +48,15 @@ import type {
   MinecraftVersionEntry,
   ModrinthSearchResult,
   ModrinthSort,
+  MrpackExportResult,
+  MrpackImportResult,
   OptimizationStackInfo,
   PerformancePreset,
   Profile,
   ReoptimizeResult,
+  SaveGlobalGameOptionsPayload,
   StorageBreakdown,
+  UpdateCheckResult,
 } from "./types/launcher";
 
 interface CrashToastState {
@@ -76,6 +89,8 @@ export function App() {
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [copiedLogs, setCopiedLogs] = useState(false);
   const [crashToast, setCrashToast] = useState<CrashToastState | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
   const [bannerError, setBannerError] = useState<string | null>(null);
   const [quickSearchOpen, setQuickSearchOpen] = useState(false);
   const [quickQuery, setQuickQuery] = useState("");
@@ -189,6 +204,11 @@ export function App() {
       .finally(() => {
         if (!cancelled) setLoadingVersions(false);
       });
+    void invoke<UpdateCheckResult>("check_launcher_update")
+      .then((res) => {
+        if (!cancelled && res.update_available) setUpdateInfo(res);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -414,12 +434,6 @@ export function App() {
     ) {
       return;
     }
-    if (profileToRun.loader === "neo_forge") {
-      setBannerError(
-        "El soporte directo para NeoForge llegará próximamente. Cambia a Vanilla, Fabric o Forge para jugar.",
-      );
-      return;
-    }
 
     setBannerError(null);
     setCrashToast(null);
@@ -598,6 +612,95 @@ export function App() {
       }),
     [],
   );
+
+  const handleImportMrpack = useCallback(
+    async (
+      bytes: number[],
+      onProgressCb: (ev: LaunchProgressEvent) => void,
+    ) => {
+      const onProgress = new Channel<LaunchProgressEvent>();
+      onProgress.onmessage = (ev) => onProgressCb(ev);
+      try {
+        setBannerError(null);
+        const res = await invoke<MrpackImportResult>("import_mrpack_bytes", {
+          bytes,
+          onProgress,
+        });
+        const refreshed = await invoke<BootstrapState>("get_bootstrap_state");
+        setBootstrap(refreshed);
+        setSelectedProfileId(res.profile.id);
+      } catch (err) {
+        const msg = formatFriendlyError(
+          err,
+          "No se pudo importar el archivo .mrpack.",
+        );
+        setBannerError(msg);
+        throw new Error(msg);
+      }
+    },
+    [],
+  );
+
+  const handleExportMrpack = useCallback(
+    async (profileId: string, includeConfig: boolean) => {
+      try {
+        setBannerError(null);
+        return await invoke<MrpackExportResult>("export_profile_mrpack", {
+          profileId,
+          includeConfig,
+        });
+      } catch (err) {
+        const msg = formatFriendlyError(
+          err,
+          "No se pudo exportar la instancia a .mrpack.",
+        );
+        setBannerError(msg);
+        throw new Error(msg);
+      }
+    },
+    [],
+  );
+
+  const handleGetGlobalGameOptions = useCallback(
+    async () => invoke<GlobalGameOptions>("get_global_game_options"),
+    [],
+  );
+
+  const handleSaveGlobalGameOptions = useCallback(
+    async (payload: SaveGlobalGameOptionsPayload) =>
+      invoke<GlobalGameOptions>("save_global_game_options", { payload }),
+    [],
+  );
+
+  const handleImportGlobalOptionsFromInstance = useCallback(
+    async (profileId: string) =>
+      invoke<GlobalGameOptions>("import_global_options_from_instance", {
+        profileId,
+      }),
+    [],
+  );
+
+  const handleApplyGlobalOptionsToInstance = useCallback(
+    async (profileId: string) =>
+      invoke<ApplyGlobalOptionsResult>("apply_global_options_to_instance", {
+        profileId,
+      }),
+    [],
+  );
+
+  const handleApplyGlobalOptionsToAllInstances = useCallback(
+    async () =>
+      invoke<ApplyGlobalOptionsResult>("apply_global_options_to_all_instances"),
+    [],
+  );
+
+  const handleOpenReleaseUrl = useCallback(async (url: string) => {
+    try {
+      await invoke("open_external_url", { url });
+    } catch {
+      // Non-fatal
+    }
+  }, []);
 
   const handleGetInstanceSummary = useCallback(
     async (profileId: string) =>
@@ -868,7 +971,27 @@ export function App() {
           </kbd>
         </button>
 
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-1.5">
+          {updateInfo?.update_available && !updateDismissed && (
+            <div className="inline-flex items-center gap-1 rounded-full bg-[var(--accent-soft)] border border-[var(--accent-border)] pl-2.5 pr-1 py-0.5 text-[11px] font-medium text-[var(--accent-primary)]">
+              <button
+                type="button"
+                onClick={() => void handleOpenReleaseUrl(updateInfo.release_url)}
+                className="inline-flex items-center gap-1 hover:underline"
+              >
+                <span>Nueva v{updateInfo.latest_version}</span>
+                <ArrowUpRight className="h-3 w-3" />
+              </button>
+              <button
+                type="button"
+                aria-label="Ocultar aviso de actualización"
+                onClick={() => setUpdateDismissed(true)}
+                className="p-0.5 rounded-full hover:bg-white/[0.08]"
+              >
+                <X className="h-2.5 w-2.5" />
+              </button>
+            </div>
+          )}
           <button
             type="button"
             onClick={handleWindowMinimize}
@@ -925,6 +1048,10 @@ export function App() {
             onSetDefault={handleSetDefault}
             onSaveProfile={handleSaveProfile}
             onDeleteProfile={handleDeleteProfile}
+            onImportMrpack={handleImportMrpack}
+            onExportMrpack={async (pid, includeCfg) => {
+              await handleExportMrpack(pid, includeCfg);
+            }}
           />
 
           <div className="relative flex-1 flex flex-col min-w-0 min-h-0">
@@ -1082,6 +1209,18 @@ export function App() {
                   onGetLaunchCommandPreview={handleGetLaunchCommandPreview}
                   onGetLiveMemoryTelemetry={handleGetLiveMemoryTelemetry}
                   onReoptimizeInstance={handleReoptimizeInstance}
+                  onExportMrpack={handleExportMrpack}
+                  onGetGlobalGameOptions={handleGetGlobalGameOptions}
+                  onSaveGlobalGameOptions={handleSaveGlobalGameOptions}
+                  onImportGlobalOptionsFromInstance={
+                    handleImportGlobalOptionsFromInstance
+                  }
+                  onApplyGlobalOptionsToInstance={
+                    handleApplyGlobalOptionsToInstance
+                  }
+                  onApplyGlobalOptionsToAllInstances={
+                    handleApplyGlobalOptionsToAllInstances
+                  }
                 />
               )}
             </div>

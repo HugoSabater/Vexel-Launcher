@@ -22,6 +22,8 @@ pub const FORGE_PROMOTIONS_URL: &str =
     "https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json";
 pub const FORGE_MAVEN_METADATA_URL: &str =
     "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml";
+pub const NEOFORGE_MAVEN_METADATA_URL: &str =
+    "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml";
 const FORGE_PROMOTIONS_TTL_SECS: u64 = 6 * 3600;
 
 #[cfg(windows)]
@@ -415,6 +417,110 @@ async fn resolve_forge_version_number(
     })
 }
 
+fn mc_version_to_neoforge_prefix(mc_version: &str) -> Option<String> {
+    let clean = mc_version.trim().split('-').next()?;
+    let mut parts = clean.split('.');
+    let major = parts.next()?.parse::<u32>().ok()?;
+    let minor = parts.next()?.parse::<u32>().ok()?;
+    if major != 1 || minor < 20 {
+        return None;
+    }
+    let patch = parts
+        .next()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+    Some(format!("{minor}.{patch}."))
+}
+
+fn resolve_neoforge_version_from_maven_metadata_xml(xml: &str, mc_version: &str) -> Option<String> {
+    let prefix = mc_version_to_neoforge_prefix(mc_version)?;
+    let mut best_stable: Option<(Vec<u64>, String)> = None;
+    let mut best_pre: Option<(Vec<u64>, String)> = None;
+    let mut rest = xml;
+
+    while let Some(open_idx) = rest.find("<version>") {
+        let after_open = &rest[open_idx + "<version>".len()..];
+        let Some(close_idx) = after_open.find("</version>") else {
+            break;
+        };
+        let raw_ver = after_open[..close_idx].trim();
+        rest = &after_open[close_idx + "</version>".len()..];
+
+        if !raw_ver.starts_with(&prefix) {
+            continue;
+        }
+        let is_pre = raw_ver.contains('-');
+        let numeric_base = raw_ver.split('-').next().unwrap_or(raw_ver);
+        let key = parse_version_numeric_key(numeric_base);
+        if is_pre {
+            if best_pre.as_ref().is_none_or(|(k, _)| key > *k) {
+                best_pre = Some((key, raw_ver.to_string()));
+            }
+        } else if best_stable.as_ref().is_none_or(|(k, _)| key > *k) {
+            best_stable = Some((key, raw_ver.to_string()));
+        }
+    }
+
+    best_stable.or(best_pre).map(|(_, v)| v)
+}
+
+async fn resolve_neoforge_version_number(
+    client: &reqwest::Client,
+    mc_version: &str,
+    requested_version: Option<&str>,
+    paths: &LauncherPaths,
+) -> AppResult<String> {
+    if let Some(raw) = requested_version.map(str::trim).filter(|s| !s.is_empty()) {
+        return Ok(raw.to_string());
+    }
+
+    let cache_dir = paths.shared_neoforge_cache_dir();
+    let cache_file = cache_dir.join("maven-metadata.xml");
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+
+    let cache_is_fresh = match tokio::fs::metadata(&cache_file).await {
+        Ok(meta) if meta.is_file() => {
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_secs());
+            now_secs.saturating_sub(mtime) < FORGE_PROMOTIONS_TTL_SECS
+        }
+        _ => false,
+    };
+
+    let xml_raw = if cache_is_fresh {
+        tokio::fs::read_to_string(&cache_file).await.ok()
+    } else {
+        match client.get(NEOFORGE_MAVEN_METADATA_URL).send().await {
+            Ok(resp) if resp.status().is_success() => match resp.text().await {
+                Ok(text) => {
+                    let _ = tokio::fs::create_dir_all(&cache_dir).await;
+                    let _ = tokio::fs::write(&cache_file, text.as_bytes()).await;
+                    Some(text)
+                }
+                Err(_) => tokio::fs::read_to_string(&cache_file).await.ok(),
+            },
+            _ => tokio::fs::read_to_string(&cache_file).await.ok(),
+        }
+    };
+
+    let xml = xml_raw.ok_or_else(|| {
+        AppError::LoaderError(format!(
+            "No se pudo consultar maven-metadata.xml de NeoForge para Minecraft {mc_version}"
+        ))
+    })?;
+
+    resolve_neoforge_version_from_maven_metadata_xml(&xml, mc_version).ok_or_else(|| {
+        AppError::LoaderError(format!(
+            "No se encontró una versión de NeoForge compatible con Minecraft {mc_version}"
+        ))
+    })
+}
+
 fn sanitize_archive_relative_path(raw: &str) -> Option<PathBuf> {
     let normalized = raw.trim().replace('\\', "/");
     let stripped = normalized.trim_start_matches('/');
@@ -738,32 +844,43 @@ fn build_forge_overlay_from_version_json(
     })
 }
 
-pub async fn resolve_forge_overlay<F>(
+struct MavenInstallerParams {
+    loader_label: &'static str,
+    cache_dir: PathBuf,
+    cache_key_prefix: &'static str,
+    full_version: String,
+    loader_version: String,
+    version_id: String,
+    stamp_path: PathBuf,
+    installer_url: String,
+    installer_filename: String,
+}
+
+async fn run_maven_installer_overlay<F>(
     client: &reqwest::Client,
     mc_version: &str,
-    loader_version: Option<&str>,
     javaw_path: &Path,
     paths: &LauncherPaths,
+    params: MavenInstallerParams,
     on_progress: F,
 ) -> AppResult<ResolvedLoaderOverlay>
 where
     F: Fn(&str, usize, usize, &str) + Send + Sync + 'static,
 {
-    let forge_ver = resolve_forge_version_number(client, mc_version, loader_version, paths).await?;
-    let full_version = format!("{mc_version}-{forge_ver}");
-    let forge_version_id = format!("{mc_version}-forge-{forge_ver}");
-    let version_json_path = paths.version_json_path(&forge_version_id);
-    let stamp_path = paths.forge_ready_stamp_path(&forge_version_id);
+    let version_json_path = paths.version_json_path(&params.version_id);
+    let label = params.loader_label;
 
-    // Fast-path: if .forge_ready stamp, version.json and all recorded processor outputs exist, skip installer!
-    if tokio::fs::try_exists(&stamp_path).await.unwrap_or(false)
+    // Fast-path: if ready stamp, version.json and all recorded processor outputs exist, skip installer!
+    if tokio::fs::try_exists(&params.stamp_path)
+        .await
+        .unwrap_or(false)
         && tokio::fs::try_exists(&version_json_path)
             .await
             .unwrap_or(false)
     {
-        if let Ok(stamp_raw) = tokio::fs::read_to_string(&stamp_path).await {
+        if let Ok(stamp_raw) = tokio::fs::read_to_string(&params.stamp_path).await {
             if let Ok(stamp) = serde_json::from_str::<ForgeReadyStamp>(&stamp_raw) {
-                let mut outputs_ok = stamp.full_version == full_version;
+                let mut outputs_ok = stamp.full_version == params.full_version;
                 if outputs_ok {
                     for out in &stamp.outputs {
                         if !tokio::fs::try_exists(Path::new(out))
@@ -778,7 +895,11 @@ where
                 if outputs_ok {
                     if let Ok(ver_raw) = tokio::fs::read_to_string(&version_json_path).await {
                         if let Ok(parsed) = serde_json::from_str::<ForgeVersionJson>(&ver_raw) {
-                            return build_forge_overlay_from_version_json(parsed, forge_ver, paths);
+                            return build_forge_overlay_from_version_json(
+                                parsed,
+                                params.loader_version,
+                                paths,
+                            );
                         }
                     }
                 }
@@ -786,23 +907,24 @@ where
         }
     }
 
+    let phase_prepare = format!("Preparando {label}...");
+    let phase_install = format!("Instalando {label}...");
+
     on_progress(
-        "Preparando Forge...",
+        &phase_prepare,
         0,
         4,
-        &format!("Descargando instalador de Forge {full_version}..."),
+        &format!("Descargando instalador de {label} {}...", params.full_version),
     );
 
-    let forge_cache_dir = paths.shared_forge_cache_dir();
-    tokio::fs::create_dir_all(&forge_cache_dir).await?;
-    let installer_url = build_installer_maven_url(&FORGE_DESCRIPTOR, &full_version)?;
-    let installer_jar = forge_cache_dir.join(format!("forge-{full_version}-installer.jar"));
+    tokio::fs::create_dir_all(&params.cache_dir).await?;
+    let installer_jar = params.cache_dir.join(&params.installer_filename);
 
     verify_and_download_all(
         client,
         vec![DownloadArtifact {
-            relative_key: format!("cache/forge/forge-{full_version}-installer.jar"),
-            url: installer_url,
+            relative_key: format!("{}/{}", params.cache_key_prefix, params.installer_filename),
+            url: params.installer_url,
             destination: installer_jar.clone(),
             expected_sha1: None,
             expected_size: None,
@@ -813,13 +935,13 @@ where
     .await?;
 
     on_progress(
-        "Preparando Forge...",
+        &phase_prepare,
         1,
         4,
-        &format!("Extrayendo metadatos de Forge {full_version}..."),
+        &format!("Extrayendo metadatos de {label} {}...", params.full_version),
     );
 
-    let data_extract_root = forge_cache_dir.join(&full_version);
+    let data_extract_root = params.cache_dir.join(&params.full_version);
     let installer_clone = installer_jar.clone();
     let data_root_clone = data_extract_root.clone();
     let libs_dir_clone = paths.shared_libraries_dir();
@@ -828,33 +950,35 @@ where
         extract_forge_installer_blocking(&installer_clone, &data_root_clone, &libs_dir_clone)
     })
     .await
-    .map_err(|err| AppError::LoaderError(format!("Error al extraer instalador de Forge: {err}")))??;
+    .map_err(|err| {
+        AppError::LoaderError(format!("Error al extraer instalador de {label}: {err}"))
+    })??;
 
-    let version_dir = paths.version_dir(&forge_version_id);
+    let version_dir = paths.version_dir(&params.version_id);
     tokio::fs::create_dir_all(&version_dir).await?;
     tokio::fs::write(&version_json_path, extracted.version_json_raw.as_bytes()).await?;
 
     let install_profile: ForgeInstallProfile = serde_json::from_str(&extracted.install_profile_raw)
         .map_err(|err| {
             AppError::LoaderError(format!(
-                "No se pudo parsear install_profile.json de Forge: {err}"
+                "No se pudo parsear install_profile.json de {label}: {err}"
             ))
         })?;
     let version_json: ForgeVersionJson = serde_json::from_str(&extracted.version_json_raw)
         .map_err(|err| {
-            AppError::LoaderError(format!("No se pudo parsear version.json de Forge: {err}"))
+            AppError::LoaderError(format!("No se pudo parsear version.json de {label}: {err}"))
         })?;
 
-    // Download installer-only libraries required by Forge processors
+    // Download installer-only libraries required by processors
     let (installer_artifacts, _) =
         collect_forge_library_artifacts(&install_profile.libraries, paths)?;
     if !installer_artifacts.is_empty() {
         on_progress(
-            "Preparando Forge...",
+            &phase_prepare,
             2,
             4,
             &format!(
-                "Descargando {} librerías del instalador de Forge...",
+                "Descargando {} librerías del instalador de {label}...",
                 installer_artifacts.len()
             ),
         );
@@ -939,11 +1063,11 @@ where
         }
 
         on_progress(
-            "Instalando Forge...",
+            &phase_install,
             idx + 1,
             total_procs.max(1),
             &format!(
-                "Aplicando parches de Forge ({}/{})...",
+                "Aplicando parches de {label} ({}/{})...",
                 idx + 1,
                 total_procs.max(1)
             ),
@@ -953,7 +1077,7 @@ where
         let proc_jar_path = libraries_dir.join(proc_jar_rel);
         if !tokio::fs::try_exists(&proc_jar_path).await.unwrap_or(false) {
             return Err(AppError::LoaderError(format!(
-                "Falta el processor JAR de Forge: {}",
+                "Falta el processor JAR de {label}: {}",
                 proc_jar_path.display()
             )));
         }
@@ -963,10 +1087,10 @@ where
             tokio::task::spawn_blocking(move || read_jar_main_class_blocking(&jar_for_manifest))
                 .await
                 .map_err(|err| {
-                    AppError::LoaderError(format!("Error leyendo MANIFEST.MF de Forge: {err}"))
+                    AppError::LoaderError(format!("Error leyendo MANIFEST.MF de {label}: {err}"))
                 })??;
 
-        // Mandatory: include BOTH proc.jar AND every entry in proc.classpath in -cp
+        // Include BOTH proc.jar AND every entry in proc.classpath in -cp
         let mut cp_parts: Vec<String> = Vec::with_capacity(proc.classpath.len() + 1);
         cp_parts.push(proc_jar_path.to_string_lossy().into_owned());
         for cp_coords in &proc.classpath {
@@ -993,7 +1117,7 @@ where
 
         let output = cmd.output().await.map_err(|err| {
             AppError::LoaderError(format!(
-                "No se pudo ejecutar el processor de Forge '{}': {err}",
+                "No se pudo ejecutar el processor de {label} '{}': {err}",
                 proc.jar
             ))
         })?;
@@ -1008,27 +1132,103 @@ where
             };
             let truncated: String = snippet.chars().take(400).collect();
             return Err(AppError::LoaderError(format!(
-                "Processor de Forge '{}' falló (código {:?}): {truncated}",
+                "Processor de {label} '{}' falló (código {:?}): {truncated}",
                 proc.jar,
                 output.status.code()
             )));
         }
     }
 
-    // Write .forge_ready stamp atomically
+    // Write ready stamp atomically
     let stamp = ForgeReadyStamp {
-        full_version: full_version.clone(),
+        full_version: params.full_version,
         outputs: recorded_outputs,
     };
-    let stamp_tmp = stamp_path.with_extension("tmp");
+    let stamp_tmp = params.stamp_path.with_extension("tmp");
     let serialized = serde_json::to_vec_pretty(&stamp)?;
     tokio::fs::write(&stamp_tmp, &serialized).await?;
-    if tokio::fs::rename(&stamp_tmp, &stamp_path).await.is_err() {
+    if tokio::fs::rename(&stamp_tmp, &params.stamp_path)
+        .await
+        .is_err()
+    {
         let _ = tokio::fs::remove_file(&stamp_tmp).await;
-        tokio::fs::write(&stamp_path, &serialized).await?;
+        tokio::fs::write(&params.stamp_path, &serialized).await?;
     }
 
-    build_forge_overlay_from_version_json(version_json, forge_ver, paths)
+    build_forge_overlay_from_version_json(version_json, params.loader_version, paths)
+}
+
+pub async fn resolve_forge_overlay<F>(
+    client: &reqwest::Client,
+    mc_version: &str,
+    loader_version: Option<&str>,
+    javaw_path: &Path,
+    paths: &LauncherPaths,
+    on_progress: F,
+) -> AppResult<ResolvedLoaderOverlay>
+where
+    F: Fn(&str, usize, usize, &str) + Send + Sync + 'static,
+{
+    let forge_ver = resolve_forge_version_number(client, mc_version, loader_version, paths).await?;
+    let full_version = format!("{mc_version}-{forge_ver}");
+    let forge_version_id = format!("{mc_version}-forge-{forge_ver}");
+    let installer_url = build_installer_maven_url(&FORGE_DESCRIPTOR, &full_version)?;
+
+    run_maven_installer_overlay(
+        client,
+        mc_version,
+        javaw_path,
+        paths,
+        MavenInstallerParams {
+            loader_label: "Forge",
+            cache_dir: paths.shared_forge_cache_dir(),
+            cache_key_prefix: "cache/forge",
+            installer_filename: format!("forge-{full_version}-installer.jar"),
+            full_version,
+            loader_version: forge_ver,
+            stamp_path: paths.forge_ready_stamp_path(&forge_version_id),
+            version_id: forge_version_id,
+            installer_url,
+        },
+        on_progress,
+    )
+    .await
+}
+
+pub async fn resolve_neoforge_overlay<F>(
+    client: &reqwest::Client,
+    mc_version: &str,
+    loader_version: Option<&str>,
+    javaw_path: &Path,
+    paths: &LauncherPaths,
+    on_progress: F,
+) -> AppResult<ResolvedLoaderOverlay>
+where
+    F: Fn(&str, usize, usize, &str) + Send + Sync + 'static,
+{
+    let nf_ver = resolve_neoforge_version_number(client, mc_version, loader_version, paths).await?;
+    let nf_version_id = format!("neoforge-{nf_ver}");
+    let installer_url = build_installer_maven_url(&NEOFORGE_DESCRIPTOR, &nf_ver)?;
+
+    run_maven_installer_overlay(
+        client,
+        mc_version,
+        javaw_path,
+        paths,
+        MavenInstallerParams {
+            loader_label: "NeoForge",
+            cache_dir: paths.shared_neoforge_cache_dir(),
+            cache_key_prefix: "cache/neoforge",
+            installer_filename: format!("neoforge-{nf_ver}-installer.jar"),
+            full_version: nf_ver.clone(),
+            loader_version: nf_ver,
+            stamp_path: paths.neoforge_ready_stamp_path(&nf_version_id),
+            version_id: nf_version_id,
+            installer_url,
+        },
+        on_progress,
+    )
+    .await
 }
 
 fn classpath_dedup_key(path: &Path, libraries_dir: &Path) -> String {
@@ -1310,6 +1510,39 @@ mod tests {
         assert_eq!(
             base_plan.classpath_entries,
             vec![asm_new, forge_client, forge_universal, vanilla_jar]
+        );
+    }
+
+    #[test]
+    fn test_neoforge_prefix_and_stable_vs_beta_resolution() {
+        assert_eq!(super::mc_version_to_neoforge_prefix("1.20.4").as_deref(), Some("20.4."));
+        assert_eq!(super::mc_version_to_neoforge_prefix("1.21").as_deref(), Some("21.0."));
+        assert_eq!(super::mc_version_to_neoforge_prefix("1.21.1").as_deref(), Some("21.1."));
+        assert!(super::mc_version_to_neoforge_prefix("1.19.2").is_none());
+
+        let xml = r#"
+            <metadata>
+              <versioning>
+                <versions>
+                  <version>21.1.10-beta</version>
+                  <version>21.1.95</version>
+                  <version>21.1.120-beta</version>
+                  <version>21.1.118</version>
+                  <version>21.4.2-beta</version>
+                  <version>21.4.15-beta</version>
+                </versions>
+              </versioning>
+            </metadata>
+        "#;
+        // Must pick highest STABLE (21.1.118) over newer -beta (21.1.120-beta)
+        assert_eq!(
+            super::resolve_neoforge_version_from_maven_metadata_xml(xml, "1.21.1").as_deref(),
+            Some("21.1.118")
+        );
+        // Falls back to highest -beta when no stable exists for that MC version
+        assert_eq!(
+            super::resolve_neoforge_version_from_maven_metadata_xml(xml, "1.21.4").as_deref(),
+            Some("21.4.15-beta")
         );
     }
 }

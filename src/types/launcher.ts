@@ -222,3 +222,45 @@ export interface OptimizationStackInfo {
   supports_bobby: boolean;
   supports_distant_horizons: boolean;
 }
+
+export interface MrpackImportResult {
+  profile: Profile;
+  downloaded_files: number;
+  extracted_overrides: number;
+  skipped_server_only: number;
+}
+
+export interface MrpackExportResult {
+  output_path: string;
+  file_name: string;
+  modrinth_files_count: number;
+  override_files_count: number;
+  size_bytes: number;
+}
+
+export interface GlobalGameOptions {
+  auto_apply_on_new_instance: boolean;
+  entries: Record<string, string>;
+  source_profile_name: string | null;
+  updated_at_secs: number;
+  custom_keybinds_count: number;
+}
+
+export interface SaveGlobalGameOptionsPayload {
+  auto_apply_on_new_instance: boolean;
+  entries: Record<string, string>;
+}
+
+export interface ApplyGlobalOptionsResult {
+  applied_instances: number;
+  skipped_running: number;
+  backups_created: string[];
+}
+
+export interface UpdateCheckResult {
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+  release_url: string;
+  checked_at_secs: number;
+}

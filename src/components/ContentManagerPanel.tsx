@@ -1049,8 +1049,10 @@ export function ContentManagerPanel({
         {/* TAB: RECOMENDADOS & SMART SEARCH */}
         {activeTab === "recommended" && (
           <div className="space-y-5">
-            {/* Performance & Chunk Presets (Fabric & Forge) */}
-            {(profile.loader === "fabric" || profile.loader === "forge") && (
+            {/* Performance & Chunk Presets (Fabric, Forge & NeoForge) */}
+            {(profile.loader === "fabric" ||
+              profile.loader === "forge" ||
+              profile.loader === "neo_forge") && (
               <div className="grid grid-cols-1 md:grid-cols-2 items-start gap-3">
                 {fpsPureTotal > 0 &&
                   (fpsPureInstalled ? (
@@ -1086,7 +1088,11 @@ export function ContentManagerPanel({
                           Aumenta al máximo los FPS y elimina tirones con{" "}
                           {fpsHighlightNames} y los optimizadores esenciales
                           para{" "}
-                          {profile.loader === "forge" ? "Forge" : "Fabric"}{" "}
+                          {profile.loader === "forge"
+                            ? "Forge"
+                            : profile.loader === "neo_forge"
+                              ? "NeoForge"
+                              : "Fabric"}{" "}
                           {profile.mc_version}.
                         </p>
                       </div>
