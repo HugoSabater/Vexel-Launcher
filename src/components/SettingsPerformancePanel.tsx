@@ -676,9 +676,7 @@ export function SettingsPerformancePanel({
                     >
                       <option value="vanilla">Vanilla</option>
                       <option value="fabric">Fabric</option>
-                      <option value="forge" disabled>
-                        Forge (Próx.)
-                      </option>
+                      <option value="forge">Forge</option>
                       <option value="neo_forge" disabled>
                         NeoForge (Próx.)
                       </option>

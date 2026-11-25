@@ -122,6 +122,7 @@ pub fn run() {
             commands::import_profile_content,
             commands::import_profile_content_bytes,
             commands::inject_performance_preset,
+            commands::get_profile_optimization_stack,
             commands::get_dynamic_recommendations,
             commands::search_modrinth,
             commands::install_modrinth_item,

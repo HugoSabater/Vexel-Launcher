@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::core::content::{ContentKind, InstanceContentIndex};
 use crate::core::hardware::HardwareInfo;
+use crate::core::instance::ModLoaderKind;
 use crate::core::paths::LauncherPaths;
 use crate::error::AppResult;
 
@@ -215,21 +216,31 @@ pauseIfMovingQuickly = true
 }
 
 /// Seeds hardware-tuned initial configs for active worldgen/rendering mods ONLY if each file does not exist.
-/// Returns human-readable log lines describing which files were created.
+/// On Forge/NeoForge profiles, only Distant Horizons is tuned (never Sodium/C2ME).
 pub async fn ensure_worldgen_mod_configs(
     paths: &LauncherPaths,
     profile_id: &str,
     hw: &HardwareInfo,
+    loader: ModLoaderKind,
 ) -> AppResult<Vec<String>> {
+    if loader == ModLoaderKind::Vanilla {
+        return Ok(Vec::new());
+    }
+
     let active = detect_active_worldgen_mods(paths, profile_id).await;
-    if !active.has_sodium && !active.has_c2me && !active.has_distant_horizons {
+    let is_fabric = loader == ModLoaderKind::Fabric;
+    let tune_sodium = is_fabric && active.has_sodium;
+    let tune_c2me = is_fabric && active.has_c2me;
+    let tune_dh = active.has_distant_horizons;
+
+    if !tune_sodium && !tune_c2me && !tune_dh {
         return Ok(Vec::new());
     }
 
     let config_dir = paths.instance_config_dir(profile_id);
     let mut created = Vec::new();
 
-    if active.has_sodium {
+    if tune_sodium {
         let sodium_path = config_dir.join("sodium-options.json");
         let content = build_sodium_options_json(hw.logical_cores);
         if !content.is_empty() && write_if_missing_atomic(&sodium_path, &content).await? {
@@ -240,7 +251,7 @@ pub async fn ensure_worldgen_mod_configs(
         }
     }
 
-    if active.has_c2me {
+    if tune_c2me {
         let c2me_path = config_dir.join("c2me.toml");
         let content = build_c2me_toml(hw.logical_cores);
         if write_if_missing_atomic(&c2me_path, &content).await? {
@@ -251,7 +262,7 @@ pub async fn ensure_worldgen_mod_configs(
         }
     }
 
-    if active.has_distant_horizons {
+    if tune_dh {
         let dh_path = config_dir.join("DistantHorizons.toml");
         let content = build_distant_horizons_toml(hw.logical_cores, hw.total_ram_mb);
         if write_if_missing_atomic(&dh_path, &content).await? {
@@ -267,20 +278,25 @@ pub async fn ensure_worldgen_mod_configs(
 
 /// Regenerates optimal configs ONLY for active mods actually installed in the instance,
 /// creating `.bak` backups before overwriting any existing config file.
-/// Returns `(updated_relative_paths, backup_relative_paths)`.
+/// On Forge/NeoForge profiles, only `DistantHorizons.toml` is touched (never Sodium/C2ME).
 pub async fn reoptimize_worldgen_mod_configs(
     paths: &LauncherPaths,
     profile_id: &str,
     hw: &HardwareInfo,
-    is_vanilla: bool,
+    loader: ModLoaderKind,
     timestamp_secs: u64,
 ) -> AppResult<(Vec<String>, Vec<String>)> {
-    if is_vanilla {
+    if loader == ModLoaderKind::Vanilla {
         return Ok((Vec::new(), Vec::new()));
     }
 
     let active = detect_active_worldgen_mods(paths, profile_id).await;
-    if !active.has_sodium && !active.has_c2me && !active.has_distant_horizons {
+    let is_fabric = loader == ModLoaderKind::Fabric;
+    let tune_sodium = is_fabric && active.has_sodium;
+    let tune_c2me = is_fabric && active.has_c2me;
+    let tune_dh = active.has_distant_horizons;
+
+    if !tune_sodium && !tune_c2me && !tune_dh {
         return Ok((Vec::new(), Vec::new()));
     }
 
@@ -288,7 +304,7 @@ pub async fn reoptimize_worldgen_mod_configs(
     let mut updated = Vec::new();
     let mut backups = Vec::new();
 
-    if active.has_sodium {
+    if tune_sodium {
         let sodium_path = config_dir.join("sodium-options.json");
         let content = build_sodium_options_json(hw.logical_cores);
         if !content.is_empty() {
@@ -302,7 +318,7 @@ pub async fn reoptimize_worldgen_mod_configs(
         }
     }
 
-    if active.has_c2me {
+    if tune_c2me {
         let c2me_path = config_dir.join("c2me.toml");
         let content = build_c2me_toml(hw.logical_cores);
         if let Some(bak) = backup_file_before_overwrite(&c2me_path, timestamp_secs).await? {
@@ -314,7 +330,7 @@ pub async fn reoptimize_worldgen_mod_configs(
         updated.push("config/c2me.toml".to_string());
     }
 
-    if active.has_distant_horizons {
+    if tune_dh {
         let dh_path = config_dir.join("DistantHorizons.toml");
         let content = build_distant_horizons_toml(hw.logical_cores, hw.total_ram_mb);
         if let Some(bak) = backup_file_before_overwrite(&dh_path, timestamp_secs).await? {
@@ -409,7 +425,13 @@ mod tests {
         tokio::fs::write(config_dir.join("c2me.toml"), b"# custom user c2me\n").await?;
 
         let hw = sample_hw(12, 16_384);
-        let created = ensure_worldgen_mod_configs(&paths, profile_id, &hw).await?;
+        let created = ensure_worldgen_mod_configs(
+            &paths,
+            profile_id,
+            &hw,
+            crate::core::instance::ModLoaderKind::Fabric,
+        )
+        .await?;
         assert_eq!(created.len(), 1);
         assert!(created[0].contains("sodium-options.json"));
 
@@ -419,7 +441,13 @@ mod tests {
         assert_eq!(c2me_after, "# custom user c2me\n");
 
         // Second run must be a no-op
-        let created_second = ensure_worldgen_mod_configs(&paths, profile_id, &hw).await?;
+        let created_second = ensure_worldgen_mod_configs(
+            &paths,
+            profile_id,
+            &hw,
+            crate::core::instance::ModLoaderKind::Fabric,
+        )
+        .await?;
         assert!(created_second.is_empty());
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
@@ -429,6 +457,8 @@ mod tests {
     #[tokio::test]
     async fn test_reoptimize_backs_up_existing_and_skips_vanilla_or_inactive_mods()
     -> Result<(), Box<dyn std::error::Error>> {
+        use crate::core::instance::ModLoaderKind;
+
         let tmp = std::env::temp_dir().join(format!(
             "vexel-reopt-test-{}",
             uuid::Uuid::new_v4().simple()
@@ -449,14 +479,52 @@ mod tests {
         let hw = sample_hw(12, 16_384);
 
         // Vanilla profile must NEVER create mod config files even if jars exist
-        let (vanilla_updated, vanilla_backups) =
-            reoptimize_worldgen_mod_configs(&paths, profile_id, &hw, true, 1_700_000_000).await?;
+        let (vanilla_updated, vanilla_backups) = reoptimize_worldgen_mod_configs(
+            &paths,
+            profile_id,
+            &hw,
+            ModLoaderKind::Vanilla,
+            1_700_000_000,
+        )
+        .await?;
         assert!(vanilla_updated.is_empty());
         assert!(vanilla_backups.is_empty());
 
+        // Forge profile must NEVER create sodium-options.json or c2me.toml (only DistantHorizons if active)
+        let (forge_updated, _) = reoptimize_worldgen_mod_configs(
+            &paths,
+            profile_id,
+            &hw,
+            ModLoaderKind::Forge,
+            1_700_000_000,
+        )
+        .await?;
+        assert!(forge_updated.is_empty());
+
+        // Enable DistantHorizons on Forge: must ONLY generate DistantHorizons.toml
+        tokio::fs::write(mods_dir.join("DistantHorizons-3.0.jar"), b"jar").await?;
+        let (forge_dh_updated, _) = reoptimize_worldgen_mod_configs(
+            &paths,
+            profile_id,
+            &hw,
+            ModLoaderKind::Forge,
+            1_700_000_000,
+        )
+        .await?;
+        assert_eq!(forge_dh_updated, vec!["config/DistantHorizons.toml"]);
+        assert!(!config_dir.join("sodium-options.json").exists());
+        let _ = tokio::fs::remove_file(mods_dir.join("DistantHorizons-3.0.jar")).await;
+        let _ = tokio::fs::remove_file(config_dir.join("DistantHorizons.toml")).await;
+
         // Fabric profile re-optimizes only active Sodium & C2ME, backing up old c2me.toml
-        let (updated, backups) =
-            reoptimize_worldgen_mod_configs(&paths, profile_id, &hw, false, 1_700_000_000).await?;
+        let (updated, backups) = reoptimize_worldgen_mod_configs(
+            &paths,
+            profile_id,
+            &hw,
+            ModLoaderKind::Fabric,
+            1_700_000_000,
+        )
+        .await?;
         assert_eq!(
             updated,
             vec!["config/sodium-options.json", "config/c2me.toml"]
@@ -471,8 +539,14 @@ mod tests {
         assert!(new_c2me.contains("globalExecutorParallelism = 4"));
 
         // Running a second time preserves the original .bak and writes a timestamped .bak
-        let (_, backups2) =
-            reoptimize_worldgen_mod_configs(&paths, profile_id, &hw, false, 1_700_000_555).await?;
+        let (_, backups2) = reoptimize_worldgen_mod_configs(
+            &paths,
+            profile_id,
+            &hw,
+            ModLoaderKind::Fabric,
+            1_700_000_555,
+        )
+        .await?;
         assert!(backups2.contains(&"config/c2me.toml.1700000555.bak".to_string()));
         assert!(backups2.contains(&"config/sodium-options.json.bak".to_string()));
         assert_eq!(

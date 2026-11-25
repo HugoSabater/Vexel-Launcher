@@ -431,6 +431,28 @@ fn substitute_launcher_tokens(raw: &str) -> String {
         .replace("${launcher_version}", LAUNCHER_BRAND_VERSION)
 }
 
+/// Resolves Forge/Mojang JVM argument placeholders (`${library_directory}`, `${classpath_separator}`,
+/// `${version_name}`, `${natives_directory}`, `${launcher_name}`, `${launcher_version}`).
+/// `${version_name}` resolves to the exact base client jar stem (e.g. `1.20.1`) so Forge's
+/// `-DignoreList=...,${version_name}.jar` matches `1.20.1.jar` without BootstrapLauncher collisions.
+#[must_use]
+pub fn substitute_jvm_arg_template(
+    raw: &str,
+    req: &LaunchRequest,
+    paths: &LauncherPaths,
+    natives_dir: &Path,
+) -> String {
+    let libraries_dir = paths.shared_libraries_dir();
+    let libraries_dir_str = libraries_dir.to_string_lossy();
+    let natives_dir_str = natives_dir.to_string_lossy();
+    let cp_sep = if cfg!(windows) { ";" } else { ":" };
+    substitute_launcher_tokens(raw)
+        .replace("${library_directory}", &libraries_dir_str)
+        .replace("${classpath_separator}", cp_sep)
+        .replace("${version_name}", &req.mc_version)
+        .replace("${natives_directory}", &natives_dir_str)
+}
+
 fn substitute_game_arg_template(
     raw: &str,
     req: &LaunchRequest,
@@ -581,11 +603,9 @@ pub fn build_full_command_preview(
     let mut parts = Vec::new();
     parts.push(format!("\"{}\"", req.javaw_path.to_string_lossy()));
     parts.extend(tuning.flags.into_iter().map(|a| quote_arg_if_needed(&a)));
-    parts.extend(
-        req.extra_jvm_args
-            .iter()
-            .map(|a| quote_arg_if_needed(&substitute_launcher_tokens(a))),
-    );
+    parts.extend(req.extra_jvm_args.iter().map(|a| {
+        quote_arg_if_needed(&substitute_jvm_arg_template(a, req, paths, &natives_dir))
+    }));
     parts.push(quote_arg_if_needed(&format!(
         "-Dminecraft.launcher.brand={LAUNCHER_BRAND_NAME}"
     )));
@@ -896,7 +916,7 @@ where
     let extra_jvm_resolved: Vec<String> = req
         .extra_jvm_args
         .iter()
-        .map(|a| substitute_launcher_tokens(a))
+        .map(|a| substitute_jvm_arg_template(a, &req, paths, &natives_dir))
         .collect();
 
     let mut cmd = Command::new(&req.javaw_path);
@@ -1358,5 +1378,60 @@ mod tests {
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
         Ok(())
+    }
+
+    #[test]
+    fn test_forge_jvm_placeholders_substitution() {
+        let paths = LauncherPaths::with_root(PathBuf::from("vexel-root"));
+        let natives_dir = paths.instance_natives_version_dir("forge-20", "1.20.1");
+        let req = LaunchRequest {
+            profile_id: "forge-20".to_string(),
+            mc_version: "1.20.1".to_string(),
+            version_type: "release".to_string(),
+            username: "Steve".to_string(),
+            ram_mb: 6144,
+            gc_preset: GcPreset::AikarG1Gc,
+            process_priority: ProcessPriority::AboveNormal,
+            server_address: None,
+            world_folder: None,
+            javaw_path: PathBuf::from("javaw.exe"),
+            main_class: "cpw.mods.bootstraplauncher.BootstrapLauncher".to_string(),
+            java_major: 17,
+            classpath_entries: Vec::new(),
+            native_archives: Vec::new(),
+            asset_index_id: "5".to_string(),
+            extra_jvm_args: vec![
+                "-DignoreList=bootstraplauncher,${version_name}.jar".to_string(),
+                "-DlibraryDirectory=${library_directory}".to_string(),
+                "-p".to_string(),
+                "${library_directory}/cpw/a.jar${classpath_separator}${library_directory}/cpw/b.jar"
+                    .to_string(),
+                "--add-opens".to_string(),
+                "java.base/java.util.jar=cpw.mods.securejarhandler".to_string(),
+            ],
+            extra_game_args: Vec::new(),
+            window_width: None,
+            window_height: None,
+            fullscreen: false,
+            detached: false,
+        };
+
+        let resolved: Vec<String> = req
+            .extra_jvm_args
+            .iter()
+            .map(|a| super::substitute_jvm_arg_template(a, &req, &paths, &natives_dir))
+            .collect();
+        let expected_sep = if cfg!(windows) { ";" } else { ":" };
+        let expected_lib = paths.shared_libraries_dir().to_string_lossy().into_owned();
+
+        assert_eq!(resolved[0], "-DignoreList=bootstraplauncher,1.20.1.jar");
+        assert_eq!(resolved[1], format!("-DlibraryDirectory={expected_lib}"));
+        assert_eq!(resolved[2], "-p");
+        assert_eq!(
+            resolved[3],
+            format!("{expected_lib}/cpw/a.jar{expected_sep}{expected_lib}/cpw/b.jar")
+        );
+        assert_eq!(resolved[4], "--add-opens");
+        assert_eq!(resolved[5], "java.base/java.util.jar=cpw.mods.securejarhandler");
     }
 }

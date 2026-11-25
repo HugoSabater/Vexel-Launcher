@@ -234,15 +234,87 @@ pub fn maven_coords_to_relative_path(coords: &str) -> AppResult<PathBuf> {
 }
 
 #[must_use]
-pub fn extract_game_arguments(manifest: &VersionManifest) -> Vec<String> {
-    if let Some(args) = &manifest.arguments {
-        let mut out = Vec::new();
-        for item in &args.game {
-            if let Some(s) = item.as_str() {
-                out.push(s.to_string());
+pub fn maven_coords_group_artifact_key(coords: &str) -> Option<String> {
+    let mut parts = coords.split(':');
+    let group = parts.next()?.trim();
+    let artifact = parts.next()?.trim();
+    let _version = parts.next()?;
+    if group.is_empty() || artifact.is_empty() {
+        return None;
+    }
+    let classifier = parts
+        .next()
+        .map(|c| c.split_once('@').map_or(c, |(cls, _)| cls).trim())
+        .filter(|c| !c.is_empty());
+
+    match classifier {
+        Some(cls) => Some(format!("{group}:{artifact}:{cls}")),
+        None => Some(format!("{group}:{artifact}")),
+    }
+}
+
+fn argument_rules_allow_windows(rules: &[serde_json::Value]) -> bool {
+    if rules.is_empty() {
+        return true;
+    }
+    let mut allowed = false;
+    for rule in rules {
+        // Skip feature-gated rules (e.g., is_demo_user, has_custom_resolution)
+        if rule
+            .get("features")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|f| !f.is_empty())
+        {
+            continue;
+        }
+        let os_matches = match rule.get("os").and_then(serde_json::Value::as_object) {
+            None => true,
+            Some(os_obj) => match os_obj.get("name").and_then(serde_json::Value::as_str) {
+                None => true,
+                Some(name) => name == "windows",
+            },
+        };
+        if os_matches {
+            allowed = rule.get("action").and_then(serde_json::Value::as_str) == Some("allow");
+        }
+    }
+    allowed
+}
+
+#[must_use]
+pub fn extract_argument_values_for_windows(items: &[serde_json::Value]) -> Vec<String> {
+    let mut out = Vec::new();
+    for item in items {
+        if let Some(s) = item.as_str() {
+            out.push(s.to_string());
+        } else if let Some(obj) = item.as_object() {
+            let rules = obj
+                .get("rules")
+                .and_then(serde_json::Value::as_array)
+                .map_or(&[][..], Vec::as_slice);
+            if !argument_rules_allow_windows(rules) {
+                continue;
+            }
+            if let Some(val) = obj.get("value") {
+                if let Some(s) = val.as_str() {
+                    out.push(s.to_string());
+                } else if let Some(arr) = val.as_array() {
+                    for entry in arr {
+                        if let Some(s) = entry.as_str() {
+                            out.push(s.to_string());
+                        }
+                    }
+                }
             }
         }
-        return out;
+    }
+    out
+}
+
+#[must_use]
+pub fn extract_game_arguments(manifest: &VersionManifest) -> Vec<String> {
+    if let Some(args) = &manifest.arguments {
+        return extract_argument_values_for_windows(&args.game);
     }
 
     if let Some(legacy) = &manifest.minecraft_arguments {
@@ -645,8 +717,11 @@ mod tests {
             }
         },
         "arguments": {
-            "game": ["--username", "${auth_player_name}", {"rules": [{"action": "allow"}], "value": "--demo"}],
-            "jvm": []
+            "game": ["--username", "${auth_player_name}", {"rules": [{"action": "allow", "features": {"is_demo_user": true}}], "value": "--demo"}],
+            "jvm": [
+                {"rules": [{"action": "allow", "os": {"name": "windows"}}], "value": "-Dtest.win=true"},
+                {"rules": [{"action": "allow", "os": {"name": "osx"}}], "value": "-XstartOnFirstThread"}
+            ]
         },
         "libraries": [
             {
@@ -701,6 +776,10 @@ mod tests {
 
         let game_args = extract_game_arguments(&manifest);
         assert_eq!(game_args, vec!["--username", "${auth_player_name}"]);
+        if let Some(args) = &manifest.arguments {
+            let jvm_args = super::extract_argument_values_for_windows(&args.jvm);
+            assert_eq!(jvm_args, vec!["-Dtest.win=true"]);
+        }
 
         let mut objects = HashMap::new();
         objects.insert(

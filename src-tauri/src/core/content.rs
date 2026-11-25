@@ -31,9 +31,191 @@ pub const FPS_PURE_STACK_MODS: &[(&str, &str)] = &[
     ("scalablelux", "ScalableLux"),
 ];
 
+pub const FPS_FABRIC_116_117_MODS: &[(&str, &str)] = &[
+    ("sodium", "Sodium"),
+    ("lithium", "Lithium"),
+    ("ferrite-core", "FerriteCore"),
+    ("modernfix", "ModernFix"),
+    ("entityculling", "Entity Culling"),
+    ("dynamic-fps", "Dynamic FPS"),
+    ("phosphor", "Phosphor"),
+    ("lazydfu", "LazyDFU"),
+    ("krypton", "Krypton"),
+];
+
+pub const FPS_FABRIC_118_MODS: &[(&str, &str)] = &[
+    ("sodium", "Sodium"),
+    ("lithium", "Lithium"),
+    ("ferrite-core", "FerriteCore"),
+    ("immediatelyfast", "ImmediatelyFast"),
+    ("modernfix", "ModernFix"),
+    ("entityculling", "Entity Culling"),
+    ("moreculling", "MoreCulling"),
+    ("dynamic-fps", "Dynamic FPS"),
+    ("starlight", "Starlight"),
+    ("krypton", "Krypton"),
+];
+
+pub const FPS_FABRIC_119_120_MODS: &[(&str, &str)] = &[
+    ("sodium", "Sodium"),
+    ("lithium", "Lithium"),
+    ("ferrite-core", "FerriteCore"),
+    ("immediatelyfast", "ImmediatelyFast"),
+    ("modernfix", "ModernFix"),
+    ("entityculling", "Entity Culling"),
+    ("moreculling", "MoreCulling"),
+    ("dynamic-fps", "Dynamic FPS"),
+    ("badoptimizations", "BadOptimizations"),
+    ("starlight", "Starlight"),
+];
+
+pub const FPS_FORGE_116_117_MODS: &[(&str, &str)] = &[
+    ("embeddium", "Embeddium"),
+    ("ferrite-core", "FerriteCore"),
+    ("modernfix", "ModernFix"),
+    ("entityculling", "Entity Culling"),
+    ("dynamic-fps", "Dynamic FPS"),
+    ("saturn", "Saturn"),
+    ("memoryleakfix", "MemoryLeakFix"),
+    ("ai-improvements", "AI Improvements"),
+];
+
+pub const FPS_FORGE_118_MODS: &[(&str, &str)] = &[
+    ("embeddium", "Embeddium"),
+    ("ferrite-core", "FerriteCore"),
+    ("modernfix", "ModernFix"),
+    ("entityculling", "Entity Culling"),
+    ("dynamic-fps", "Dynamic FPS"),
+    ("canary", "Canary"),
+    ("starlight-forge", "Starlight (Forge)"),
+    ("saturn", "Saturn"),
+    ("memoryleakfix", "MemoryLeakFix"),
+];
+
+pub const FPS_FORGE_119_MODS: &[(&str, &str)] = &[
+    ("embeddium", "Embeddium"),
+    ("ferrite-core", "FerriteCore"),
+    ("modernfix", "ModernFix"),
+    ("entityculling", "Entity Culling"),
+    ("immediatelyfast", "ImmediatelyFast"),
+    ("dynamic-fps", "Dynamic FPS"),
+    ("badoptimizations", "BadOptimizations"),
+    ("canary", "Canary"),
+    ("starlight-forge", "Starlight (Forge)"),
+    ("saturn", "Saturn"),
+];
+
+pub const FPS_FORGE_120_PLUS_MODS: &[(&str, &str)] = &[
+    ("embeddium", "Embeddium"),
+    ("ferrite-core", "FerriteCore"),
+    ("modernfix", "ModernFix"),
+    ("entityculling", "Entity Culling"),
+    ("immediatelyfast", "ImmediatelyFast"),
+    ("dynamic-fps", "Dynamic FPS"),
+    ("badoptimizations", "BadOptimizations"),
+    ("radium", "Radium Reforged"),
+    ("starlight-forge", "Starlight (Forge)"),
+    ("saturn", "Saturn"),
+];
+
 pub const DISTANT_HORIZONS_MOD: &[(&str, &str)] = &[("distanthorizons", "Distant Horizons")];
 pub const C2ME_CHUNK_ACCEL_MOD: &[(&str, &str)] = &[("c2me-fabric", "C2ME")];
 pub const BOBBY_MULTIPLAYER_MOD: &[(&str, &str)] = &[("bobby", "Bobby")];
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizationStackMod {
+    pub slug: String,
+    pub name: String,
+    pub installed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizationStackInfo {
+    pub mods: Vec<OptimizationStackMod>,
+    pub installed_count: usize,
+    pub total_count: usize,
+    pub supports_c2me: bool,
+    pub supports_bobby: bool,
+    pub supports_distant_horizons: bool,
+}
+
+#[must_use]
+pub fn parse_mc_version_pair(mc_version: &str) -> (u32, u32) {
+    let clean = mc_version.split('-').next().unwrap_or(mc_version);
+    let mut parts = clean.split('.');
+    let major = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+    let minor = parts
+        .next()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(21);
+    (major, minor)
+}
+
+#[must_use]
+pub fn fps_stack_for(loader: &str, mc_version: &str) -> &'static [(&'static str, &'static str)] {
+    let (major, minor) = parse_mc_version_pair(mc_version);
+    match loader {
+        "fabric" => {
+            if major == 1 && minor <= 17 {
+                FPS_FABRIC_116_117_MODS
+            } else if major == 1 && minor == 18 {
+                FPS_FABRIC_118_MODS
+            } else if major == 1 && minor <= 20 {
+                FPS_FABRIC_119_120_MODS
+            } else {
+                FPS_PURE_STACK_MODS
+            }
+        }
+        "forge" => {
+            if major == 1 && minor <= 17 {
+                FPS_FORGE_116_117_MODS
+            } else if major == 1 && minor == 18 {
+                FPS_FORGE_118_MODS
+            } else if major == 1 && minor == 19 {
+                FPS_FORGE_119_MODS
+            } else {
+                FPS_FORGE_120_PLUS_MODS
+            }
+        }
+        _ => &[],
+    }
+}
+
+pub async fn get_optimization_stack_info(
+    paths: &LauncherPaths,
+    profile_id: &str,
+    loader: &str,
+    mc_version: &str,
+) -> AppResult<OptimizationStackInfo> {
+    let installed_items =
+        list_instance_content_internal(paths, profile_id, ContentKind::Mod, false).await?;
+    let stack = fps_stack_for(loader, mc_version);
+    let (major, minor) = parse_mc_version_pair(mc_version);
+
+    let mut mods = Vec::with_capacity(stack.len());
+    let mut installed_count = 0_usize;
+
+    for (slug, name) in stack {
+        let installed = is_project_installed(None, slug, &installed_items);
+        if installed {
+            installed_count += 1;
+        }
+        mods.push(OptimizationStackMod {
+            slug: (*slug).to_string(),
+            name: (*name).to_string(),
+            installed,
+        });
+    }
+
+    Ok(OptimizationStackInfo {
+        total_count: mods.len(),
+        installed_count,
+        mods,
+        supports_c2me: loader == "fabric" && (major > 1 || minor >= 18),
+        supports_bobby: loader == "fabric",
+        supports_distant_horizons: loader == "fabric" || loader == "forge",
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -442,6 +624,138 @@ fn validate_resource_pack_mcmeta(archive: &mut zip::ZipArchive<File>) -> Option<
     }
 }
 
+fn strip_toml_inline_comment(line: &str) -> &str {
+    let mut in_double = false;
+    let mut in_single = false;
+    let mut escaped = false;
+    for (idx, ch) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if in_double {
+            if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_double = false;
+            }
+        } else if in_single {
+            if ch == '\'' {
+                in_single = false;
+            }
+        } else if ch == '"' {
+            in_double = true;
+        } else if ch == '\'' {
+            in_single = true;
+        } else if ch == '#' {
+            return &line[..idx];
+        }
+    }
+    line
+}
+
+fn parse_toml_string_value(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        return Some(inner.replace("\\\"", "\"").replace("\\\\", "\\"));
+    }
+    if trimmed.len() >= 2 && trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+        return Some(trimmed[1..trimmed.len() - 1].to_string());
+    }
+    None
+}
+
+#[derive(Debug, Default)]
+struct ForgeModsTomlMeta {
+    mod_id: Option<String>,
+    display_name: Option<String>,
+    version: Option<String>,
+    logo_file: Option<String>,
+}
+
+fn parse_forge_mods_toml(raw: &str) -> ForgeModsTomlMeta {
+    let mut out = ForgeModsTomlMeta::default();
+    let mut top_level_logo: Option<String> = None;
+    let mut mods_block_count = 0_usize;
+    let mut in_first_mods_block = false;
+    let mut in_top_level = true;
+
+    for raw_line in raw.lines() {
+        let line = strip_toml_inline_comment(raw_line).trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            in_top_level = false;
+            let header = line.trim_matches(|c| c == '[' || c == ']').trim();
+            if line.starts_with("[[") && header == "mods" {
+                mods_block_count += 1;
+                in_first_mods_block = mods_block_count == 1;
+            } else {
+                in_first_mods_block = false;
+            }
+            continue;
+        }
+
+        let Some((key_raw, val_raw)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key_raw.trim();
+        let Some(val) = parse_toml_string_value(val_raw).filter(|s| !s.trim().is_empty()) else {
+            continue;
+        };
+
+        if in_first_mods_block {
+            match key {
+                "modId" if out.mod_id.is_none() => out.mod_id = Some(val),
+                "displayName" if out.display_name.is_none() => out.display_name = Some(val),
+                "version" if out.version.is_none() => out.version = Some(val),
+                "logoFile" if out.logo_file.is_none() => out.logo_file = Some(val),
+                _ => {}
+            }
+        } else if in_top_level && key == "logoFile" && top_level_logo.is_none() {
+            top_level_logo = Some(val);
+        }
+    }
+
+    if out.logo_file.is_none() {
+        out.logo_file = top_level_logo;
+    }
+    out
+}
+
+fn extract_manifest_impl_version(archive: &mut zip::ZipArchive<File>) -> Option<String> {
+    let entry = archive.by_name("META-INF/MANIFEST.MF").ok()?;
+    let mut raw = String::new();
+    entry
+        .take(64 * 1024)
+        .read_to_string(&mut raw)
+        .ok()?;
+    let mut unfolded: Vec<String> = Vec::new();
+    for line in raw.lines() {
+        let clean = line.trim_end_matches('\r');
+        if let Some(cont) = clean.strip_prefix(' ') {
+            if let Some(last) = unfolded.last_mut() {
+                last.push_str(cont);
+            }
+        } else {
+            unfolded.push(clean.to_string());
+        }
+    }
+    for line in unfolded {
+        if let Some((k, v)) = line.split_once(':') {
+            if k.trim().eq_ignore_ascii_case("Implementation-Version") {
+                let ver = v.trim();
+                if !ver.is_empty() {
+                    return Some(ver.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 fn inspect_archive_blocking(archive_path: &Path, kind: ContentKind) -> ArchiveInspection {
     let Ok(file) = File::open(archive_path) else {
         return ArchiveInspection::default();
@@ -461,30 +775,72 @@ fn inspect_archive_blocking(archive_path: &Path, kind: ContentKind) -> ArchiveIn
     match kind {
         ContentKind::Mod => {
             let mut out = ArchiveInspection::default();
-            let icon_path = {
-                let Ok(entry) = archive.by_name("fabric.mod.json") else {
-                    return out;
-                };
-                let mut raw = String::new();
-                if entry
-                    .take(MAX_FABRIC_MOD_JSON_BYTES)
-                    .read_to_string(&mut raw)
-                    .is_err()
-                {
-                    return out;
+
+            // 1. Try Fabric metadata (fabric.mod.json)
+            let fabric_icon_path: Option<String> = {
+                if let Ok(entry) = archive.by_name("fabric.mod.json") {
+                    let mut raw = String::new();
+                    if entry
+                        .take(MAX_FABRIC_MOD_JSON_BYTES)
+                        .read_to_string(&mut raw)
+                        .is_ok()
+                    {
+                        if let Ok(parsed) = serde_json::from_str::<FabricModJson>(&raw) {
+                            out.mod_id = parsed.id.filter(|s| !s.trim().is_empty());
+                            out.display_name = parsed.name.filter(|s| !s.trim().is_empty());
+                            out.version = parsed.version.filter(|s| !s.trim().is_empty());
+                            parsed.icon.as_ref().and_then(select_fabric_icon_path)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 }
-                let Ok(parsed) = serde_json::from_str::<FabricModJson>(&raw) else {
-                    return out;
-                };
-                out.mod_id = parsed.id.filter(|s| !s.trim().is_empty());
-                out.display_name = parsed.name.filter(|s| !s.trim().is_empty());
-                out.version = parsed.version.filter(|s| !s.trim().is_empty());
-                parsed.icon.as_ref().and_then(select_fabric_icon_path)
             };
 
-            if let Some(ref rel_icon) = icon_path {
-                out.icon_png = extract_valid_png_from_zip(&mut archive, rel_icon);
+            if out.mod_id.is_some() || out.display_name.is_some() {
+                if let Some(ref rel_icon) = fabric_icon_path {
+                    out.icon_png = extract_valid_png_from_zip(&mut archive, rel_icon);
+                }
+                return out;
             }
+
+            // 2. Fallback to Forge metadata (META-INF/mods.toml)
+            let forge_raw: Option<String> = {
+                if let Ok(entry) = archive.by_name("META-INF/mods.toml") {
+                    let mut raw = String::new();
+                    if entry
+                        .take(MAX_FABRIC_MOD_JSON_BYTES)
+                        .read_to_string(&mut raw)
+                        .is_ok()
+                    {
+                        Some(raw)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+
+            if let Some(raw_toml) = forge_raw {
+                let parsed = parse_forge_mods_toml(&raw_toml);
+                out.mod_id = parsed.mod_id;
+                out.display_name = parsed.display_name;
+                out.version = match parsed.version {
+                    Some(v) if v.contains("${file.jarVersion}") => {
+                        extract_manifest_impl_version(&mut archive)
+                    }
+                    other => other,
+                };
+                if let Some(logo) = parsed.logo_file.as_deref().and_then(normalize_zip_entry_path) {
+                    out.icon_png = extract_valid_png_from_zip(&mut archive, &logo);
+                }
+            }
+
             out
         }
         ContentKind::ResourcePack => ArchiveInspection {
@@ -515,6 +871,17 @@ const CURATED_LABELS: &[CuratedLabelEntry] = &[
     CuratedLabelEntry { slug: "dynamic-fps", name: "Dynamic FPS" },
     CuratedLabelEntry { slug: "badoptimizations", name: "BadOptimizations" },
     CuratedLabelEntry { slug: "scalablelux", name: "ScalableLux" },
+    CuratedLabelEntry { slug: "phosphor", name: "Phosphor" },
+    CuratedLabelEntry { slug: "lazydfu", name: "LazyDFU" },
+    CuratedLabelEntry { slug: "krypton", name: "Krypton" },
+    CuratedLabelEntry { slug: "starlight", name: "Starlight" },
+    CuratedLabelEntry { slug: "embeddium", name: "Embeddium" },
+    CuratedLabelEntry { slug: "radium", name: "Radium Reforged" },
+    CuratedLabelEntry { slug: "canary", name: "Canary" },
+    CuratedLabelEntry { slug: "starlight-forge", name: "Starlight (Forge)" },
+    CuratedLabelEntry { slug: "saturn", name: "Saturn" },
+    CuratedLabelEntry { slug: "memoryleakfix", name: "MemoryLeakFix" },
+    CuratedLabelEntry { slug: "ai-improvements", name: "AI Improvements" },
     CuratedLabelEntry { slug: "c2me-fabric", name: "C2ME" },
     CuratedLabelEntry { slug: "bobby", name: "Bobby" },
     CuratedLabelEntry { slug: "distanthorizons", name: "Distant Horizons" },
@@ -2014,7 +2381,16 @@ pub async fn inject_modrinth_preset<F>(
 where
     F: Fn(DownloadProgress) + Send + Sync + 'static,
 {
-    let targets = preset_mod_list(preset)
+    let preset_list = match preset {
+        PerformancePreset::FpsPure => fps_stack_for(loader, mc_version),
+        _ => preset_mod_list(preset),
+    };
+    if preset_list.is_empty() {
+        return Err(AppError::ContentError(format!(
+            "No hay un pack de optimización disponible para {loader} en Minecraft {mc_version}"
+        )));
+    }
+    let targets = preset_list
         .iter()
         .map(|(slug, label)| ((*slug).to_string(), (*label).to_string()))
         .collect();
@@ -2750,6 +3126,116 @@ mod tests {
         )
         .await?;
         assert_eq!(reenabled.metadata_warning.as_deref(), Some(broken_warn));
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        Ok(())
+    }
+
+    #[test]
+    fn test_fps_stack_for_loader_and_version_matrix() {
+        let fabric_116 = super::fps_stack_for("fabric", "1.16.5");
+        assert_eq!(fabric_116.len(), 9);
+        assert!(fabric_116.iter().any(|(s, _)| *s == "phosphor"));
+        assert!(!fabric_116.iter().any(|(s, _)| *s == "scalablelux"));
+
+        let fabric_118 = super::fps_stack_for("fabric", "1.18.2");
+        assert_eq!(fabric_118.len(), 10);
+        assert!(fabric_118.iter().any(|(s, _)| *s == "starlight"));
+        assert!(fabric_118.iter().any(|(s, _)| *s == "krypton"));
+
+        let fabric_120 = super::fps_stack_for("fabric", "1.20.1");
+        assert_eq!(fabric_120.len(), 10);
+        assert!(fabric_120.iter().any(|(s, _)| *s == "badoptimizations"));
+        assert!(fabric_120.iter().any(|(s, _)| *s == "starlight"));
+
+        let fabric_121 = super::fps_stack_for("fabric", "1.21.4");
+        assert_eq!(fabric_121.len(), 10);
+        assert!(fabric_121.iter().any(|(s, _)| *s == "scalablelux"));
+
+        let forge_116 = super::fps_stack_for("forge", "1.16.5");
+        assert_eq!(forge_116.len(), 8);
+        assert!(forge_116.iter().any(|(s, _)| *s == "embeddium"));
+        assert!(forge_116.iter().any(|(s, _)| *s == "ai-improvements"));
+
+        let forge_118 = super::fps_stack_for("forge", "1.18.2");
+        assert_eq!(forge_118.len(), 9);
+        assert!(forge_118.iter().any(|(s, _)| *s == "canary"));
+        assert!(forge_118.iter().any(|(s, _)| *s == "starlight-forge"));
+
+        let forge_119 = super::fps_stack_for("forge", "1.19.2");
+        assert_eq!(forge_119.len(), 10);
+        assert!(forge_119.iter().any(|(s, _)| *s == "immediatelyfast"));
+        assert!(forge_119.iter().any(|(s, _)| *s == "canary"));
+
+        let forge_120 = super::fps_stack_for("forge", "1.20.1");
+        assert_eq!(forge_120.len(), 10);
+        assert!(forge_120.iter().any(|(s, _)| *s == "embeddium"));
+        assert!(forge_120.iter().any(|(s, _)| *s == "radium"));
+        assert!(!forge_120.iter().any(|(s, _)| *s == "sodium"));
+
+        assert!(super::fps_stack_for("vanilla", "1.21.4").is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_inspect_forge_mods_toml_and_logo_extraction()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "vexel-forge-mod-toml-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let paths = LauncherPaths::with_root(tmp.clone());
+        paths.ensure_instance_dirs("forge-prof").await?;
+
+        let logo_png: &[u8] = b"\x89PNG\r\n\x1a\nEMBEDDIUM_LOGO_PNG";
+        let jar_path = paths
+            .instance_mods_dir("forge-prof")
+            .join("embeddium-0.3.31+mc1.20.1.jar");
+        {
+            let file = std::fs::File::create(&jar_path)?;
+            let mut w = zip::ZipWriter::new(file);
+            w.start_file("META-INF/mods.toml", SimpleFileOptions::default())?;
+            w.write_all(
+                br#"
+modLoader="javafml"
+loaderVersion="[47,)"
+
+[[mods]]
+modId="embeddium"
+version="${file.jarVersion}"
+displayName="Embeddium" # Render engine
+logoFile="embeddium_icon.png"
+
+[[dependencies.embeddium]]
+modId="forge"
+mandatory=true
+"#,
+            )?;
+            w.start_file("META-INF/MANIFEST.MF", SimpleFileOptions::default())?;
+            w.write_all(b"Manifest-Version: 1.0\r\nImplementation-Version: 0.3.31+mc1.20.1\r\n")?;
+            w.start_file("embeddium_icon.png", SimpleFileOptions::default())?;
+            w.write_all(logo_png)?;
+            w.finish()?;
+        }
+
+        let items = super::list_instance_content(&paths, "forge-prof", ContentKind::Mod).await?;
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].mod_id.as_deref(), Some("embeddium"));
+        assert_eq!(items[0].display_name, "Embeddium");
+        assert_eq!(items[0].version.as_deref(), Some("0.3.31+mc1.20.1"));
+        assert_eq!(
+            items[0].icon_url.as_deref(),
+            Some(super::encode_png_data_url(logo_png).as_str())
+        );
+
+        let stack = super::get_optimization_stack_info(&paths, "forge-prof", "forge", "1.20.1").await?;
+        assert_eq!(stack.total_count, 10);
+        assert_eq!(stack.installed_count, 1);
+        assert!(!stack.supports_c2me);
+        assert!(!stack.supports_bobby);
+        assert!(stack.supports_distant_horizons);
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
         Ok(())

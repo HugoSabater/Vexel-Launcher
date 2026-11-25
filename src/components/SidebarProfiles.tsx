@@ -473,9 +473,7 @@ export function SidebarProfiles({
                   >
                     <option value="vanilla">Vanilla (sin mods)</option>
                     <option value="fabric">Fabric (con mods)</option>
-                    <option value="forge" disabled>
-                      Forge (Próximamente)
-                    </option>
+                    <option value="forge">Forge (con mods)</option>
                     <option value="neo_forge" disabled>
                       NeoForge (Próximamente)
                     </option>

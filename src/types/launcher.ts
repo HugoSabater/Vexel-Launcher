@@ -207,3 +207,18 @@ export interface MinecraftVersionEntry {
   version_type: string;
   release_time: string;
 }
+
+export interface OptimizationStackMod {
+  slug: string;
+  name: string;
+  installed: boolean;
+}
+
+export interface OptimizationStackInfo {
+  mods: OptimizationStackMod[];
+  installed_count: number;
+  total_count: number;
+  supports_c2me: boolean;
+  supports_bobby: boolean;
+  supports_distant_horizons: boolean;
+}

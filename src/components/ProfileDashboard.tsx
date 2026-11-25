@@ -211,8 +211,7 @@ export function ProfileDashboard({
       ? Math.min(100, Math.round((progress.completed / progress.total) * 100))
       : 0;
   const isWorking = launching || installingJava;
-  const unsupportedLoader =
-    profile.loader === "forge" || profile.loader === "neo_forge";
+  const unsupportedLoader = profile.loader === "neo_forge";
 
   const handleQuickSkinPick = async (
     event: React.ChangeEvent<HTMLInputElement>,

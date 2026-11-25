@@ -11,9 +11,10 @@ use tokio::sync::Mutex;
 
 use crate::core::content::{
     delete_content_item, get_dynamic_recommendations as fetch_dynamic_recommendations,
-    import_content_bytes_with_options, import_content_file_with_options, inject_modrinth_preset,
-    install_single_modrinth_item, list_instance_content, search_modrinth_catalog,
-    toggle_content_item, ContentItem, ContentKind, ModrinthSearchResult, PerformancePreset,
+    get_optimization_stack_info, import_content_bytes_with_options,
+    import_content_file_with_options, inject_modrinth_preset, install_single_modrinth_item,
+    list_instance_content, search_modrinth_catalog, toggle_content_item, ContentItem, ContentKind,
+    ModrinthSearchResult, OptimizationStackInfo, PerformancePreset,
 };
 use crate::core::downloader::{verify_and_download_all, DownloadProgress};
 use crate::core::hardware::{
@@ -28,7 +29,9 @@ use crate::core::java::{
     list_installed_javas as scan_installed_javas, InstalledJavaRuntime, JavaRuntimeStatus,
 };
 use crate::core::jvm_optimizer::{generate_jvm_flags, GcPreset, JvmTuningInput, JvmTuningOutput};
-use crate::core::loaders::{merge_overlay_into_plan, resolve_fabric_overlay};
+use crate::core::loaders::{
+    merge_overlay_into_plan_dedup, resolve_fabric_overlay, resolve_forge_overlay,
+};
 use crate::core::manifest::{
     build_download_plan, extract_game_arguments, fetch_or_load_asset_index,
     fetch_or_load_version_list, fetch_or_load_version_manifest, validate_version_id,
@@ -594,12 +597,11 @@ pub async fn reoptimize_instance_configs(
     }
     updated_files.push("options.txt".to_string());
 
-    let is_vanilla = profile.loader == ModLoaderKind::Vanilla;
     let (mod_updated, mod_backups) = reoptimize_worldgen_mod_configs(
         &state.paths,
         &profile.id,
         &state.hardware,
-        is_vanilla,
+        profile.loader,
         timestamp_secs,
     )
     .await?;
@@ -659,6 +661,13 @@ pub async fn get_launch_command_preview(
 
     let main_class = match profile.loader {
         ModLoaderKind::Fabric => "net.fabricmc.loader.impl.launch.knot.KnotClient".to_string(),
+        ModLoaderKind::Forge => {
+            if effective_java_major <= 8 {
+                "cpw.mods.modlauncher.Launcher".to_string()
+            } else {
+                "cpw.mods.bootstraplauncher.BootstrapLauncher".to_string()
+            }
+        }
         _ => "net.minecraft.client.main.Main".to_string(),
     };
 
@@ -888,6 +897,31 @@ pub async fn open_data_root_folder(state: State<'_, AppState>) -> AppResult<()> 
 }
 
 #[tauri::command]
+pub async fn get_profile_optimization_stack(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> AppResult<OptimizationStackInfo> {
+    let profile = {
+        let guard = state.config.lock().await;
+        guard
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .cloned()
+            .ok_or_else(|| AppError::ConfigError(format!("Profile '{profile_id}' not found")))?
+    };
+
+    let loader_str = match profile.loader {
+        ModLoaderKind::Vanilla => "vanilla",
+        ModLoaderKind::Fabric => "fabric",
+        ModLoaderKind::Forge => "forge",
+        ModLoaderKind::NeoForge => "neoforge",
+    };
+
+    get_optimization_stack_info(&state.paths, &profile.id, loader_str, &profile.mc_version).await
+}
+
+#[tauri::command]
 pub async fn inject_performance_preset(
     state: State<'_, AppState>,
     profile_id: String,
@@ -925,8 +959,14 @@ pub async fn inject_performance_preset(
     )
     .await?;
 
-    if auto_tune && profile.loader == ModLoaderKind::Fabric {
-        let _ = ensure_worldgen_mod_configs(&state.paths, &profile.id, &state.hardware).await;
+    if auto_tune && matches!(profile.loader, ModLoaderKind::Fabric | ModLoaderKind::Forge) {
+        let _ = ensure_worldgen_mod_configs(
+            &state.paths,
+            &profile.id,
+            &state.hardware,
+            profile.loader,
+        )
+        .await;
     }
 
     Ok(installed)
@@ -972,8 +1012,17 @@ pub async fn install_modrinth_item(
     )
     .await?;
 
-    if auto_tune && kind == ContentKind::Mod && profile.loader == ModLoaderKind::Fabric {
-        let _ = ensure_worldgen_mod_configs(&state.paths, &profile.id, &state.hardware).await;
+    if auto_tune
+        && kind == ContentKind::Mod
+        && matches!(profile.loader, ModLoaderKind::Fabric | ModLoaderKind::Forge)
+    {
+        let _ = ensure_worldgen_mod_configs(
+            &state.paths,
+            &profile.id,
+            &state.hardware,
+            profile.loader,
+        )
+        .await;
     }
 
     Ok(installed)
@@ -1216,9 +1265,18 @@ pub async fn launch_profile(
     // Seed optimized options.txt ONLY if missing, BEFORE skin pack modifies resourcePacks
     let _ = ensure_optimized_options_txt(&state.paths.instance_dir(&profile.id)).await;
 
-    // Seed hardware-tuned worldgen mod configs (Sodium, C2ME, DH) ONLY if missing & opt-in enabled
-    if config_snapshot.auto_tune_mod_configs && profile.loader == ModLoaderKind::Fabric {
-        match ensure_worldgen_mod_configs(&state.paths, &profile.id, &state.hardware).await {
+    // Seed hardware-tuned worldgen mod configs (Fabric: Sodium/C2ME/DH; Forge: DH only) ONLY if missing & opt-in enabled
+    if config_snapshot.auto_tune_mod_configs
+        && matches!(profile.loader, ModLoaderKind::Fabric | ModLoaderKind::Forge)
+    {
+        match ensure_worldgen_mod_configs(
+            &state.paths,
+            &profile.id,
+            &state.hardware,
+            profile.loader,
+        )
+        .await
+        {
             Ok(created) => {
                 for item in created {
                     let _ = on_log.send(LogLineEvent {
@@ -1270,6 +1328,8 @@ pub async fn launch_profile(
     }
     let mut extra_game_args = extract_game_arguments(&manifest);
 
+    let libraries_dir = state.paths.shared_libraries_dir();
+
     match profile.loader {
         ModLoaderKind::Vanilla => {}
         ModLoaderKind::Fabric => {
@@ -1289,16 +1349,64 @@ pub async fn launch_profile(
             )
             .await?;
             let (loader_main, loader_jvm, mut loader_game) =
-                merge_overlay_into_plan(&mut plan, overlay);
+                merge_overlay_into_plan_dedup(&mut plan, overlay, &libraries_dir);
             main_class = loader_main;
             extra_jvm_args.extend(loader_jvm);
             extra_game_args.append(&mut loader_game);
         }
-        ModLoaderKind::Forge | ModLoaderKind::NeoForge => {
-            return Err(AppError::LoaderError(format!(
-                "{:?} metadata pipeline initialized; use Vanilla or Fabric for direct launch in this release",
-                profile.loader
-            )));
+        ModLoaderKind::Forge => {
+            // Ensure vanilla client.jar is present on disk BEFORE running Forge installer processors ({MINECRAFT_JAR})
+            let client_jar_path = state.paths.version_jar_path(&profile.mc_version);
+            if !tokio::fs::try_exists(&client_jar_path).await.unwrap_or(false) {
+                if let Some(client_artifact) = plan
+                    .artifacts
+                    .iter()
+                    .find(|a| a.destination == client_jar_path)
+                    .cloned()
+                {
+                    let pre_progress = on_progress.clone();
+                    verify_and_download_all(
+                        &state.client,
+                        vec![client_artifact],
+                        &state.paths.integrity_index_path(),
+                        move |ev| {
+                            let _ = pre_progress.send(ev.into());
+                        },
+                    )
+                    .await?;
+                }
+            }
+
+            let forge_progress = on_progress.clone();
+            let overlay = resolve_forge_overlay(
+                &state.client,
+                &profile.mc_version,
+                profile.loader_version.as_deref(),
+                &javaw_path,
+                &state.paths,
+                move |phase, completed, total, detail| {
+                    let _ = forge_progress.send(LaunchProgressEvent {
+                        phase: phase.to_string(),
+                        completed,
+                        total,
+                        bytes_downloaded: 0,
+                        detail: detail.to_string(),
+                        fast_path_hits: 0,
+                    });
+                },
+            )
+            .await?;
+            let (loader_main, loader_jvm, mut loader_game) =
+                merge_overlay_into_plan_dedup(&mut plan, overlay, &libraries_dir);
+            main_class = loader_main;
+            extra_jvm_args.extend(loader_jvm);
+            extra_game_args.append(&mut loader_game);
+        }
+        ModLoaderKind::NeoForge => {
+            return Err(AppError::LoaderError(
+                "El soporte directo para NeoForge llegará próximamente. Usa Vanilla, Fabric o Forge."
+                    .to_string(),
+            ));
         }
     }
 

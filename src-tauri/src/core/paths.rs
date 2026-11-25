@@ -100,6 +100,16 @@ impl LauncherPaths {
     }
 
     #[must_use]
+    pub fn shared_forge_cache_dir(&self) -> PathBuf {
+        self.shared_cache_dir().join("forge")
+    }
+
+    #[must_use]
+    pub fn forge_ready_stamp_path(&self, forge_version_id: &str) -> PathBuf {
+        self.version_dir(forge_version_id).join(".forge_ready")
+    }
+
+    #[must_use]
     pub fn shared_skins_dir(&self) -> PathBuf {
         self.shared_dir().join("skins")
     }

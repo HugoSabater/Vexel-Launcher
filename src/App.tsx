@@ -39,6 +39,7 @@ import type {
   MinecraftVersionEntry,
   ModrinthSearchResult,
   ModrinthSort,
+  OptimizationStackInfo,
   PerformancePreset,
   Profile,
   ReoptimizeResult,
@@ -413,9 +414,9 @@ export function App() {
     ) {
       return;
     }
-    if (profileToRun.loader === "forge" || profileToRun.loader === "neo_forge") {
+    if (profileToRun.loader === "neo_forge") {
       setBannerError(
-        "El soporte directo para Forge y NeoForge llegará próximamente. Cambia a Vanilla o Fabric para jugar.",
+        "El soporte directo para NeoForge llegará próximamente. Cambia a Vanilla, Fabric o Forge para jugar.",
       );
       return;
     }
@@ -587,6 +588,14 @@ export function App() {
   const handleListContent = useCallback(
     async (profileId: string, kind: ContentKind) =>
       invoke<ContentItem[]>("list_profile_content", { profileId, kind }),
+    [],
+  );
+
+  const handleGetOptimizationStack = useCallback(
+    async (profileId: string) =>
+      invoke<OptimizationStackInfo>("get_profile_optimization_stack", {
+        profileId,
+      }),
     [],
   );
 
@@ -1029,6 +1038,7 @@ export function App() {
                   profile={selectedProfile}
                   onUpdateProfile={handleSaveProfile}
                   onListContent={handleListContent}
+                  onGetOptimizationStack={handleGetOptimizationStack}
                   onGetDynamicRecommendations={handleGetDynamicRecommendations}
                   onSearchModrinth={handleSearchModrinth}
                   onToggleContent={handleToggleContent}

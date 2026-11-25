@@ -28,6 +28,7 @@ import type {
   LaunchProgressEvent,
   ModrinthSearchResult,
   ModrinthSort,
+  OptimizationStackInfo,
   PerformancePreset,
   Profile,
 } from "../types/launcher";
@@ -54,6 +55,9 @@ interface ContentManagerPanelProps {
     profileId: string,
     kind: ContentKind,
   ) => Promise<ContentItem[]>;
+  onGetOptimizationStack: (
+    profileId: string,
+  ) => Promise<OptimizationStackInfo>;
   onGetDynamicRecommendations: (
     profileId: string,
     category: string,
@@ -106,19 +110,6 @@ interface ContentManagerPanelProps {
     onProgress: (ev: LaunchProgressEvent) => void,
   ) => Promise<string[]>;
 }
-
-const FPS_PURE_SLUGS = [
-  "sodium",
-  "lithium",
-  "ferrite-core",
-  "immediatelyfast",
-  "modernfix",
-  "entityculling",
-  "moreculling",
-  "dynamic-fps",
-  "badoptimizations",
-  "scalablelux",
-];
 
 function normalizeId(raw: string): string {
   return raw.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -236,6 +227,7 @@ export function ContentManagerPanel({
   profile,
   onUpdateProfile,
   onListContent,
+  onGetOptimizationStack,
   onGetDynamicRecommendations,
   onSearchModrinth,
   onToggleContent,
@@ -252,6 +244,8 @@ export function ContentManagerPanel({
   const [installedMods, setInstalledMods] = useState<ContentItem[]>([]);
   const [resourcePacks, setResourcePacks] = useState<ContentItem[]>([]);
   const [shaderPacks, setShaderPacks] = useState<ContentItem[]>([]);
+  const [optimizationStack, setOptimizationStack] =
+    useState<OptimizationStackInfo | null>(null);
 
   const [dynamicFeed, setDynamicFeed] = useState<ModrinthSearchResult[]>([]);
   const [feedOffset, setFeedOffset] = useState(0);
@@ -315,15 +309,17 @@ export function ContentManagerPanel({
     const reqId = ++localReqRef.current;
     setLoading(true);
     try {
-      const [mods, packs, shaders] = await Promise.all([
+      const [mods, packs, shaders, stackInfo] = await Promise.all([
         onListContent(profile.id, "mod"),
         onListContent(profile.id, "resource_pack"),
         onListContent(profile.id, "shader"),
+        onGetOptimizationStack(profile.id).catch(() => null),
       ]);
       if (reqId !== localReqRef.current) return;
       setInstalledMods(mods);
       setResourcePacks(packs);
       setShaderPacks(shaders);
+      setOptimizationStack(stackInfo);
     } catch (err) {
       if (reqId !== localReqRef.current) return;
       setStatusNotice({
@@ -335,7 +331,13 @@ export function ContentManagerPanel({
         setLoading(false);
       }
     }
-  }, [onListContent, profile.id]);
+  }, [
+    onGetOptimizationStack,
+    onListContent,
+    profile.id,
+    profile.loader,
+    profile.mc_version,
+  ]);
 
   const discoveryKind: ContentKind =
     discoveryChip === "resource_pack"
@@ -485,10 +487,27 @@ export function ContentManagerPanel({
     };
   }, [onImportContent, profile.id, refreshLocal]);
 
-  const fpsPureInstalled = useMemo(
-    () => FPS_PURE_SLUGS.every((slug) => hasInstalledSlug(installedMods, slug)),
-    [installedMods],
-  );
+  const fpsPureTotal = optimizationStack?.total_count ?? 0;
+  const fpsPureInstalledCount = optimizationStack?.installed_count ?? 0;
+  const fpsPureInstalled =
+    fpsPureTotal > 0 && fpsPureInstalledCount >= fpsPureTotal;
+  const fpsHighlightNames = useMemo(() => {
+    if (!optimizationStack || optimizationStack.mods.length === 0) {
+      return profile.loader === "forge"
+        ? "Embeddium, FerriteCore, ModernFix"
+        : "Sodium, Lithium, FerriteCore";
+    }
+    return optimizationStack.mods
+      .slice(0, 3)
+      .map((m) => m.name)
+      .join(", ");
+  }, [optimizationStack, profile.loader]);
+
+  const supportsC2me = optimizationStack?.supports_c2me ?? false;
+  const supportsBobby = optimizationStack?.supports_bobby ?? false;
+  const supportsDistantHorizons =
+    optimizationStack?.supports_distant_horizons ??
+    (profile.loader === "fabric" || profile.loader === "forge");
 
   const distantHorizonsInstalled = useMemo(
     () => hasInstalledSlug(installedMods, "distanthorizons"),
@@ -1030,185 +1049,196 @@ export function ContentManagerPanel({
         {/* TAB: RECOMENDADOS & SMART SEARCH */}
         {activeTab === "recommended" && (
           <div className="space-y-5">
-            {/* Performance & Chunk Presets (Fabric) */}
-            {profile.loader === "fabric" && (
+            {/* Performance & Chunk Presets (Fabric & Forge) */}
+            {(profile.loader === "fabric" || profile.loader === "forge") && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {fpsPureInstalled ? (
-                  <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
-                      <Check className="h-4 w-4" />
-                      Pack de FPS instalado (10 mods)
-                    </span>
-                    <button
-                      type="button"
-                      disabled={busySlug !== null}
-                      onClick={() => void handlePreset("fps_pure")}
-                      className="rounded-md bg-[#07090D]/70 hover:bg-[#07090D] px-2.5 py-1 text-[11px] font-medium text-slate-200 transition-colors"
-                    >
-                      Actualizar
-                    </button>
-                  </div>
-                ) : (
-                  <div className="rounded-xl forge-card p-4 flex flex-col justify-between gap-3.5">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
-                          <Rocket className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
-                          Pack de FPS (Recomendado)
-                        </span>
-                        <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
-                          10 mods
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400 leading-relaxed">
-                        Aumenta al máximo los FPS y elimina tirones con Sodium,
-                        Lithium, ScalableLux y los optimizadores esenciales.
-                      </p>
+                {fpsPureTotal > 0 &&
+                  (fpsPureInstalled ? (
+                    <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
+                        <Check className="h-4 w-4" />
+                        Pack de FPS instalado ({fpsPureTotal} mods)
+                      </span>
+                      <button
+                        type="button"
+                        disabled={busySlug !== null}
+                        onClick={() => void handlePreset("fps_pure")}
+                        className="rounded-md bg-[#07090D]/70 hover:bg-[#07090D] px-2.5 py-1 text-[11px] font-medium text-slate-200 transition-colors"
+                      >
+                        Actualizar
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      disabled={busySlug !== null}
-                      onClick={() => void handlePreset("fps_pure")}
-                      className="btn-accent w-full rounded-lg disabled:opacity-45 py-2 text-xs font-semibold transition-colors"
-                    >
-                      {busySlug === "fps_pure"
-                        ? "Instalando Pack de FPS..."
-                        : "Instalar Pack de FPS"}
-                    </button>
-                  </div>
-                )}
+                  ) : (
+                    <div className="rounded-xl forge-card p-4 flex flex-col justify-between gap-3.5">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
+                            <Rocket className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+                            Pack de FPS (Recomendado)
+                          </span>
+                          <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
+                            {fpsPureInstalledCount > 0
+                              ? `${fpsPureInstalledCount}/${fpsPureTotal} mods`
+                              : `${fpsPureTotal} mods`}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 leading-relaxed">
+                          Aumenta al máximo los FPS y elimina tirones con{" "}
+                          {fpsHighlightNames} y los optimizadores esenciales
+                          para{" "}
+                          {profile.loader === "forge" ? "Forge" : "Fabric"}{" "}
+                          {profile.mc_version}.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busySlug !== null}
+                        onClick={() => void handlePreset("fps_pure")}
+                        className="btn-accent w-full rounded-lg disabled:opacity-45 py-2 text-xs font-semibold transition-colors"
+                      >
+                        {busySlug === "fps_pure"
+                          ? "Instalando Pack de FPS..."
+                          : fpsPureInstalledCount > 0
+                            ? "Completar Pack de FPS"
+                            : "Instalar Pack de FPS"}
+                      </button>
+                    </div>
+                  ))}
 
-                {c2meInstalled ? (
-                  <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
-                      <Check className="h-4 w-4" />
-                      Carga rápida de terreno instalada
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab("installed")}
-                      className="rounded-md bg-[#07090D]/70 hover:bg-[#07090D] px-2.5 py-1 text-[11px] font-medium text-slate-200 transition-colors"
-                    >
-                      Gestionar
-                    </button>
-                  </div>
-                ) : (
-                  <div className="rounded-xl forge-card p-4 flex flex-col justify-between gap-3.5">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
-                          <Cpu className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
-                          Carga rápida de terreno
-                        </span>
-                        <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
-                          C2ME
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400 leading-relaxed">
-                        Genera y carga el mapa mucho más rápido en un jugador,
-                        ideal para volar con élitros o explorar sin esperas.
-                      </p>
+                {supportsC2me &&
+                  (c2meInstalled ? (
+                    <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
+                        <Check className="h-4 w-4" />
+                        Carga rápida de terreno instalada
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab("installed")}
+                        className="rounded-md bg-[#07090D]/70 hover:bg-[#07090D] px-2.5 py-1 text-[11px] font-medium text-slate-200 transition-colors"
+                      >
+                        Gestionar
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      disabled={busySlug !== null}
-                      onClick={() => void handlePreset("c2me_chunk_accel")}
-                      className="w-full rounded-lg bg-white/[0.05] hover:bg-white/[0.09] disabled:opacity-45 py-2 text-xs font-semibold text-[var(--accent-primary)] transition-colors"
-                    >
-                      {busySlug === "c2me_chunk_accel"
-                        ? "Instalando C2ME..."
-                        : "Añadir carga rápida"}
-                    </button>
-                  </div>
-                )}
+                  ) : (
+                    <div className="rounded-xl forge-card p-4 flex flex-col justify-between gap-3.5">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
+                            <Cpu className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+                            Carga rápida de terreno
+                          </span>
+                          <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
+                            C2ME
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 leading-relaxed">
+                          Genera y carga el mapa mucho más rápido en un jugador,
+                          ideal para volar con élitros o explorar sin esperas.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busySlug !== null}
+                        onClick={() => void handlePreset("c2me_chunk_accel")}
+                        className="w-full rounded-lg bg-white/[0.05] hover:bg-white/[0.09] disabled:opacity-45 py-2 text-xs font-semibold text-[var(--accent-primary)] transition-colors"
+                      >
+                        {busySlug === "c2me_chunk_accel"
+                          ? "Instalando C2ME..."
+                          : "Añadir carga rápida"}
+                      </button>
+                    </div>
+                  ))}
 
-                {bobbyInstalled ? (
-                  <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
-                      <Check className="h-4 w-4" />
-                      Ver más lejos en servidores (Bobby) instalado
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab("installed")}
-                      className="rounded-md bg-[#07090D]/70 hover:bg-[#07090D] px-2.5 py-1 text-[11px] font-medium text-slate-200 transition-colors"
-                    >
-                      Gestionar
-                    </button>
-                  </div>
-                ) : (
-                  <div className="rounded-xl forge-card p-4 flex flex-col justify-between gap-3.5">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
-                          <Globe2 className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
-                          Ver más lejos en servidores
-                        </span>
-                        <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
-                          Bobby
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400 leading-relaxed">
-                        Recuerda las zonas que ya visitaste para ver mucho más
-                        lejos del límite normal en servidores multijugador.
-                      </p>
+                {supportsBobby &&
+                  (bobbyInstalled ? (
+                    <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
+                        <Check className="h-4 w-4" />
+                        Ver más lejos en servidores (Bobby) instalado
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab("installed")}
+                        className="rounded-md bg-[#07090D]/70 hover:bg-[#07090D] px-2.5 py-1 text-[11px] font-medium text-slate-200 transition-colors"
+                      >
+                        Gestionar
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      disabled={busySlug !== null}
-                      onClick={() => void handlePreset("bobby_multiplayer")}
-                      className="w-full rounded-lg bg-white/[0.05] hover:bg-white/[0.09] disabled:opacity-45 py-2 text-xs font-semibold text-[var(--accent-primary)] transition-colors"
-                    >
-                      {busySlug === "bobby_multiplayer"
-                        ? "Instalando Bobby..."
-                        : "Añadir Bobby"}
-                    </button>
-                  </div>
-                )}
+                  ) : (
+                    <div className="rounded-xl forge-card p-4 flex flex-col justify-between gap-3.5">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
+                            <Globe2 className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+                            Ver más lejos en servidores
+                          </span>
+                          <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
+                            Bobby
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 leading-relaxed">
+                          Recuerda las zonas que ya visitaste para ver mucho más
+                          lejos del límite normal en servidores multijugador.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busySlug !== null}
+                        onClick={() => void handlePreset("bobby_multiplayer")}
+                        className="w-full rounded-lg bg-white/[0.05] hover:bg-white/[0.09] disabled:opacity-45 py-2 text-xs font-semibold text-[var(--accent-primary)] transition-colors"
+                      >
+                        {busySlug === "bobby_multiplayer"
+                          ? "Instalando Bobby..."
+                          : "Añadir Bobby"}
+                      </button>
+                    </div>
+                  ))}
 
-                {distantHorizonsInstalled ? (
-                  <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
-                      <Check className="h-4 w-4" />
-                      Horizonte infinito (Distant Horizons) instalado
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab("installed")}
-                      className="rounded-md bg-[#07090D]/70 hover:bg-[#07090D] px-2.5 py-1 text-[11px] font-medium text-slate-200 transition-colors"
-                    >
-                      Gestionar
-                    </button>
-                  </div>
-                ) : (
-                  <div className="rounded-xl forge-card p-4 flex flex-col justify-between gap-3.5">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
-                          <Compass className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
-                          Horizonte infinito (Distant Horizons)
-                        </span>
-                        <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
-                          Distancia extrema
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400 leading-relaxed">
-                        Permite ver montañas y paisajes a distancias enormes sin
-                        hundir el rendimiento.
-                      </p>
+                {supportsDistantHorizons &&
+                  (distantHorizonsInstalled ? (
+                    <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--accent-primary)]">
+                        <Check className="h-4 w-4" />
+                        Horizonte infinito (Distant Horizons) instalado
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab("installed")}
+                        className="rounded-md bg-[#07090D]/70 hover:bg-[#07090D] px-2.5 py-1 text-[11px] font-medium text-slate-200 transition-colors"
+                      >
+                        Gestionar
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      disabled={busySlug !== null}
-                      onClick={() => void handlePreset("distant_horizons")}
-                      className="w-full rounded-lg bg-white/[0.05] hover:bg-white/[0.09] disabled:opacity-45 py-2 text-xs font-semibold text-[var(--accent-primary)] transition-colors"
-                    >
-                      {busySlug === "distant_horizons"
-                        ? "Instalando Distant Horizons..."
-                        : "Añadir Distant Horizons"}
-                    </button>
-                  </div>
-                )}
+                  ) : (
+                    <div className="rounded-xl forge-card p-4 flex flex-col justify-between gap-3.5">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-white">
+                            <Compass className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+                            Horizonte infinito (Distant Horizons)
+                          </span>
+                          <span className="rounded bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-mono text-[var(--accent-primary)]">
+                            Distancia extrema
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 leading-relaxed">
+                          Permite ver montañas y paisajes a distancias enormes
+                          sin hundir el rendimiento.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busySlug !== null}
+                        onClick={() => void handlePreset("distant_horizons")}
+                        className="w-full rounded-lg bg-white/[0.05] hover:bg-white/[0.09] disabled:opacity-45 py-2 text-xs font-semibold text-[var(--accent-primary)] transition-colors"
+                      >
+                        {busySlug === "distant_horizons"
+                          ? "Instalando Distant Horizons..."
+                          : "Añadir Distant Horizons"}
+                      </button>
+                    </div>
+                  ))}
               </div>
             )}
 
