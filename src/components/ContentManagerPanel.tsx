@@ -1051,7 +1051,7 @@ export function ContentManagerPanel({
           <div className="space-y-5">
             {/* Performance & Chunk Presets (Fabric & Forge) */}
             {(profile.loader === "fabric" || profile.loader === "forge") && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 items-start gap-3">
                 {fpsPureTotal > 0 &&
                   (fpsPureInstalled ? (
                     <div className="rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-border)] px-4 py-3 flex items-center justify-between gap-2">
