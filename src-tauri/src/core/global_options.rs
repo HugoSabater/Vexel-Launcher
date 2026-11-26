@@ -9,18 +9,54 @@ use crate::core::worldgen_configs::backup_file_before_overwrite;
 use crate::error::{AppError, AppResult};
 
 const PORTABLE_EXACT_KEYS: &[&str] = &[
+    // Audio & Accessibility
+    "showSubtitles",
+    "narrator",
+    // Controls & Mouse
     "mouseSensitivity",
+    "mouseWheelSensitivity",
+    "discrete_mouse_scroll",
+    "invertYMouse",
+    "rawMouseInput",
     "autoJump",
     "toggleSprint",
     "toggleCrouch",
-    "invertYMouse",
-    "rawMouseInput",
+    "mainHand",
+    // Camera & Interface
     "fov",
-    "lang",
+    "fovEffectScale",
+    "screenEffectScale",
+    "darknessEffectScale",
+    "bobView",
     "guiScale",
-    "showSubtitles",
-    "narrator",
+    "lang",
+    "chatOpacity",
+    "chatScale",
 ];
+
+/// Converts FOV degrees (30..=110, step 1) into Minecraft `options.txt` scale: `(deg - 70.0) / 40.0`.
+#[must_use]
+pub fn format_mc_fov_degrees(degrees: u32) -> String {
+    let clamped = degrees.clamp(30, 110) as f64;
+    let val = (clamped - 70.0) / 40.0;
+    format!("{val:.4}")
+}
+
+/// Converts mouse sensitivity percentage (0..=200, step 1) into Minecraft `options.txt` scale: `pct / 200.0`.
+#[must_use]
+pub fn format_mc_sensitivity_percent(percent: u32) -> String {
+    let clamped = percent.min(200) as f64;
+    let val = clamped / 200.0;
+    format!("{val:.4}")
+}
+
+/// Converts a 0..=100 percentage (step 1) into Minecraft `options.txt` `0.00..=1.00` decimal string.
+#[must_use]
+pub fn format_mc_unit_percent(percent: u32) -> String {
+    let clamped = percent.min(100) as f64;
+    let val = clamped / 100.0;
+    format!("{val:.2}")
+}
 
 fn default_true() -> bool {
     true
@@ -280,6 +316,7 @@ pub async fn apply_global_options_to_instance_dir(
 mod tests {
     use super::{
         apply_global_options_to_instance_dir, extract_portable_options_from_txt,
+        format_mc_fov_degrees, format_mc_sensitivity_percent, format_mc_unit_percent,
         import_global_options_from_instance_dir, is_portable_option_key,
         merge_options_txt_with_portable_map,
     };
@@ -287,14 +324,49 @@ mod tests {
 
     #[test]
     fn test_portable_key_whitelist_excludes_graphics_and_packs() {
+        // Audio (all 10 channels + subtitles + narrator)
+        for ch in [
+            "soundCategory_master",
+            "soundCategory_music",
+            "soundCategory_record",
+            "soundCategory_weather",
+            "soundCategory_block",
+            "soundCategory_hostile",
+            "soundCategory_neutral",
+            "soundCategory_player",
+            "soundCategory_ambient",
+            "soundCategory_voice",
+        ] {
+            assert!(is_portable_option_key(ch), "expected {ch} to be portable");
+        }
+        assert!(is_portable_option_key("showSubtitles"));
+        assert!(is_portable_option_key("narrator"));
+
+        // Controls & mouse
         assert!(is_portable_option_key("key_key.forward"));
+        assert!(is_portable_option_key("key_key.hotbar.1"));
         assert!(is_portable_option_key("mouseSensitivity"));
+        assert!(is_portable_option_key("mouseWheelSensitivity"));
+        assert!(is_portable_option_key("discrete_mouse_scroll"));
+        assert!(is_portable_option_key("invertYMouse"));
+        assert!(is_portable_option_key("rawMouseInput"));
         assert!(is_portable_option_key("autoJump"));
         assert!(is_portable_option_key("toggleSprint"));
-        assert!(is_portable_option_key("soundCategory_master"));
-        assert!(is_portable_option_key("fov"));
-        assert!(is_portable_option_key("lang"));
+        assert!(is_portable_option_key("toggleCrouch"));
+        assert!(is_portable_option_key("mainHand"));
 
+        // Camera & interface
+        assert!(is_portable_option_key("fov"));
+        assert!(is_portable_option_key("fovEffectScale"));
+        assert!(is_portable_option_key("screenEffectScale"));
+        assert!(is_portable_option_key("darknessEffectScale"));
+        assert!(is_portable_option_key("bobView"));
+        assert!(is_portable_option_key("guiScale"));
+        assert!(is_portable_option_key("lang"));
+        assert!(is_portable_option_key("chatOpacity"));
+        assert!(is_portable_option_key("chatScale"));
+
+        // Strictly excluded (graphics, packs, version, servers)
         assert!(!is_portable_option_key("version"));
         assert!(!is_portable_option_key("resourcePacks"));
         assert!(!is_portable_option_key("incompatibleResourcePacks"));
@@ -304,6 +376,27 @@ mod tests {
         assert!(!is_portable_option_key("prioritizeChunkUpdates"));
         assert!(!is_portable_option_key("biomeBlendRadius"));
         assert!(!is_portable_option_key("lastServer"));
+    }
+
+    #[test]
+    fn test_minecraft_one_percent_precision_formatters() {
+        // FOV: 70° -> 0.0, 90° -> 0.5, 110° -> 1.0, 30° -> -1.0, 71° -> 0.0250
+        assert_eq!(format_mc_fov_degrees(70), "0.0000");
+        assert_eq!(format_mc_fov_degrees(90), "0.5000");
+        assert_eq!(format_mc_fov_degrees(110), "1.0000");
+        assert_eq!(format_mc_fov_degrees(30), "-1.0000");
+        assert_eq!(format_mc_fov_degrees(71), "0.0250");
+
+        // Sensitivity: 0% -> 0.0, 100% -> 0.5, 200% -> 1.0, 1% -> 0.0050
+        assert_eq!(format_mc_sensitivity_percent(0), "0.0000");
+        assert_eq!(format_mc_sensitivity_percent(100), "0.5000");
+        assert_eq!(format_mc_sensitivity_percent(200), "1.0000");
+        assert_eq!(format_mc_sensitivity_percent(1), "0.0050");
+
+        // Unit percent (0..=100 step 1%): 0 -> 0.00, 37 -> 0.37, 100 -> 1.00
+        assert_eq!(format_mc_unit_percent(0), "0.00");
+        assert_eq!(format_mc_unit_percent(37), "0.37");
+        assert_eq!(format_mc_unit_percent(100), "1.00");
     }
 
     #[tokio::test]
