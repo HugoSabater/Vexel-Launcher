@@ -1,6 +1,6 @@
 [package]
 name = "mc-launcher-rust"
-version = "1.0.0"
+version = "1.1.0"
 description = "Vexel Launcher — Launcher ligero y optimizado para Minecraft"
 authors = ["Hugo Sabater"]
 edition = "2021"

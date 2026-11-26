@@ -589,7 +589,7 @@ export function App() {
       .getSnapshot()
       .map((l) => `[${formatLocalHms(l.timestamp_ms)}] ${l.line}`)
       .join("\n");
-    const report = `=== Vexel Launcher v1.0.0 — Reporte de Diagnóstico ===\n${lines || "Sin líneas de registro."}`;
+    const report = `=== Vexel Launcher v1.1.0 — Reporte de Diagnóstico ===\n${lines || "Sin líneas de registro."}`;
     try {
       await navigator.clipboard.writeText(report);
       setCopiedLogs(true);

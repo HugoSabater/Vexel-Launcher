@@ -1,6 +1,6 @@
-# Vexel Launcher (`v1.0.0`)
+# Vexel Launcher (`v1.1.0`)
 
-[![Release](https://img.shields.io/badge/Release-v1.0.0-10b981?style=flat-square)](./CHANGELOG.md)
+[![Release](https://img.shields.io/badge/Release-v1.1.0-10b981?style=flat-square)](./CHANGELOG.md)
 [![Rust](https://img.shields.io/badge/Rust-2021%20Edition-f97316?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Tauri v2](https://img.shields.io/badge/Tauri-v2-38bdf8?style=flat-square&logo=tauri&logoColor=white)](https://v2.tauri.app/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-10b981?style=flat-square)](./LICENSE)
@@ -16,10 +16,12 @@
 - **Selector oficial de versiones de Minecraft:** Catálogo sincronizado con Mojang `version_manifest_v2.json` con búsqueda, filtro opcional de *snapshots*, caché local de 6 horas y soporte offline automático.
 - **Instancias aisladas con almacenamiento híbrido:** Deduplica assets, librerías Maven y runtimes de Java bajo `shared/`, mientras aísla por instancia `mods/`, `resourcepacks/`, `shaderpacks/`, `saves/`, `config/` y `options.txt`.
 - **Mundos reales (NBT `level.dat`) y acceso directo:** Lee nombre, modo de juego (Survival/Creativo/Hardcore), semilla copiable, icono `icon.png` y versión de cada mundo, con aviso preventivo al abrir un mundo en una versión distinta y soporte QuickPlay directo a mundos o servidores.
-- **Soporte nativo de Vanilla, Fabric y Forge (`1.16.5 – 1.20.x+`):** Resolución automática de versiones oficiales de **Fabric** y **Forge** (con ejecución automática de *processors* de cliente, verificación SHA-1 y stamp `.forge_ready` para evitar re-parcheos en lanzamientos repetidos). Solo **NeoForge** queda reservado para una futura versión.
+- **Soporte nativo de los 4 loaders — Vanilla, Fabric, Forge (`1.16.5 – 1.20.x+`) y NeoForge (`1.20.4 – 1.21.x+`):** Resolución automática de versiones oficiales, ejecución de *processors* de cliente con verificación SHA-1 y sellos `.forge_ready` / `.neoforge_ready` para arranques repetidos en `<1s`.
+- **Importar y exportar modpacks (`.mrpack`):** Instala modpacks estándar de Modrinth con validación anti *path traversal*, verificación `SHA-1`/`SHA-512` y descargas paralelas, o comparte tus instancias exportando a `.mrpack` (excluyendo siempre `saves/` y archivos privados).
+- **Centralizador de Controles y Juego (estilo Minecraft):** Configura los 10 canales de audio, FOV, sensibilidad (precisión al 1%) y asignación interactiva de teclas una sola vez, con aplicación automática en nuevas instancias y backups `.bak` sin tocar gráficos ni resource packs.
 - **Gestor de Mods, Resource Packs y Shaders (Modrinth v2):**
-  - **Pack de FPS dinámico por loader y versión:** instala automáticamente el stack verificado para cada combinación — **Fabric `1.16.5 – 1.21.x`** (*Sodium, Lithium, FerriteCore, ImmediatelyFast, ModernFix, Entity Culling, MoreCulling, Dynamic FPS, BadOptimizations* y *ScalableLux/Starlight/Phosphor*) y **Forge `1.16.5 – 1.20.1+`** (*Embeddium, FerriteCore, ModernFix, Entity Culling, ImmediatelyFast, Dynamic FPS, BadOptimizations, Radium/Canary, Starlight-Forge* y *Saturn*) con resolución recursiva de dependencias y control de incompatibilidades.
-  - Presets adaptativos para **C2ME**, **Bobby** y **Distant Horizons**, lectura nativa de `fabric.mod.json` y **`META-INF/mods.toml` + `logoFile`**, miniaturas locales extraídas de `.jar`/`.zip`, auto-clasificación inteligente de `.zip` arrastrados (*shaders* vs *resource packs*) y detector de `pack.mcmeta` corrupto.
+  - **Pack de FPS dinámico por loader y versión:** instala automáticamente el stack verificado para **Fabric (`1.16.5 – 1.21.x`)**, **Forge (`1.16.5 – 1.20.1+`)** y **NeoForge (`1.20.4 – 1.21.x+`)** con resolución recursiva de dependencias y control de incompatibilidades.
+  - Presets adaptativos para **C2ME**, **Bobby** y **Distant Horizons**, lectura nativa de `fabric.mod.json`, **`META-INF/neoforge.mods.toml`** y **`META-INF/mods.toml` + `logoFile`**, miniaturas locales extraídas de `.jar`/`.zip`, auto-clasificación inteligente de `.zip` arrastrados (*shaders* vs *resource packs*) y detector de `pack.mcmeta` corrupto.
 - **Optimización real de Java, CPU y Worldgen:**
   - Descarga automática bajo demanda de **Java 8 / 17 / 21** (Eclipse Adoptium) aislado dentro del launcher sin tocar el sistema.
   - Flags JVM automáticos (**Generational ZGC** en Java 21+ con soporte Java 23+ o **Aikar's G1GC** como fallback), prioridad de proceso Win32 (`SetPriorityClass`), preferencia automática de GPU de alto rendimiento en Windows y modos de lanzamiento (`keep_open`, `hide_and_restore`, `close` desacoplado).
@@ -73,7 +75,7 @@ Para detalles completos de arquitectura interna, consulta [ARCHITECTURE.md](./AR
 - **[skinview3d](https://github.com/bs-community/skinview3d)** — Visor 3D WebGL de skins de Minecraft.
 - **[Modrinth API v2](https://docs.modrinth.com/)** — Catálogo, búsqueda y descarga verificada de mods, resource packs y shaders.
 - **[Fabric Meta API](https://meta.fabricmc.net/)** — Resolución oficial de perfiles y librerías de Fabric Loader.
-- **[Minecraft Forge](https://files.minecraftforge.net/)** — Metadatos oficiales, instalador y librerías Maven de Forge.
+- **[Minecraft Forge](https://files.minecraftforge.net/)** & **[NeoForged](https://neoforged.net/)** — Metadatos oficiales, instaladores y librerías Maven de Forge y NeoForge.
 - **[Eclipse Adoptium (Temurin)](https://adoptium.net/)** — Runtimes JRE x64 oficiales autogestionados.
 
 ---

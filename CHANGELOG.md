@@ -2,6 +2,22 @@
 
 Todos los cambios relevantes de **Vexel Launcher** se documentan en este archivo.
 
+## [1.1.0] — 2026-11-26
+
+### Nuevas Funcionalidades
+- **Soporte Completo de NeoForge (`1.20.4 – 1.21.x+`):**
+  - Resolución automática de versiones desde `maven-metadata.xml` (caché 6 h en `shared/cache/neoforge/` + fallback offline) priorizando releases estables frente a `-beta`, compartiendo el motor de *processors* de cliente con Forge (`CREATE_NO_WINDOW`, verificación SHA-1, sello atómico `.neoforge_ready` y deduplicación Maven).
+  - Parser nativo prioritario de `META-INF/neoforge.mods.toml` (`logoFile` + fallback `${file.jarVersion}` desde `META-INF/MANIFEST.MF`), stacks de FPS verificados en Modrinth (`1.20.x` Embeddium 8 mods; `1.21.0–1.21.1` Sodium + ScalableLux 10 mods; `>= 1.21.2` Sodium + Noisium 10 mods) y tuning automático de `sodium-options.json` + `DistantHorizons.toml`.
+  - Los 4 loaders (**Vanilla, Fabric, Forge y NeoForge**) completamente operativos en creación, edición, Modrinth y lanzamiento.
+- **Importar y Exportar Instancias (`.mrpack` de Modrinth):**
+  - Importación segura con validación de `formatVersion == 1`, detección automática de versión/loader, filtrado `env.client == "unsupported"`, protección estricta anti *path traversal*, URLs estrictamente `https://`, descargas concurrentes verificadas con `SHA-1` y `SHA-512` y extracción de `overrides/` + `client-overrides/`.
+  - Exportación con resolución batch en Modrinth (`POST /v2/version_files`), empaquetado de mods locales en `overrides/`, inclusión opcional de `config/` y exclusión estricta de `saves/`, `logs/`, `crash-reports/`, `natives/` y archivos internos del launcher.
+- **Centralizador de Controles y Juego (Diseño Minecraft-Native):**
+  - Plantilla portable en `shared/global_options.json` con merge quirúrgico (preserva CRLF/LF, gráficos, `resourcePacks` y crea copias de seguridad automáticas `.bak`) y auto-aplicación en nuevas instancias y modpacks `.mrpack`.
+  - Interfaz nativa en 3 pestañas (**Música y Sonido**, **Controles y Ratón**, **Cámara e Interfaz**) con deslizadores anchos estilo Minecraft de **precisión al 1%** (y edición numérica al doble clic), los **10 canales de audio**, asignación interactiva de teclado/ratón con detección de conflictos y restablecimiento por tecla.
+- **Aviso Discreto de Actualizaciones:**
+  - Comprobación *best-effort* con caché de 24 h contra GitHub Releases y píldora discreta en la barra superior con apertura segura de enlaces oficiales.
+
 ## [1.0.0] — 2026-11-22
 
 ### Lanzamiento Inicial Estable

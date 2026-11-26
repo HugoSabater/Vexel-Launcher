@@ -2,7 +2,7 @@
 
 ## 1. Visión General y Principios de Diseño
 
-**Vexel Launcher** (`v1.0.0`) está diseñado para maximizar la velocidad de arranque (`<1s` en inicios repetidos), reducir la latencia del sistema de archivos, evitar la sobre-suscripción de hilos en portátiles/iGPU y eliminar el overhead de UI mientras Minecraft está ejecutándose.
+**Vexel Launcher** (`v1.1.0`) está diseñado para maximizar la velocidad de arranque (`<1s` en inicios repetidos), reducir la latencia del sistema de archivos, evitar la sobre-suscripción de hilos en portátiles/iGPU y eliminar el overhead de UI mientras Minecraft está ejecutándose.
 
 - **Backend 100% Asíncrono (`tokio`):** Todas las operaciones de disco (`tokio::fs`), red (`reqwest` HTTP/2 con pooling y reintentos) y subprocesos (`tokio::process::Command`) son asíncronas. Las tareas síncronas de CPU o archivos comprimidos (extracción de `.zip`, inspección de `.jar`/`pack.mcmeta`, lectura NBT de `level.dat`, telemetría `sysinfo`) se aíslan en `tokio::task::spawn_blocking`.
 - **Cero `.unwrap()` / `.expect()` en producción:** El crate impone `#![deny(clippy::unwrap_used, clippy::expect_used)]`. Todos los errores se tipan en `AppError` (`thiserror`), serializable al frontend como `{ code, message, required_major }` y traducido a español claro.
@@ -25,12 +25,15 @@ Compartir un único `.minecraft` entre versiones corrompe `options.txt` y config
 │   │   ├── objects/<xx>/<sha1>         # Objetos inmutables deduplicados por hash SHA-1
 │   │   └── log_configs/                # Configuración XML Log4j2 de Mojang
 │   ├── libraries/                      # Librerías Maven .jar compartidas
-│   ├── versions/<version_id>/          # Manifiestos JSON, client.jar y sello .forge_ready
+│   ├── versions/<version_id>/          # Manifiestos JSON, client.jar y sellos .forge_ready / .neoforge_ready
 │   ├── runtimes/java-<major>/          # JREs de Eclipse Adoptium autogestionados (8/17/21)
 │   ├── skins/                          # Skin personalizada PNG del jugador
+│   ├── global_options.json             # Plantilla global de controles, audio y cámara (merge quirúrgico)
 │   └── cache/
 │       ├── forge/                      # Caché de promotions_slim.json, instaladores y data/ de Forge
+│       ├── neoforge/                   # Caché de maven-metadata.xml, instaladores y data/ de NeoForge
 │       ├── integrity_index.json        # Índice incremental O(1) (size + mtime + sha1)
+│       ├── update_check.json           # Caché de comprobación de actualizaciones (TTL 24h)
 │       └── version_manifest_v2.json    # Caché oficial de versiones de Mojang (TTL 6h + offline)
 └── instances/<profile_id>/             # --gameDir aislado por instancia
     ├── .content_index.json             # Metadatos locales, IDs Modrinth, iconos y estado pack.mcmeta
@@ -69,10 +72,12 @@ Validar ~3.000 assets calculando `SHA-1` desde SSD en cada clic de **JUGAR** añ
 | `downloader.rs` | Verificación rápida O(1) con `integrity_index.json` y motor concurrente HTTP/2 (`Semaphore(12)`) con reintentos exponenciales y archivos `.part` sin colisión de extensión. |
 | `runner.rs` | Extracción de nativas con `.natives_stamp`, registro HKCU de preferencia de GPU de alto rendimiento, identidad `Vexel Launcher` (`-Dminecraft.launcher.brand`/version), sustitución de placeholders JVM/JPMS de Forge (`${library_directory}`, `${classpath_separator}`, `${version_name}`), QuickPlay singleplayer y multiplayer, prioridad Win32 (`SetPriorityClass`), modo desacoplado (`CREATE_NO_WINDOW \| CREATE_NEW_PROCESS_GROUP` + `Stdio::null`), merge quirúrgico de `options.txt` con respaldo `.bak` y parseo limpio de eventos XML Log4j (`Log4jStreamParser`). |
 | `instance.rs` | Persistencia atómica de `config.json`, recuperación ante archivos corruptos, migración retroactiva de `close_on_launch` a `launch_behavior` y gestión de perfiles. |
-| `content.rs` | Inventario/toggle/eliminación de mods, packs y shaders, parser nativo de `fabric.mod.json` y `META-INF/mods.toml` (`logoFile` + `${file.jarVersion}` vía `MANIFEST.MF`), extracción cacheada de iconos locales (`.content_icons/`), cliente **Modrinth API v2** con stacks dinámicos por loader/versión (`fps_stack_for` / `get_profile_optimization_stack` para Fabric y Forge, C2ME, Bobby, Distant Horizons, resolución de dependencias e incompatibilidades activas), auto-clasificación `.zip` (`shaders/` vs `pack.mcmeta`) y detector de `pack.mcmeta` corrupto. |
-| `loaders.rs` | Soporte activo para **Vanilla**, **Fabric** (Fabric Meta API v2) y **Forge (`1.16.5 – 1.20.x+`)** (`promotions_slim.json` + fallback `maven-metadata.xml`, instalador, ejecutor de *processors* de cliente con SHA-1 y stamp `.forge_ready`, y deduplicación Maven `merge_overlay_into_plan_dedup`). Descriptor extensible listo para futuro soporte de NeoForge. |
+| `content.rs` | Inventario/toggle/eliminación de mods, packs y shaders, parser nativo de `fabric.mod.json`, `META-INF/neoforge.mods.toml` y `META-INF/mods.toml` (`logoFile` + `${file.jarVersion}` vía `MANIFEST.MF`), extracción cacheada de iconos locales (`.content_icons/`), cliente **Modrinth API v2** con stacks dinámicos por loader/versión (`fps_stack_for` / `get_profile_optimization_stack` para Fabric, Forge y NeoForge, C2ME, Bobby, Distant Horizons, resolución de dependencias e incompatibilidades activas), auto-clasificación `.zip` (`shaders/` vs `pack.mcmeta`) y detector de `pack.mcmeta` corrupto. |
+| `loaders.rs` | Soporte activo para los 4 loaders: **Vanilla**, **Fabric** (Fabric Meta API v2), **Forge (`1.16.5 – 1.20.x+`)** y **NeoForge (`1.20.4 – 1.21.x+`)** compartiendo el motor `run_maven_installer_overlay` (instalador, *processors* de cliente con SHA-1, sellos `.forge_ready`/`.neoforge_ready` y deduplicación Maven `merge_overlay_into_plan_dedup`). |
+| `mrpack.rs` | Importador y exportador estándar `.mrpack` de Modrinth: validación anti *path traversal*, URLs estrictamente `https://`, filtrado `env.client`, descargas paralelas con verificación `SHA-1`/`SHA-512`, lookup batch `POST /v2/version_files` y exclusión estricta de `saves/` y archivos internos. |
+| `global_options.rs` | Plantilla global portable (`shared/global_options.json`) con lista blanca estricta (10 canales de audio, teclas `key_*`, ratón y cámara/UI), importación desde instancia, merge quirúrgico preservando CRLF/LF y backups `.bak` sin tocar gráficos ni `resourcePacks`. |
 | `worlds.rs` | Lector binario NBT puro (soporte GZip y los 12 tipos de tag NBT sin panics) para `level.dat`, extracción de nombre, modo de juego, Hardcore, versión, semilla `i64` e `icon.png`. |
-| `worldgen_configs.rs` | Generación inicial (solo si faltan) y re-optimización segura con respaldo `.bak` aislada por loader: en **Fabric** ajusta `sodium-options.json` (`chunk_builder_threads = (cores/4).clamp(2,4)`, `chunk_build_defer_mode: "ONE_FRAME"`), `c2me.toml` (`globalExecutorParallelism = (cores/3).clamp(2,4)`, `LOW`) y `DistantHorizons.toml`; en **Forge** ajusta exclusivamente `DistantHorizons.toml` únicamente para mods activos. |
+| `worldgen_configs.rs` | Generación inicial (solo si faltan) y re-optimización segura con respaldo `.bak` aislada por loader: en **Fabric** ajusta `sodium-options.json`, `c2me.toml` y `DistantHorizons.toml`; en **NeoForge** ajusta `sodium-options.json` y `DistantHorizons.toml`; en **Forge** ajusta exclusivamente `DistantHorizons.toml` únicamente para mods activos. |
 | `skin_pack.rs` | Generación y sincronización cacheada (`v3:` en `.launcher_skin.sha1`) del micro-pack offline de skin personalizada y actualización segura de `resourcePacks` en `options.txt`. |
 
 ---

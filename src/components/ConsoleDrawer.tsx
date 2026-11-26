@@ -131,7 +131,7 @@ export const ConsoleDrawer = memo(function ConsoleDrawer({
       .getSnapshot()
       .map((l) => `[${formatLocalHms(l.timestamp_ms)}] ${l.line}`)
       .join("\n");
-    const report = `=== Vexel Launcher v1.0.0 — Consola de Diagnóstico ===\n${body || "Sin líneas de registro."}`;
+    const report = `=== Vexel Launcher v1.1.0 — Consola de Diagnóstico ===\n${body || "Sin líneas de registro."}`;
     try {
       await navigator.clipboard.writeText(report);
       setCopied(true);
