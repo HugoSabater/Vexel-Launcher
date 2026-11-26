@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="es" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vexel Launcher — Minecraft a velocidad nativa en Rust</title>
+    <meta
+      name="description"
+      content="Launcher ligero y ultrarrápido para Minecraft escrito en Rust y Tauri v2. Soporta Vanilla, Fabric, Forge y NeoForge, modpacks .mrpack, controles centralizados y optimización real para portátiles e iGPU."
+    />
+    <meta name="theme-color" content="#07090D" />
+    <link rel="icon" type="image/png" href="/mc-launcher-rust/icon.png" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="es_ES" />
+    <meta
+      property="og:url"
+      content="https://hugosabater.github.io/mc-launcher-rust/"
+    />
+    <meta
+      property="og:title"
+      content="Vexel Launcher — Minecraft a velocidad nativa"
+    />
+    <meta
+      property="og:description"
+      content="Instalador de 4.01 MiB en Rust + Tauri v2. Vanilla, Fabric, Forge y NeoForge, .mrpack, controles estilo Minecraft y arranque en menos de 1 segundo."
+    />
+    <meta
+      property="og:image"
+      content="https://hugosabater.github.io/mc-launcher-rust/screenshots/hero-home.webp"
+    />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Vexel Launcher — Minecraft a velocidad nativa"
+    />
+    <meta
+      name="twitter:description"
+      content="Launcher ligero en Rust + Tauri v2 para Vanilla, Fabric, Forge y NeoForge. Sin trackers, código abierto MIT."
+    />
+    <meta
+      name="twitter:image"
+      content="https://hugosabater.github.io/mc-launcher-rust/screenshots/hero-home.webp"
+    />
+  </head>
+  <body class="bg-[#07090D] text-[#F8FAFC] antialiased selection:bg-emerald-500/25 selection:text-white">
+    <!-- 1. Navbar sticky translúcida -->
+    <header
+      class="sticky top-0 z-50 border-b border-white/[0.06] bg-[#07090D]/80 backdrop-blur-md"
+    >
+      <div
+        class="mx-auto flex h-16 max-w-6xl items-center justify-between px-5 sm:px-6"
+      >
+        <a
+          href="#"
+          class="inline-flex items-center gap-2.5 text-sm font-semibold tracking-tight text-white"
+        >
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 16 16"
+            fill="none"
+            aria-hidden="true"
+            class="shrink-0"
+          >
+            <polygon
+              points="1.6,4.2 3.4,2.8 5.4,4.2 3.6,5.6"
+              fill="#10B981"
+              fill-opacity="0.88"
+            />
+            <polygon points="1.6,4.2 3.6,5.6 8,12.2 8,14.2" fill="#10B981" />
+            <polygon
+              points="3.6,5.6 5.4,4.2 8,8.8 8,12.2"
+              fill="#38BDF8"
+              fill-opacity="0.82"
+            />
+            <polygon
+              points="10.6,4.2 12.6,2.8 14.4,4.2 12.4,5.6"
+              fill="#10B981"
+              fill-opacity="0.92"
+            />
+            <polygon
+              points="10.6,4.2 12.4,5.6 8,12.2 8,8.8"
+              fill="#10B981"
+              fill-opacity="0.58"
+            />
+            <polygon
+              points="12.4,5.6 14.4,4.2 8,14.2 8,12.2"
+              fill="#10B981"
+              fill-opacity="0.38"
+            />
+          </svg>
+          <span>Vexel Launcher</span>
+        </a>
+
+        <nav
+          aria-label="Navegación principal"
+          class="hidden items-center gap-7 text-sm text-[#94A3B8] md:flex"
+        >
+          <a href="#caracteristicas" class="transition-colors hover:text-white">
+            Características
+          </a>
+          <a href="#rendimiento" class="transition-colors hover:text-white">
+            Rendimiento
+          </a>
+          <a href="#transparencia" class="transition-colors hover:text-white">
+            Transparencia
+          </a>
+          <a
+            href="https://github.com/HugoSabater/mc-launcher-rust"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="transition-colors hover:text-white"
+          >
+            GitHub
+          </a>
+        </nav>
+
+        <div class="flex items-center gap-2.5">
+          <a
+            href="https://github.com/HugoSabater/mc-launcher-rust"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex h-9 items-center rounded-lg border border-white/[0.08] bg-[#0D1118] px-3 text-xs font-medium text-slate-300 transition-colors hover:border-white/[0.16] hover:text-white md:hidden"
+          >
+            GitHub
+          </a>
+          <a
+            data-download-cta
+            href="https://github.com/HugoSabater/mc-launcher-rust/releases/download/v1.1.0/Vexel.Launcher_1.1.0_x64-setup.exe"
+            class="cta-emerald inline-flex h-9 items-center rounded-lg px-4 text-xs font-semibold transition-all"
+          >
+            Descargar
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <!-- 2. Hero centrado -->
+      <section class="hero-glow relative overflow-hidden pt-16 pb-20 sm:pt-24 sm:pb-28">
+        <div class="mx-auto max-w-6xl px-5 sm:px-6 text-center">
+          <div
+            class="inline-flex items-center gap-2 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3.5 py-1 font-mono text-xs text-emerald-300"
+          >
+            <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+            <span data-release-version>v1.1.0</span>
+            <span class="text-slate-500">·</span>
+            <span>Windows 10/11 (x64)</span>
+            <span class="text-slate-500">·</span>
+            <span>4.01 MiB</span>
+          </div>
+
+          <h1
+            class="mx-auto mt-6 max-w-4xl text-4xl font-bold tracking-tight text-[#F8FAFC] sm:text-5xl lg:text-6xl lg:leading-[1.08]"
+          >
+            Minecraft a velocidad nativa.
+            <span class="block text-emerald-400">Sin el peso de siempre.</span>
+          </h1>
+
+          <p
+            class="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-[#94A3B8] sm:text-lg"
+          >
+            Construido con <strong class="font-medium text-slate-200">Rust + Tauri v2</strong>
+            para arrancar en menos de un segundo. Compatible con
+            <strong class="font-medium text-slate-200">Vanilla, Fabric, Forge y NeoForge</strong>,
+            modpacks <code class="font-mono text-sm text-emerald-300">.mrpack</code> y
+            optimización real pensada para portátiles con iGPU y equipos de sobremesa.
+          </p>
+
+          <div
+            class="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row"
+          >
+            <a
+              data-download-cta
+              href="https://github.com/HugoSabater/mc-launcher-rust/releases/download/v1.1.0/Vexel.Launcher_1.1.0_x64-setup.exe"
+              class="cta-emerald inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl px-7 text-sm font-semibold transition-all sm:w-auto"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Descargar para Windows
+            </a>
+
+            <a
+              href="https://github.com/HugoSabater/mc-launcher-rust"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-white/[0.1] bg-[#0D1118] px-6 text-sm font-medium text-slate-200 transition-colors hover:border-white/[0.2] hover:bg-[#121722] hover:text-white sm:w-auto"
+            >
+              Ver código en GitHub
+            </a>
+          </div>
+
+          <p class="mt-4 font-mono text-xs text-slate-400">
+            Instalador de 4.01 MiB · Sin permisos de administrador · Licencia MIT
+          </p>
+
+          <!-- Showcase protagonista -->
+          <div class="mx-auto mt-14 max-w-5xl">
+            <div class="screenshot-frame overflow-hidden rounded-2xl p-1.5 sm:p-2">
+              <picture>
+                <source
+                  srcset="/mc-launcher-rust/screenshots/hero-home.webp"
+                  type="image/webp"
+                />
+                <img
+                  src="/mc-launcher-rust/screenshots/hero-home.png"
+                  alt="Pantalla principal de Vexel Launcher mostrando instancias aisladas, mundos recientes, mods activos y visor 3D de skin"
+                  width="1024"
+                  height="576"
+                  fetchpriority="high"
+                  class="block w-full rounded-xl object-cover"
+                />
+              </picture>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. Franja de métricas reales -->
+      <section class="border-y border-white/[0.06] bg-[#0D1118]/70 py-10">
+        <div
+          class="mx-auto grid max-w-6xl grid-cols-2 gap-6 px-5 sm:px-6 lg:grid-cols-4"
+        >
+          <div class="forge-card rounded-xl px-5 py-4 text-center">
+            <div class="font-mono text-2xl font-bold text-emerald-400 sm:text-3xl">
+              4.01 MiB
+            </div>
+            <div class="mt-1 text-xs text-[#94A3B8]">Instalador completo</div>
+          </div>
+          <div class="forge-card rounded-xl px-5 py-4 text-center">
+            <div class="font-mono text-2xl font-bold text-white sm:text-3xl">
+              4 Loaders
+            </div>
+            <div class="mt-1 text-xs text-[#94A3B8]">
+              Vanilla, Fabric, Forge, NeoForge
+            </div>
+          </div>
+          <div class="forge-card rounded-xl px-5 py-4 text-center">
+            <div class="font-mono text-2xl font-bold text-emerald-400 sm:text-3xl">
+              &lt; 1 s
+            </div>
+            <div class="mt-1 text-xs text-[#94A3B8]">
+              Arranque con caché incremental
+            </div>
+          </div>
+          <div class="forge-card rounded-xl px-5 py-4 text-center">
+            <div class="font-mono text-2xl font-bold text-white sm:text-3xl">
+              70 Tests
+            </div>
+            <div class="mt-1 text-xs text-[#94A3B8]">Rust + 0 warnings</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. Bloques alternados con capturas reales -->
+      <section id="caracteristicas" class="py-20 sm:py-28">
+        <div class="mx-auto max-w-6xl space-y-24 px-5 sm:px-6">
+          <!-- Bloque 1: Mods, Shaders y .mrpack -->
+          <div class="grid items-center gap-10 lg:grid-cols-12">
+            <div class="space-y-4 lg:col-span-5">
+              <span
+                class="inline-block rounded-md border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 font-mono text-[11px] text-emerald-300"
+              >
+                MODRINTH + .MRPACK
+              </span>
+              <h2 class="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+                Mods, Shaders y <code class="font-mono text-emerald-400">.mrpack</code> en un clic
+              </h2>
+              <p class="text-sm leading-relaxed text-[#94A3B8] sm:text-base">
+                Explora e instala desde Modrinth sin salir del launcher. Vexel
+                elige automáticamente el <strong class="text-slate-200">Pack de FPS exacto</strong>
+                para tu loader y versión (Sodium, Embeddium, Lithium, ScalableLux),
+                importa o exporta modpacks <code class="font-mono text-slate-200">.mrpack</code>
+                verificados con SHA-512 y detecta resource packs dañados antes de
+                entrar al juego.
+              </p>
+              <ul class="space-y-2 pt-1 text-sm text-slate-300">
+                <li class="flex items-center gap-2">
+                  <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                  Resolución automática de dependencias y conflictos
+                </li>
+                <li class="flex items-center gap-2">
+                  <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                  Lectura nativa de <code class="font-mono text-xs text-slate-300">fabric.mod.json</code>, <code class="font-mono text-xs text-slate-300">neoforge.mods.toml</code> y <code class="font-mono text-xs text-slate-300">mods.toml</code>
+                </li>
+                <li class="flex items-center gap-2">
+                  <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                  Exportación limpia excluyendo mundos y registros privados
+                </li>
+              </ul>
+            </div>
+            <div class="lg:col-span-7">
+              <div class="screenshot-frame overflow-hidden rounded-2xl p-1.5">
+                <picture>
+                  <source
+                    srcset="/mc-launcher-rust/screenshots/mods-packs.webp"
+                    type="image/webp"
+                  />
+                  <img
+                    src="/mc-launcher-rust/screenshots/mods-packs.png"
+                    alt="Gestor integrado de Modrinth en Vexel Launcher con Pack de FPS, C2ME, Distant Horizons y catálogo de mods"
+                    width="1024"
+                    height="811"
+                    loading="lazy"
+                    class="block w-full rounded-xl object-cover"
+                  />
+                </picture>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bloque 2: Controles centralizados -->
+          <div class="grid items-center gap-10 lg:grid-cols-12">
+            <div class="order-2 lg:order-1 lg:col-span-7">
+              <div class="screenshot-frame overflow-hidden rounded-2xl p-1.5">
+                <picture>
+                  <source
+                    srcset="/mc-launcher-rust/screenshots/controls-minecraft.webp"
+                    type="image/webp"
+                  />
+                  <img
+                    src="/mc-launcher-rust/screenshots/controls-minecraft.png"
+                    alt="Centralizador de controles de Vexel Launcher con deslizadores estilo Minecraft al 1% para los 10 canales de audio"
+                    width="1024"
+                    height="811"
+                    loading="lazy"
+                    class="block w-full rounded-xl object-cover"
+                  />
+                </picture>
+              </div>
+            </div>
+            <div class="order-1 space-y-4 lg:order-2 lg:col-span-5">
+              <span
+                class="inline-block rounded-md border border-sky-400/25 bg-sky-400/10 px-2.5 py-1 font-mono text-[11px] text-sky-300"
+              >
+                CENTRALIZADOR MINECRAFT-NATIVE
+              </span>
+              <h2 class="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+                Tus controles de Minecraft, centralizados
+              </h2>
+              <p class="text-sm leading-relaxed text-[#94A3B8] sm:text-base">
+                Deja de reconfigurar el volumen, la sensibilidad y tus teclas cada
+                vez que creas una instancia o importas un modpack. Importa tus
+                preferencias desde una instancia existente y aplícalas de forma
+                quirúrgica sin tocar jamás los gráficos ni los resource packs.
+              </p>
+              <ul class="space-y-2 pt-1 text-sm text-slate-300">
+                <li class="flex items-center gap-2">
+                  <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                  Los 10 canales de audio y sliders con precisión de 1%
+                </li>
+                <li class="flex items-center gap-2">
+                  <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                  Asignación interactiva de teclas y ratón con aviso de conflictos
+                </li>
+                <li class="flex items-center gap-2">
+                  <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                  Aplicación automática en nuevas instancias y modpacks
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- Bloque 3: Rendimiento real para portátiles e iGPU -->
+          <div id="rendimiento" class="grid items-center gap-10 lg:grid-cols-12">
+            <div class="space-y-4 lg:col-span-5">
+              <span
+                class="inline-block rounded-md border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 font-mono text-[11px] text-emerald-300"
+              >
+                JAVA + WORLDGEN + iGPU
+              </span>
+              <h2 class="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+                Rendimiento real para portátiles e iGPU
+              </h2>
+              <p class="text-sm leading-relaxed text-[#94A3B8] sm:text-base">
+                Vexel detecta tu RAM y núcleos reales, gestiona Java 8, 17 y 21 de
+                forma aislada (Eclipse Adoptium), aplica Generational ZGC o Aikar
+                G1GC y equilibra los hilos de C2ME, Sodium y Distant Horizons para
+                eliminar tirones sin ahogar el procesador.
+              </p>
+              <ul class="space-y-2 pt-1 text-sm text-slate-300">
+                <li class="flex items-center gap-2">
+                  <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                  Telemetría de RAM en vivo separando sistema y juego
+                </li>
+                <li class="flex items-center gap-2">
+                  <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                  Preferencia automática de GPU de alto rendimiento en Windows
+                </li>
+                <li class="flex items-center gap-2">
+                  <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                  Re-optimización en un clic con copia de seguridad automática
+                </li>
+              </ul>
+            </div>
+            <div class="lg:col-span-7">
+              <div class="screenshot-frame overflow-hidden rounded-2xl p-1.5">
+                <picture>
+                  <source
+                    srcset="/mc-launcher-rust/screenshots/performance-ram.webp"
+                    type="image/webp"
+                  />
+                  <img
+                    src="/mc-launcher-rust/screenshots/performance-ram.png"
+                    alt="Panel de Rendimiento de Vexel Launcher mostrando perfiles de hardware, barra de RAM en vivo y gestión de Java"
+                    width="1024"
+                    height="811"
+                    loading="lazy"
+                    class="block w-full rounded-xl object-cover"
+                  />
+                </picture>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. Sección de Transparencia y Seguridad -->
+      <section
+        id="transparencia"
+        class="border-t border-white/[0.06] bg-[#0D1118]/50 py-20 sm:py-24"
+      >
+        <div class="mx-auto max-w-6xl px-5 sm:px-6">
+          <div class="mx-auto max-w-2xl text-center">
+            <h2 class="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+              Transparencia y seguridad verificable
+            </h2>
+            <p class="mt-3 text-sm text-[#94A3B8] sm:text-base">
+              Sin telemetría oculta, sin cookies y sin cajas negras. Puedes
+              inspeccionar cada línea de código o verificar el instalador antes de
+              ejecutarlo.
+            </p>
+          </div>
+
+          <div class="mt-12 grid gap-5 md:grid-cols-3">
+            <!-- Tarjeta 1: Open Source -->
+            <div class="forge-card flex flex-col justify-between rounded-2xl p-6">
+              <div class="space-y-3">
+                <div
+                  class="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-500/25 bg-emerald-500/10 text-emerald-400"
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    aria-hidden="true"
+                  >
+                    <polyline points="16 18 22 12 16 6" />
+                    <polyline points="8 6 2 12 8 18" />
+                  </svg>
+                </div>
+                <h3 class="text-base font-semibold text-white">
+                  100% Código Abierto (MIT)
+                </h3>
+                <p class="text-sm leading-relaxed text-[#94A3B8]">
+                  Todo el motor Rust, los 70 tests unitarios y la interfaz React
+                  son públicos en GitHub. Cero anuncios, cero cuentas obligatorias
+                  y cero permisos de administrador al instalar.
+                </p>
+              </div>
+              <a
+                href="https://github.com/HugoSabater/mc-launcher-rust"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="mt-5 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-400 hover:text-emerald-300"
+              >
+                Explorar repositorio →
+              </a>
+            </div>
+
+            <!-- Tarjeta 2: SHA-256 -->
+            <div class="forge-card flex flex-col justify-between rounded-2xl p-6">
+              <div class="space-y-3">
+                <div
+                  class="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-500/25 bg-emerald-500/10 text-emerald-400"
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    aria-hidden="true"
+                  >
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                    <polyline points="9 12 11 14 15 10" />
+                  </svg>
+                </div>
+                <h3 class="text-base font-semibold text-white">
+                  Verificación SHA-256 (<span class="font-mono text-emerald-400">v1.1.0</span>)
+                </h3>
+                <p class="text-sm leading-relaxed text-[#94A3B8]">
+                  Comprueba la integridad exacta de
+                  <code class="font-mono text-xs text-slate-300">Vexel Launcher_1.1.0_x64-setup.exe</code>
+                  con PowerShell (<code class="font-mono text-xs text-slate-300">Get-FileHash</code>):
+                </p>
+                <div
+                  id="sha256-value"
+                  class="break-all rounded-lg border border-white/[0.06] bg-[#07090D] p-2.5 font-mono text-[11px] text-emerald-300"
+                >
+                  3A8AE728E6CAF51D40CBF9B3D1D4D6B2D5577716F6B8746ABFA24508669E0238
+                </div>
+              </div>
+              <button
+                id="copy-sha256-btn"
+                type="button"
+                class="mt-4 inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-white/[0.1] bg-[#0D1118] px-3 text-xs font-medium text-slate-200 transition-colors hover:border-emerald-500/40 hover:text-white"
+              >
+                <span id="copy-sha256-label">Copiar SHA-256</span>
+              </button>
+            </div>
+
+            <!-- Tarjeta 3: Windows SmartScreen -->
+            <div class="forge-card flex flex-col justify-between rounded-2xl p-6">
+              <div class="space-y-3">
+                <div
+                  class="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-amber-400/25 bg-amber-400/10 text-amber-300"
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                </div>
+                <h3 class="text-base font-semibold text-white">
+                  Nota sobre Windows SmartScreen
+                </h3>
+                <p class="text-sm leading-relaxed text-[#94A3B8]">
+                  Al ser un proyecto independiente y gratuito sin certificado
+                  comercial EV de pago, Windows Defender SmartScreen puede mostrar
+                  el aviso <em>«Windows protegió su PC»</em> la primera vez.
+                  Pulsa <strong class="text-slate-200">Más información → Ejecutar de todas formas</strong>
+                  tras comprobar el hash SHA-256.
+                </p>
+              </div>
+              <a
+                href="https://github.com/HugoSabater/mc-launcher-rust/releases"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="mt-5 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white"
+              >
+                Ver historial de releases →
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- 6. Footer limpio -->
+    <footer class="border-t border-white/[0.06] bg-[#07090D] py-10">
+      <div
+        class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-6 px-5 sm:px-6 md:flex-row"
+      >
+        <div class="text-center md:text-left">
+          <div class="text-sm font-semibold text-white">Vexel Launcher</div>
+          <p class="mt-1 text-xs text-slate-500">
+            Copyright © 2026 Hugo Sabater · Licencia MIT
+          </p>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-center gap-5 text-xs text-[#94A3B8]">
+          <a
+            href="https://github.com/HugoSabater/mc-launcher-rust/releases"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="transition-colors hover:text-white"
+          >
+            GitHub Releases
+          </a>
+          <a
+            href="https://github.com/HugoSabater/mc-launcher-rust/blob/main/CHANGELOG.md"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="transition-colors hover:text-white"
+          >
+            CHANGELOG.md
+          </a>
+          <a
+            href="https://github.com/HugoSabater/mc-launcher-rust/blob/main/LICENSE"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="transition-colors hover:text-white"
+          >
+            Licencia MIT
+          </a>
+        </div>
+      </div>
+
+      <div class="mx-auto mt-6 max-w-6xl border-t border-white/[0.04] px-5 pt-6 text-center sm:px-6">
+        <p class="font-mono text-[11px] text-slate-500">
+          NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.
+        </p>
+      </div>
+    </footer>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
