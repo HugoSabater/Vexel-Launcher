@@ -9,9 +9,9 @@ import "./styles.css";
 
 const FALLBACK_VERSION = "v1.1.0";
 const FALLBACK_DOWNLOAD_URL =
-  "https://github.com/HugoSabater/mc-launcher-rust/releases/download/v1.1.0/Vexel.Launcher_1.1.0_x64-setup.exe";
+  "https://github.com/HugoSabater/Vexel-Launcher/releases/download/v1.1.0/Vexel.Launcher_1.1.0_x64-setup.exe";
 const LATEST_RELEASE_API =
-  "https://api.github.com/repos/HugoSabater/mc-launcher-rust/releases/latest";
+  "https://api.github.com/repos/HugoSabater/Vexel-Launcher/releases/latest";
 
 function wireCopySha256() {
   const btn = document.getElementById("copy-sha256-btn");
@@ -69,7 +69,7 @@ async function resolveLatestRelease() {
         a.name.endsWith("-setup.exe") &&
         typeof a?.browser_download_url === "string" &&
         a.browser_download_url.startsWith(
-          "https://github.com/HugoSabater/mc-launcher-rust/releases/download/",
+          "https://github.com/HugoSabater/Vexel-Launcher/releases/download/",
         ),
     );
     const tag =

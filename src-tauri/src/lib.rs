@@ -89,7 +89,7 @@ pub fn run() {
                 .user_agent(concat!(
                     "vexel-launcher/",
                     env!("CARGO_PKG_VERSION"),
-                    " (https://github.com/HugoSabater/mc-launcher-rust)"
+                    " (https://github.com/HugoSabater/Vexel-Launcher)"
                 ))
                 .connect_timeout(Duration::from_secs(10))
                 .read_timeout(Duration::from_secs(30))

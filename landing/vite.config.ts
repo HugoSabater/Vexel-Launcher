@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  base: "/mc-launcher-rust/",
+  base: "/Vexel-Launcher/",
   build: {
     outDir: "dist",
     assetsDir: "assets",

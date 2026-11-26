@@ -1871,9 +1871,9 @@ pub async fn apply_global_options_to_all_instances(
 }
 
 const GITHUB_RELEASES_API_URL: &str =
-    "https://api.github.com/repos/HugoSabater/mc-launcher-rust/releases/latest";
+    "https://api.github.com/repos/HugoSabater/Vexel-Launcher/releases/latest";
 const ALLOWED_RELEASE_URL_PREFIX: &str =
-    "https://github.com/HugoSabater/mc-launcher-rust/releases/";
+    "https://github.com/HugoSabater/Vexel-Launcher/releases/";
 const UPDATE_CHECK_TTL_SECS: u64 = 24 * 3600;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2107,14 +2107,14 @@ mod tests {
         assert!(!is_newer_semver("1.0.0", "invalid-tag"));
 
         assert!(is_safe_release_url(
-            "https://github.com/HugoSabater/mc-launcher-rust/releases/tag/v1.1.0"
+            "https://github.com/HugoSabater/Vexel-Launcher/releases/tag/v1.1.0"
         ));
         assert!(!is_safe_release_url("https://evil.example/releases/v1.1.0"));
         assert!(!is_safe_release_url(
-            "https://github.com/HugoSabater/mc-launcher-rust/releases/tag/v1.1.0&calc.exe"
+            "https://github.com/HugoSabater/Vexel-Launcher/releases/tag/v1.1.0&calc.exe"
         ));
         assert!(!is_safe_release_url(
-            "https://github.com/HugoSabater/mc-launcher-rust/releases/tag/v1.1.0 | whoami"
+            "https://github.com/HugoSabater/Vexel-Launcher/releases/tag/v1.1.0 | whoami"
         ));
     }
 }
